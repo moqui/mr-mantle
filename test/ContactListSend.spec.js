@@ -330,20 +330,27 @@ feature("an email to the List-Unsubscribe mailto with the token in its subject u
     },
 })
 
-feature("a list without a template, a mailbox, or no site address for the links is refused before anything is sent", {
+feature("a list without a template or a mailbox is refused before anything is sent; with no site address given, the links use the webapp's", {
     allowMessageErrors: true,
     when() {
         capture.clear()
         const mailboxId = call("mantle.marketing.ContactListServices.create#ContactList", { contactListTypeEnumId: "MAILBOX", contactListName: "Sendspec room",
             memberPartyIdList: [party.Ann] }).contactListId
-        return { noTemplate: errorOf(SEND, { contactListId: updatesId, baseUrl: "https://news.sendspec.example.com" }),
+        const refused = { noTemplate: errorOf(SEND, { contactListId: updatesId, baseUrl: "https://news.sendspec.example.com" }),
             mailbox: errorOf(SEND, { contactListId: mailboxId, emailTemplateId: "SENDSPEC_NEWS", baseUrl: "https://news.sendspec.example.com" }),
-            noBase: errorOf(SEND, { contactListId: newsId }), sent: capture.count() }
+            sentRefused: capture.count() }
+        // no baseUrl and no web host name on the template: ec.web.getWebappRootUrl() is the conf webapp's address (P8-08)
+        const root = String(ec.web ? ec.web.getWebappRootUrl() || "" : "").replace(/\/$/, "")
+        const noBase = call(SEND, { contactListId: newsId, bodyText: "December." })
+        return Object.assign(refused, { root, noBase, sent: capture.count() })
     },
-    then({ noTemplate, mailbox, noBase, sent }) {
+    then({ noTemplate, mailbox, sentRefused, root, noBase, sent }) {
         noTemplate.includes("has no email template")
         mailbox.includes("is a mailbox")
-        noBase.includes("need the site address")
-        sent == 0
+        sentRefused == 0
+        root.startsWith("http")
+        noBase.recipientList.length > 0
+        noBase.recipientList.every((recipient) => String(recipient.unsubscribeUrl).startsWith(root + "/u/"))
+        sent == noBase.recipientList.length
     },
 })
