@@ -829,6 +829,8 @@ along with this software (see the LICENSE.md file). If not, see
             if (address == null) { ec.logger.warn(`Unsubscribe verification for party ${partyId} on list ${contactListId}: no email address, none sent`); return }
             let root = String(baseUrl || '').trim()
             if (!root && template.webHostName) root = `https://${template.webHostName}`
+            if (!root && template.emailServerId) root = String(ec.entity.find('moqui.basic.email.EmailServer')
+                    .condition('emailServerId', template.emailServerId).useCache(true).one()?.webBaseUrl || '').trim()
             const link = ec.service.sync().name('mantle.party.ConsentServices.create#UnsubscribeToken').parameters({contactListId: contactListId,
                 partyId: partyId, contactMechId: address.contactMechId, baseUrl: root || null, validDays: 14}).call()
             if (ec.message.hasError()) return
@@ -1218,7 +1220,7 @@ along with this software (see the LICENSE.md file). If not, see
                 createdDate: ec.user.nowTimestamp, thruDate: thruDate || null}).call()?.contactListTokenId ?? null
             if (ec.message.hasError()) { token = null; return }
             let root = String(baseUrl || '').trim()
-            if (!root) { try { root = ec.web ? String(ec.web.getWebappRootUrl() || '') : '' } catch (err) { root = '' } }
+            if (!root) { try { root = ec.web ? String(ec.web.getWebappRootUrl(true, null) || '') : '' } catch (err) { root = '' } }
             unsubscribeUrl = `${root.replace(/\/+$/, '')}/u/${token}`
             // RFC 8058: the one-click POST goes to the List-Unsubscribe URL, the page a person opens to choose
             oneClickUrl = unsubscribeUrl

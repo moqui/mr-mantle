@@ -705,10 +705,15 @@ along with this software (see the LICENSE.md file). If not, see
             if (!emailTemplateId) { ec.message.addError(`${listName} has no email template: give emailTemplateId or add its Outgoing Email`); return }
             const template = ec.entity.find('moqui.basic.email.EmailTemplate').condition('emailTemplateId', emailTemplateId).one()
             if (template == null) { ec.message.addError(`Email template ${emailTemplateId} not found`); return }
+            // the site address: baseUrl, the template's web host name, its email server's web base URL, the conf webapp's
+            // URL; never the host of a request, and never localhost, which a whole list would get as a dead link
             let root = String(baseUrl || '').trim()
             if (!root && template.webHostName) root = `https://${template.webHostName}`
-            if (!root) { try { root = ec.web ? String(ec.web.getWebappRootUrl() || '') : '' } catch (err) { root = '' } }
-            if (!root) { ec.message.addError('The unsubscribe links need the site address: give baseUrl or the template\'s web host name'); return }
+            if (!root && template.emailServerId) root = String(ec.entity.find('moqui.basic.email.EmailServer')
+                    .condition('emailServerId', template.emailServerId).useCache(true).one()?.webBaseUrl || '').trim()
+            if (!root) { try { root = ec.web ? String(ec.web.getWebappRootUrl(true, null) || '') : '' } catch (err) { root = '' } }
+            if (/^https?:\/\/(localhost|127\.0\.0\.1)([:\/]|$)/i.test(root)) root = ''
+            if (!root) { ec.message.addError('The unsubscribe links need the site address: give baseUrl, the template\'s web host name or its email server\'s web base URL'); return }
             let organizationName = null
             if (list.ownerPartyId) {
                 const owner = ec.entity.find('mantle.party.PartyDetail').condition('partyId', list.ownerPartyId).one()
