@@ -288,6 +288,11 @@ along with this software (see the LICENSE.md file). If not, see
             added; the data of a directory party changes only in a directory import) or created anyway, by
             duplicatePolicy. Each row is imported in its own transaction: a row that fails is reported in failureList and
             the rest are imported. The file's groups (labels, categories) and groupNames become groups of the book.
+
+            With progressUserId, how far it is goes to that user as a NotificationMessage on the topic
+            contactImportProgress (not persisted unless the topic says so), every 25 rows and once at the end:
+            {progressKey, done, total, createdCount, updatedCount, skippedCount, failedCount, finished}. A message that
+            cannot be sent is logged and the import goes on.
         </description>
         <in-parameters>
             <parameter name="contactFile" type="org.apache.commons.fileupload2.core.FileItem"/>
@@ -306,6 +311,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="groupNames"><description>Comma-separated groups every imported contact gets, created in the book
                 when missing</description></parameter>
             <parameter name="useFileGroups" type="Boolean" default="true"/>
+            <parameter name="progressUserId"><description>The user who gets the progress messages</description></parameter>
+            <parameter name="progressKey"><description>Names this import in the progress messages, such as the caller's import id</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="contactBookId"/>
@@ -373,7 +380,19 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.addError('Groups need a contact book'); return
             }
 
-            for (const row of read.contactList || []) {
+            // how far it is, for the user watching (a failed send is logged; the rows go on)
+            const rows = Array.from(read.contactList || [])
+            const progress = (done, finished) => {
+                if (!progressUserId) return
+                try {
+                    ec.makeNotificationMessage().topic('contactImportProgress').userId(progressUserId).message({progressKey: progressKey || null,
+                        done: done, total: rows.length, createdCount, updatedCount, skippedCount, failedCount, finished: finished}).send()
+                } catch (err) { ec.logger.warn(`Contact import progress for ${progressUserId} not sent: ${err}`) }
+            }
+            let rowsDone = 0
+            for (const row of rows) {
+                if (rowsDone > 0 && rowsDone % 25 === 0) progress(rowsDone, false)
+                rowsDone++
                 if (row.empty) {
                     skippedCount++
                     resultList.push({rowNumber: row.rowNumber, action: 'skip', partyId: null, matchedPartyId: null})
@@ -398,6 +417,7 @@ along with this software (see the LICENSE.md file). If not, see
                     resultList.push({rowNumber: row.rowNumber, action: 'fail', partyId: null, matchedPartyId: null})
                 }
             }
+            progress(rowsDone, true)
         ]]></script></actions>
     </service>
     <service verb="import" noun="ContactRow">
