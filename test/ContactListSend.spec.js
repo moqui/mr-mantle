@@ -354,3 +354,21 @@ feature("a list without a template or a mailbox is refused before anything is se
         sent == noBase.recipientList.length
     },
 })
+
+feature("with no baseUrl and no web host name on the template the links start with its email server's web base URL", {
+    when() {
+        capture.clear()
+        call("update#moqui.basic.email.EmailServer", { emailServerId: "SENDSPEC_SMTP", webBaseUrl: "https://mail.sendspec.example.com/" })
+        try {
+            const out = call(SEND, { contactListId: newsId, bodyText: "December." })
+            return { out, messages: capture.getMessages() }
+        } finally {
+            call("update#moqui.basic.email.EmailServer", { emailServerId: "SENDSPEC_SMTP", webBaseUrl: null })
+        }
+    },
+    then({ out, messages }) {
+        out.sentCount >= 1
+        out.recipientList.every((recipient) => recipient.unsubscribeUrl.startsWith("https://mail.sendspec.example.com/u/"))
+        messages[0].bodyText.includes("Unsubscribe: https://mail.sendspec.example.com/u/")
+    },
+})
