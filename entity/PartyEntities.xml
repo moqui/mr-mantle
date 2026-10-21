@@ -1578,6 +1578,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="fromDate" type="date-time" is-pk="true"/>
         <field name="thruDate" type="date-time"/>
         <field name="isFavorite" type="text-indicator"/>
+        <field name="davName" type="text-medium"><description>The resource name a CardDAV client stored the card under
+            (mantle.party.ContactDavServices), when it is not partyId.vcf</description></field>
+        <field name="davUid" type="text-medium"><description>The card's UID as the client wrote it, which the vCard served
+            for this book keeps</description></field>
         <relationship type="one" related="mantle.party.contact.ContactBook" short-alias="contactBook"/>
         <relationship type="one" related="mantle.party.Party" short-alias="party"/>
         <index name="CNTBK_PTY_PARTY"><index-field name="partyId"/></index>

@@ -131,9 +131,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="calendarId" type="id" is-pk="true"/>
         <field name="workEffortId" type="id" is-pk="true"/>
         <field name="addedDate" type="date-time" default="ec.user.nowTimestamp"/>
+        <field name="davName" type="text-medium"><description>The resource name a CalDAV client stored the event under
+            (mantle.work.CalendarDavServices), when it is not workEffortId.ics</description></field>
         <relationship type="one" related="mantle.work.calendar.Calendar" short-alias="calendar"/>
         <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
         <index name="CAL_WEFF_WEFF"><index-field name="workEffortId"/></index>
+        <index name="CAL_WEFF_DAV"><index-field name="calendarId"/><index-field name="davName"/></index>
     </entity>
 
     <!-- ========================================================= -->
