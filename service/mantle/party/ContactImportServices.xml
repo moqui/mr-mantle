@@ -479,6 +479,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="favoritesOnly" type="Boolean" default="false"/>
             <parameter name="partyIdList" type="List"><parameter name="partyId"/></parameter>
             <parameter name="format" default-value="csv"><description>csv or vcard</description></parameter>
+            <parameter name="vcardVersion" default-value="4.0"><description>4.0, or 3.0 (what phones read best; the CardDAV adapter's)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="fileText" allow-html="any"><description>The file's text, parsed by the framework tool, never shown as HTML; real vCard and ICS files hold &lt; (Apple labels, HTML descriptions)</description></parameter>
@@ -629,7 +630,7 @@ along with this software (see the LICENSE.md file). If not, see
             fileName = `${baseName}.vcf`
             contentType = 'text/vcard'
             if (ec.factory.getToolFactory('VCard') != null) {
-                fileText = ec.factory.getTool('VCard').write(contacts, '4.0')
+                fileText = ec.factory.getTool('VCard').write(contacts, vcardVersion === '3.0' ? '3.0' : '4.0')
                 return
             }
             // vCard 4.0 (RFC 6350): text values escaped, lines folded at 75 octets, CRLF line ends

@@ -321,4 +321,12 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="check_AllPartyDuplicates" description="Check All Parties for Duplicates"
             serviceName="mantle.party.DuplicateServices.check#AllPartyDuplicates" cronExpression="0 0 2 * * ?" paused="Y"
             transactionTimeout="3600"/>
+
+    <!-- The CalDAV and CardDAV adapters (MoquiConf.xml dav-server), called as a user who logged in with an app password;
+        each checks the calendar's or the contact book's access itself, as the screens do. -->
+    <moqui.security.ArtifactGroup artifactGroupId="MantleDavServices" description="CalDAV and CardDAV adapters"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="MantleDavServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="mantle\.(work\.CalendarDavServices|party\.ContactDavServices)\.(get#DavCollections|get#DavObjects|put#DavObject|delete#DavObject)"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="MantleDavServicesALL" userGroupId="ALL_USERS" artifactGroupId="MantleDavServices"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>
