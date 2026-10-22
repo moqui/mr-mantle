@@ -1257,12 +1257,15 @@ along with this software (see the LICENSE.md file). If not, see
             services), over the projects the user sees (get#VisibleProjectInfo; template projects left out):
             - myOpen: the open work items the user is an Assignee of; dueWeek: those due from today through seven days;
               overdue: those due before today (as WorkItems' smart lists mine, week and overdue);
+            - reviewsWaiting: the open merge requests of the repositories the user may view where the user is a requested
+              reviewer who has not reviewed yet (org.moqui.impl.GitReviewServices.find#MergeRequests waitingForUserId); null
+              when the build has no git hosting;
             - hoursWeek: the hours of the user's time entries this week (the timesheet's status comes with timesheets);
             - with managers: projectsAtRisk, the open projects the user manages (ADMIN: all) whose health is At risk or Off track
               or whose numbers warn (get#ProjectStats projectWarning or projectDanger), and milestonesSoon, their open
               milestones due in fourteen days.
-            The counters that need records of later phases (reviewsWaiting, timesheetsToApprove, allocationRequests,
-            unbilledAmount) are null until those phases. Each counter is computed on its own: one that fails is logged, named
+            The counters that need records of later phases (timesheetsToApprove, allocationRequests, unbilledAmount) are null
+            until those phases. Each counter is computed on its own: one that fails is logged, named
             in failedParts and left null.
         </description>
         <in-parameters><parameter name="managers" type="Boolean" default="false"/></in-parameters>
@@ -1309,6 +1312,21 @@ along with this software (see the LICENSE.md file). If not, see
                 counts.dueWeek = count([cf.makeCondition('estimatedCompletionDate', 'greater-equals', new Date(todayStart)),
                     cf.makeCondition('estimatedCompletionDate', 'less-than', new Date(todayStart + 7 * 86400000))])
                 counts.overdue = count([cf.makeCondition('estimatedCompletionDate', 'less-than', new Date(todayStart))])
+            })
+            part('reviewsWaiting', () => {
+                if (!ec.user.userId) { counts.reviewsWaiting = 0; return }
+                // the framework's merge requests; git hosting is a build feature: without it the count stays null, not a failure
+                ec.message.pushErrors()
+                try {
+                    const out = ec.service.sync().name('org.moqui.impl.GitReviewServices.find#MergeRequests').parameters({waitingForUserId: ec.user.userId,
+                        pageSize: 1}).call() || {}
+                    if (ec.message.hasError()) {
+                        const errors = ec.message.getErrorsString()
+                        if (/not built into/.test(errors)) return
+                        throw new Error(errors)
+                    }
+                    counts.reviewsWaiting = Number(out.mergeRequestListCount || 0)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
             })
             part('hoursWeek', () => {
                 if (!me) { counts.hoursWeek = 0; return }

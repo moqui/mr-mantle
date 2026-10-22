@@ -147,6 +147,8 @@ feature("a task branch is named by the project's pattern and linked to its task"
 feature("a merge request links the branch's task and the keys of its text, moves them to In Review and asks its reviewers", {
     when() {
         commitOn(branchName, `Passkeys for ${taskBranch}`, { "src/login.js": "function login(passkey) {\n    return passkey\n}\n" })
+        // Projects Home's reviews waiting on john (get#ProjectHomeCounts)
+        const waitingBefore = call("mantle.work.ProjectServices.get#ProjectHomeCounts", {}).counts.reviewsWaiting
         login("joe.developer")
         try {
             const made = call("org.moqui.impl.GitReviewServices.create#MergeRequest", { repositoryId, sourceRef: branchName,
@@ -156,9 +158,11 @@ feature("a merge request links the branch's task and the keys of its text, moves
         } finally { login("john.doe") }
         const links = Array.from(ec.entity.find("mantle.work.effort.WorkEffortGitMergeRequest").condition("mergeRequestId", mergeRequestId).orderBy("workEffortId").list())
         return { links, branchTask: workEffort(taskBranch), closeTask: workEffort(taskClose), asked: notices(userIdOf(JOHN), "MergeRequestReview"),
-            items: call("mantle.work.GitServices.get#MergeRequestItems", { mergeRequestId }).itemList }
+            items: call("mantle.work.GitServices.get#MergeRequestItems", { mergeRequestId }).itemList, waitingBefore,
+            waitingAfter: call("mantle.work.ProjectServices.get#ProjectHomeCounts", {}).counts.reviewsWaiting }
     },
-    then({ links, branchTask, closeTask, asked, items }) {
+    then({ links, branchTask, closeTask, asked, items, waitingBefore, waitingAfter }) {
+        waitingAfter == waitingBefore + 1
         links.map((link) => link.workEffortId) == [taskBranch, taskClose].sort()
         links.find((link) => link.workEffortId == taskBranch).linkSourceEnumId == "WglsMergeRequestBranch"
         links.find((link) => link.workEffortId == taskClose).linkSourceEnumId == "WglsMergeRequestText"
