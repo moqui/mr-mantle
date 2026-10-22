@@ -309,6 +309,99 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><service-call name="mantle.work.TaskServices.set#TaskPlanItem" in-map="{workEffortId:workEffortId, assocTypeEnumId:'WeatComponent',
                 planWorkEffortId:componentWorkEffortId}"/></actions>
     </service>
+    <service verb="set" noun="TaskSprint">
+        <description>The task's sprint (set#TaskPlanItem WeatSprint); empty takes it back to the backlog. A sprint that is
+            complete, closed or cancelled takes no items. A change in a sprint in progress is a scope change: the audit log
+            gets a row for the membership (EntityAuditLog of mantle.work.effort.WorkEffortAssoc, pkPrimaryValue the sprint,
+            pkSecondaryValue the task, changedFieldName fromDate when added and thruDate when taken out) with the user who
+            made it, which ProjectReportServices.get#SprintScopeChanges reads.</description>
+        <in-parameters><parameter name="workEffortId" required="true"/><parameter name="sprintWorkEffortId"/></in-parameters>
+        <out-parameters><parameter name="oldSprintWorkEffortId"/><parameter name="changed" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            changed = false
+            const find = (id) => id ? ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', id).one() : null
+            const sprint = find(sprintWorkEffortId)
+            if (sprintWorkEffortId) {
+                if (sprint == null || sprint.workEffortTypeEnumId !== 'WetSprint') { ec.message.addError(ec.resource.expand('Sprint ${sprintWorkEffortId} not found', '', {sprintWorkEffortId})); return }
+                if (['WeComplete', 'WeClosed', 'WeCancelled'].includes(sprint.statusId)) {
+                    ec.message.addError(ec.resource.expand('${name} is complete and takes no more items', '', {name: sprint.workEffortName || sprintWorkEffortId})); return
+                }
+            }
+            const current = Array.from(ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('toWorkEffortId', workEffortId)
+                    .condition('workEffortAssocTypeEnumId', 'WeatSprint').conditionDate('fromDate', 'thruDate', null).list()).map((assoc) => assoc.workEffortId)
+            oldSprintWorkEffortId = current[0] || null
+            if ((sprintWorkEffortId || null) === oldSprintWorkEffortId && current.length <= 1) return
+            ec.service.sync().name('mantle.work.TaskServices.set#TaskPlanItem').parameters({workEffortId: workEffortId, assocTypeEnumId: 'WeatSprint',
+                planWorkEffortId: sprintWorkEffortId || null}).call()
+            if (ec.message.hasError()) return
+            changed = true
+            // the scope changes of the sprints in progress, with who made them
+            const audit = (sprintId, field) => ec.service.sync().name('create#moqui.entity.EntityAuditLog').parameters({changedEntityName: 'mantle.work.effort.WorkEffortAssoc',
+                changedFieldName: field, pkPrimaryValue: sprintId, pkSecondaryValue: workEffortId, pkRestCombinedValue: "workEffortAssocTypeEnumId:'WeatSprint'",
+                newValueText: String(ec.user.nowTimestamp), changedDate: ec.user.nowTimestamp, changedByUserId: ec.user.userId || null}).disableAuthz().call()
+            for (const oldId of current) if (oldId !== sprintWorkEffortId && find(oldId)?.statusId === 'WeInProgress') audit(oldId, 'thruDate')
+            if (sprint != null && sprint.statusId === 'WeInProgress' && !current.includes(sprintWorkEffortId)) audit(sprintWorkEffortId, 'fromDate')
+        ]]></script></actions>
+    </service>
+    <service verb="set" noun="TaskBacklogRank">
+        <description>The rank (sequenceNum) of a task in its project's backlog and sprint lists, which show the project's tasks
+            at every depth in one order: right after previousWorkEffortId, else right before nextWorkEffortId, else first. The
+            ranks are one order over the whole project, so the tree's order of siblings (set#TaskRank) stays the same order:
+            the task takes the middle of the gap it goes into, and when that gap is closed, or a task of the project has no
+            rank yet, every task of the project is numbered again 1000, 2000, … in the order it had. The order is by rank, then
+            (no rank) by the number in the key.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="previousWorkEffortId"/>
+            <parameter name="nextWorkEffortId"/>
+        </in-parameters>
+        <out-parameters><parameter name="sequenceNum" type="Long"/><parameter name="renumbered" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            renumbered = false
+            const task = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (task == null || task.workEffortTypeEnumId !== 'WetTask' || !task.rootWorkEffortId) {
+                ec.message.addError(ec.resource.expand('Task ${workEffortId} not found', '', {workEffortId})); return
+            }
+            const rankOf = (row) => row.sequenceNum == null || row.sequenceNum === '' ? null : Number(String(row.sequenceNum))
+            const numberOf = (id) => { const match = /(\d+)$/.exec(String(id)); return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER }
+            const others = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', task.rootWorkEffortId)
+                    .condition('workEffortTypeEnumId', 'WetTask').condition('workEffortId', 'not-equals', workEffortId)
+                    .selectField('workEffortId').selectField('sequenceNum').list()).sort((left, right) => {
+                const l = rankOf(left), r = rankOf(right)
+                if (l != null && r != null && l !== r) return l - r
+                if (l != null && r == null) return -1
+                if (l == null && r != null) return 1
+                return numberOf(left.workEffortId) - numberOf(right.workEffortId) || String(left.workEffortId).localeCompare(String(right.workEffortId))
+            })
+            let index = 0
+            if (previousWorkEffortId) {
+                const at = others.findIndex((row) => row.workEffortId === previousWorkEffortId)
+                if (at < 0) { ec.message.addError(ec.resource.expand('${previousWorkEffortId} is not in the project of ${workEffortId}', '', {previousWorkEffortId, workEffortId})); return }
+                index = at + 1
+            } else if (nextWorkEffortId) {
+                const at = others.findIndex((row) => row.workEffortId === nextWorkEffortId)
+                if (at < 0) { ec.message.addError(ec.resource.expand('${nextWorkEffortId} is not in the project of ${workEffortId}', '', {nextWorkEffortId, workEffortId})); return }
+                index = at
+            }
+            const before = index > 0 ? rankOf(others[index - 1]) : 0
+            const after = index < others.length ? rankOf(others[index]) : null
+            const ranked = others.every((row) => rankOf(row) != null)
+            const set = (id, rank) => ec.service.sync().name('update#mantle.work.effort.WorkEffort').parameters({workEffortId: id, sequenceNum: rank}).call()
+            if (ranked && before != null && (after == null || after - before >= 2)) {
+                sequenceNum = after == null ? before + 1000 : Math.floor((before + after) / 2)
+                if (rankOf(task) !== sequenceNum) set(workEffortId, sequenceNum)
+                return
+            }
+            // the gap is closed, or ranks are missing: number the project's tasks again in their order, with the task in its place
+            renumbered = true
+            const ordered = others.slice(0, index).concat([task], others.slice(index))
+            ordered.forEach((row, i) => {
+                const rank = (i + 1) * 1000
+                if (row.workEffortId === workEffortId) sequenceNum = rank
+                if (rankOf(row) !== rank) set(row.workEffortId, rank)
+            })
+        ]]></script></actions>
+    </service>
 
     <service verb="get" noun="TaskStatusFlow">
         <description>The status flow of a task: its own statusFlowId, else its project's (rootWorkEffortId), else Default

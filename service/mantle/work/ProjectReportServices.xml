@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The reports of IronStone Projects (design-projects.md §11 Reports, §15 Reports services; impl-projects.md P4a for the sprint
+    reports, P9 for the rest). A sprint's numbers are in its project's estimate unit (WstEstimateUnit): story points
+    (estimatedPoints), or hours (estimatedWorkTime for the size of an item, remainingWorkTime, else the estimate, for what is
+    left of it). The history comes from the WeatSprint memberships' from and thru dates and the audit log of the items'
+    statusId, estimatedPoints, estimatedWorkTime and remainingWorkTime: a value at a time is the last one logged by then, else
+    the first logged after it (its old value, else its new one), else the item's value now. Done is Complete or Closed;
+    a cancelled item is left nothing to do but is not counted as completed. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <service verb="get" noun="SprintBurndown">
+        <description>
+            A sprint's burndown and numbers (SprintDetail, the sprint report, get#SprintVelocity). committed: the size of the
+            items in it when it started (for a planned sprint, of those in it now); added and removed: the size of the items put
+            in or taken out after the start (scopeChangeList: each change with the item, when and by whom, from the audit rows
+            TaskServices.set#TaskSprint writes); completed: the size of its items done when it completed (else now); remaining:
+            what is left of its items not done; carriedOver: the size of the items still open when it completed, which went to
+            another sprint or the backlog. dayList (withDays): a first point at the start, then one per day from the start day
+            through the end day (or the completion day when later) with the remaining work at the end of that day (null for a day
+            still to come) and the ideal line from the remaining at the start down to 0 on the end day by working days (Monday to
+            Friday). daysLeft: the working days from today through the end day while in progress. itemList: each item it has had,
+            with its size and what became of it.
+        </description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="withDays" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sprint" type="Map"/>
+            <parameter name="estimateUnit"/>
+            <parameter name="capacity" type="BigDecimal"/>
+            <parameter name="committed" type="BigDecimal"/>
+            <parameter name="added" type="BigDecimal"/>
+            <parameter name="removed" type="BigDecimal"/>
+            <parameter name="completed" type="BigDecimal"/>
+            <parameter name="remaining" type="BigDecimal"/>
+            <parameter name="carriedOver" type="BigDecimal"/>
+            <parameter name="itemCount" type="Integer"/>
+            <parameter name="doneCount" type="Integer"/>
+            <parameter name="daysLeft" type="Integer"/>
+            <parameter name="workDays" type="Integer"/>
+            <parameter name="dayList" type="List"/>
+            <parameter name="itemList" type="List"/>
+            <parameter name="scopeChangeList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            dayList = []; itemList = []; scopeChangeList = []
+            committed = 0; added = 0; removed = 0; completed = 0; remaining = 0; carriedOver = 0; itemCount = 0; doneCount = 0; daysLeft = 0; workDays = 0
+            const row = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (row == null || row.workEffortTypeEnumId !== 'WetSprint') { ec.message.addError(ec.resource.expand('Sprint ${workEffortId} not found', '', {workEffortId})); return }
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                if (typeof value === 'number') return value
+                const text = String(value)
+                if (/^-?\d+$/.test(text)) return Number(text)
+                const parsed = Date.parse(text)
+                return Number.isNaN(parsed) ? null : parsed
+            }
+            const num = (value) => value == null || value === '' ? null : Number(String(value))
+            const round = (value) => Math.round(value * 100) / 100
+            const settings = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectSettings').parameters({workEffortId: row.rootWorkEffortId}).call()?.settings || {}
+            estimateUnit = settings.WstEstimateUnit === 'points' ? 'points' : 'hours'
+            const points = estimateUnit === 'points'
+            capacity = num(points ? row.estimatedPoints : row.totalTimeAllowed)
+            const statusId = row.statusId
+            const started = !['WeInPlanning', 'WeApproved'].includes(statusId)
+            const closed = ['WeComplete', 'WeClosed'].includes(statusId)
+            const nowMs = toMillis(ec.user.nowTimestamp)
+            const startMs = started ? (toMillis(row.actualStartDate) ?? toMillis(row.estimatedStartDate)) : toMillis(row.estimatedStartDate)
+            const endMs = toMillis(row.estimatedCompletionDate)
+            const completionMs = closed ? (toMillis(row.actualCompletionDate) ?? endMs ?? nowMs) : null
+            // the time the actuals run to: the completion, or now; none for a planned sprint
+            const cutoff = !started ? null : (closed ? completionMs : nowMs)
+            sprint = {workEffortId: row.workEffortId, workEffortName: row.workEffortName || row.workEffortId, rootWorkEffortId: row.rootWorkEffortId,
+                statusId: statusId, description: row.description || null, estimatedStartDate: row.estimatedStartDate ?? null,
+                estimatedCompletionDate: row.estimatedCompletionDate ?? null, actualStartDate: row.actualStartDate ?? null,
+                actualCompletionDate: row.actualCompletionDate ?? null, started: started, closed: closed}
+
+            const assocs = Array.from(ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', workEffortId)
+                    .condition('workEffortAssocTypeEnumId', 'WeatSprint').orderBy('fromDate').list())
+                    .map((assoc) => ({toId: assoc.toWorkEffortId, from: toMillis(assoc.fromDate), thru: toMillis(assoc.thruDate)}))
+            const ids = Array.from(new Set(assocs.map((assoc) => assoc.toId)))
+            const items = {}
+            if (ids.length) for (const item of ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'in', ids).list()) items[item.workEffortId] = item
+            const fields = ['statusId', 'estimatedPoints', 'estimatedWorkTime', 'remainingWorkTime']
+            const history = {}
+            if (ids.length) for (const log of ec.entity.find('moqui.entity.EntityAuditLog').condition('changedEntityName', 'mantle.work.effort.WorkEffort')
+                    .condition('pkPrimaryValue', 'in', ids).condition('changedFieldName', 'in', fields).orderBy('changedDate').disableAuthz().list()) {
+                const key = log.pkPrimaryValue + '|' + log.changedFieldName
+                ;(history[key] || (history[key] = [])).push({at: toMillis(log.changedDate), oldValue: log.oldValueText ?? null, newValue: log.newValueText ?? null})
+            }
+            const valueAt = (id, field, at) => {
+                const rows = history[id + '|' + field]
+                if (at == null || !rows || !rows.length) return items[id]?.[field] ?? null
+                let found
+                for (const entry of rows) { if (entry.at <= at) found = entry; else break }
+                if (found) return found.newValue
+                return rows[0].oldValue ?? rows[0].newValue
+            }
+            const doneAt = (id, at) => ['WeComplete', 'WeClosed'].includes(valueAt(id, 'statusId', at))
+            const endedAt = (id, at) => ['WeComplete', 'WeClosed', 'WeCancelled'].includes(valueAt(id, 'statusId', at))
+            // an item's size (points, or its estimate in hours) and what is left of it (nothing when it is done or cancelled)
+            const sizeAt = (id, at) => num(valueAt(id, points ? 'estimatedPoints' : 'estimatedWorkTime', at)) || 0
+            const leftAt = (id, at) => endedAt(id, at) ? 0 : (points ? sizeAt(id, at) : (num(valueAt(id, 'remainingWorkTime', at)) ?? sizeAt(id, at)))
+            // carried over: still in the sprint when it completed, its membership ended then
+            const carried = (assoc) => completionMs != null && assoc.thru != null && assoc.thru >= completionMs
+            const memberAt = (assoc, at) => assoc.from <= at && (assoc.thru == null || assoc.thru > at || carried(assoc))
+            const membersAt = (at) => {
+                const seen = new Set()
+                return assocs.filter((assoc) => memberAt(assoc, at) && !seen.has(assoc.toId) && seen.add(assoc.toId))
+            }
+
+            if (started && startMs != null) {
+                for (const assoc of membersAt(startMs)) committed += sizeAt(assoc.toId, startMs)
+                for (const assoc of assocs) {
+                    if (assoc.from > startMs && assoc.from <= cutoff) added += sizeAt(assoc.toId, assoc.from)
+                    if (assoc.thru != null && assoc.thru > startMs && assoc.thru <= cutoff && !carried(assoc)) removed += sizeAt(assoc.toId, assoc.thru)
+                }
+            } else {
+                // planned: what is in it now
+                for (const assoc of assocs) if (assoc.thru == null) committed += sizeAt(assoc.toId, null)
+            }
+            const atCut = cutoff != null ? cutoff : nowMs
+            const members = assocs.filter((assoc) => memberAt(assoc, atCut) && (cutoff != null || assoc.thru == null))
+            const seenNow = new Set()
+            for (const assoc of members) {
+                if (seenNow.has(assoc.toId)) continue
+                seenNow.add(assoc.toId)
+                itemCount++
+                if (doneAt(assoc.toId, atCut)) { doneCount++; completed += sizeAt(assoc.toId, atCut) }
+                remaining += leftAt(assoc.toId, atCut)
+                if (carried(assoc) && !endedAt(assoc.toId, completionMs)) carriedOver += sizeAt(assoc.toId, completionMs)
+            }
+
+            // each item it has had
+            const kind = (assoc) => carried(assoc) ? (endedAt(assoc.toId, completionMs) ? 'done' : 'carried') : assoc.thru != null && (cutoff == null || assoc.thru <= cutoff) ? 'removed'
+                    : (endedAt(assoc.toId, atCut) ? (doneAt(assoc.toId, atCut) ? 'done' : 'cancelled') : 'open')
+            for (const assoc of assocs) {
+                const item = items[assoc.toId]
+                if (!item) continue
+                itemList.push({workEffortId: assoc.toId, workEffortName: item.workEffortName || assoc.toId, statusId: item.statusId || null,
+                    size: round(sizeAt(assoc.toId, assoc.thru != null ? assoc.thru : atCut)), outcome: kind(assoc),
+                    addedAfterStart: started && startMs != null && assoc.from > startMs, fromDate: assoc.from, thruDate: assoc.thru})
+            }
+
+            // the scope changes after the start, with who made them (the audit rows of set#TaskSprint)
+            if (started && startMs != null) {
+                const audits = Array.from(ec.entity.find('moqui.entity.EntityAuditLog').condition('changedEntityName', 'mantle.work.effort.WorkEffortAssoc')
+                        .condition('pkPrimaryValue', workEffortId).condition('changedFieldName', 'in', ['fromDate', 'thruDate']).disableAuthz().list())
+                        .map((log) => ({toId: log.pkSecondaryValue, field: log.changedFieldName, at: toMillis(log.changedDate), userId: log.changedByUserId || null}))
+                const userNames = {}
+                const byOf = (toId, field, at) => {
+                    const near = audits.filter((log) => log.toId === toId && log.field === field && Math.abs(log.at - at) <= 60000)
+                            .sort((left, right) => Math.abs(left.at - at) - Math.abs(right.at - at))[0]
+                    if (!near || !near.userId) return {userId: null, userName: null}
+                    if (userNames[near.userId] === undefined) {
+                        const account = ec.entity.find('moqui.security.UserAccount').condition('userId', near.userId).disableAuthz().one()
+                        userNames[near.userId] = account ? (account.userFullName || account.username || near.userId) : near.userId
+                    }
+                    return {userId: near.userId, userName: userNames[near.userId]}
+                }
+                for (const assoc of assocs) {
+                    const name = items[assoc.toId]?.workEffortName || assoc.toId
+                    if (assoc.from > startMs && assoc.from <= cutoff)
+                        scopeChangeList.push(Object.assign({workEffortId: assoc.toId, workEffortName: name, change: 'added', changedDate: assoc.from,
+                            size: round(sizeAt(assoc.toId, assoc.from))}, byOf(assoc.toId, 'fromDate', assoc.from)))
+                    if (assoc.thru != null && assoc.thru > startMs && assoc.thru <= cutoff && !carried(assoc))
+                        scopeChangeList.push(Object.assign({workEffortId: assoc.toId, workEffortName: name, change: 'removed', changedDate: assoc.thru,
+                            size: round(sizeAt(assoc.toId, assoc.thru))}, byOf(assoc.toId, 'thruDate', assoc.thru)))
+                }
+                scopeChangeList.sort((left, right) => left.changedDate - right.changedDate || String(left.workEffortId).localeCompare(String(right.workEffortId)))
+            }
+
+            // the days, by the days of the user's time zone
+            const dayText = (millis) => ec.l10n.format(String(millis), 'yyyy-MM-dd')
+            const dayStart = (text) => toMillis(ec.l10n.parseTimestamp(text + ' 00:00:00.000', 'yyyy-MM-dd HH:mm:ss.SSS'))
+            const addDays = (text, days) => { const d = new Date(text + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().substring(0, 10) }
+            const workday = (text) => { const day = new Date(text + 'T12:00:00Z').getUTCDay(); return day !== 0 && day !== 6 }
+            if (startMs != null && endMs != null) {
+                const firstDay = dayText(startMs)
+                const endDay = dayText(endMs)
+                let lastDay = endDay
+                if (completionMs != null && dayText(completionMs) > lastDay) lastDay = dayText(completionMs)
+                const days = []
+                for (let day = firstDay, guard = 0; day <= lastDay && guard < 400; day = addDays(day, 1), guard++) days.push(day)
+                workDays = days.filter((day) => day <= endDay && workday(day)).length
+                if (statusId === 'WeInProgress') {
+                    const today = dayText(nowMs)
+                    daysLeft = days.filter((day) => day >= today && day <= endDay && workday(day)).length
+                } else if (!started) daysLeft = workDays
+                if (withDays) {
+                    // the ideal starts from what was left at the start (a planned sprint: its committed size)
+                    let startLeft = committed
+                    if (started) { startLeft = 0; for (const assoc of membersAt(startMs)) startLeft += leftAt(assoc.toId, startMs) }
+                    const leftOn = (at) => { let sum = 0; for (const assoc of membersAt(at)) sum += leftAt(assoc.toId, at); return round(sum) }
+                    dayList.push({day: firstDay, start: true, remaining: started ? round(startLeft) : null, ideal: round(startLeft)})
+                    days.forEach((day) => {
+                        const after = days.filter((other) => other > day && other <= endDay && workday(other)).length
+                        const ideal = workDays ? round(startLeft * after / workDays) : 0
+                        const dayEnd = dayStart(addDays(day, 1)) - 1
+                        let left = null
+                        if (cutoff != null && dayStart(day) <= cutoff) left = leftOn(Math.min(dayEnd, cutoff))
+                        dayList.push({day: day, start: false, remaining: left, ideal: day > endDay ? 0 : ideal, workday: workday(day)})
+                    })
+                }
+            }
+            committed = round(committed); added = round(added); removed = round(removed); completed = round(completed)
+            remaining = round(remaining); carriedOver = round(carriedOver)
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="SprintVelocity">
+        <description>The velocity of a project's last sprints (sprintCount, the latest first; the sprint report, SprintDetail):
+            each completed sprint's committed, added, removed, completed and carried-over size in the project's estimate unit
+            (get#SprintBurndown), with the active ones too when includeActive; averageCompleted over the completed ones. A
+            sprint whose numbers fail is logged and left out.</description>
+        <in-parameters>
+            <parameter name="rootWorkEffortId" required="true"/>
+            <parameter name="sprintCount" type="Integer" default="6"/>
+            <parameter name="includeActive" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="estimateUnit"/>
+            <parameter name="sprintList" type="List"/>
+            <parameter name="averageCompleted" type="BigDecimal"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            sprintList = []; averageCompleted = null
+            const settings = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectSettings').parameters({workEffortId: rootWorkEffortId}).call()?.settings || {}
+            estimateUnit = settings.WstEstimateUnit === 'points' ? 'points' : 'hours'
+            const statuses = ['WeComplete', 'WeClosed'].concat(includeActive ? ['WeInProgress'] : [])
+            const rows = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', rootWorkEffortId)
+                    .condition('workEffortTypeEnumId', 'WetSprint').condition('statusId', 'in', statuses)
+                    .orderBy('-actualCompletionDate').orderBy('-actualStartDate').limit(Math.max(1, Math.min(Number(sprintCount) || 6, 50))).list())
+            let sum = 0, count = 0
+            for (const row of rows) {
+                try {
+                    ec.message.pushErrors()
+                    const out = ec.service.sync().name('mantle.work.ProjectReportServices.get#SprintBurndown').parameters({workEffortId: row.workEffortId, withDays: false}).call() || {}
+                    if (ec.message.hasError()) { ec.logger.error(`Sprint velocity of ${rootWorkEffortId}: ${row.workEffortId} left out: ${ec.message.getErrorsString()}`); continue }
+                    sprintList.push({workEffortId: row.workEffortId, workEffortName: row.workEffortName || row.workEffortId, statusId: row.statusId,
+                        actualStartDate: row.actualStartDate ?? null, actualCompletionDate: row.actualCompletionDate ?? null, capacity: out.capacity ?? null,
+                        committed: out.committed, added: out.added, removed: out.removed, completed: out.completed, carriedOver: out.carriedOver})
+                    if (row.statusId !== 'WeInProgress') { sum += Number(String(out.completed || 0)); count++ }
+                } catch (err) {
+                    ec.logger.error(`Sprint velocity of ${rootWorkEffortId}: ${row.workEffortId} left out: ${err && err.message ? err.message : err}`)
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
+            if (count) averageCompleted = Math.round(sum / count * 100) / 100
+        ]]></script></actions>
+    </service>
+</services>

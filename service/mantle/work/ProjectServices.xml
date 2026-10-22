@@ -1078,6 +1078,250 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="update#mantle.work.effort.WorkEffort" out-map="context" in-map="context"/>
         </actions>
     </service>
+
+    <!-- ========== Sprints of IronStone Projects (design-projects.md §5 Backlog and SprintDetail, §15 Sprints; impl-projects.md P4a) ==========
+        A sprint is a WorkEffort WetSprint under its project (rootWorkEffortId), id <KEY>-SP-<n>: In Planning while planned, In
+        Progress while active (started), Complete when closed. Its goal is the description, its dates the estimated start and
+        completion (actualStartDate and actualCompletionDate when it starts and ends), and its capacity is in the project's
+        estimate unit (WstEstimateUnit): estimatedPoints for points, totalTimeAllowed for hours. Items join it by
+        WorkEffortAssoc WeatSprint (TaskServices.set#TaskSprint); a membership ends with a thruDate, so a sprint keeps its
+        history, and the items carried over when it completes end theirs at its actualCompletionDate. -->
+
+    <service verb="get" noun="SprintDefaults">
+        <description>What a new sprint of a project starts with (SprintForm): its number (n of the id KEY-SP-n, one past the
+            highest), the name Sprint n, the start the next weekday after the latest sprint ends (else today), the end two weeks
+            after the latest sprint's end (else 13 days after the start), the last end moved back to a Friday when it falls on
+            a weekend, as yyyy-MM-dd; the project's estimate unit (hours or points) and its sprints' latest capacity.</description>
+        <in-parameters><parameter name="rootWorkEffortId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="sprintNumber" type="Integer"/>
+            <parameter name="workEffortId"/>
+            <parameter name="workEffortName"/>
+            <parameter name="startDay"/>
+            <parameter name="endDay"/>
+            <parameter name="estimateUnit"/>
+            <parameter name="capacity" type="BigDecimal"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const settings = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectSettings').parameters({workEffortId: rootWorkEffortId}).call()?.settings || {}
+            estimateUnit = settings.WstEstimateUnit === 'points' ? 'points' : 'hours'
+            const sprints = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', rootWorkEffortId)
+                    .condition('workEffortTypeEnumId', 'WetSprint').list())
+            let highest = 0
+            for (const row of sprints) { const match = /-SP-(\d+)$/.exec(String(row.workEffortId)); if (match) highest = Math.max(highest, Number(match[1])) }
+            sprintNumber = highest + 1
+            // an id free of other records: the next number past any taken
+            while (ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', rootWorkEffortId + '-SP-' + sprintNumber).count() > 0) sprintNumber++
+            workEffortId = rootWorkEffortId + '-SP-' + sprintNumber
+            workEffortName = ec.resource.expand('Sprint ${sprintNumber}', '', {sprintNumber})
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                if (typeof value === 'number') return value
+                const text = String(value)
+                if (/^-?\d+$/.test(text)) return Number(text)
+                const parsed = Date.parse(text)
+                return Number.isNaN(parsed) ? null : parsed
+            }
+            const dayText = (millis) => ec.l10n.format(String(millis), 'yyyy-MM-dd')
+            const dayMillis = (text) => toMillis(ec.l10n.parseTimestamp(text + ' 00:00:00.000', 'yyyy-MM-dd HH:mm:ss.SSS'))
+            const addDays = (text, days) => { const d = new Date(text + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().substring(0, 10) }
+            const weekday = (text) => new Date(text + 'T12:00:00Z').getUTCDay()
+            let lastEnd = null
+            for (const row of sprints) {
+                const end = toMillis(row.estimatedCompletionDate)
+                if (end != null && (lastEnd == null || end > lastEnd)) lastEnd = end
+            }
+            if (lastEnd != null) {
+                const lastDay = dayText(lastEnd)
+                startDay = addDays(lastDay, 1)
+                while (weekday(startDay) === 0 || weekday(startDay) === 6) startDay = addDays(startDay, 1)
+                endDay = addDays(lastDay, 14)
+            } else {
+                startDay = dayText(toMillis(ec.user.nowTimestamp))
+                endDay = addDays(startDay, 13)
+            }
+            while (weekday(endDay) === 0 || weekday(endDay) === 6) endDay = addDays(endDay, -1)
+            if (dayMillis(endDay) < dayMillis(startDay)) endDay = startDay
+            const latest = sprints.filter((row) => (estimateUnit === 'points' ? row.estimatedPoints : row.totalTimeAllowed) != null)
+                    .sort((left, right) => (toMillis(right.estimatedStartDate) || 0) - (toMillis(left.estimatedStartDate) || 0))[0]
+            capacity = latest ? (estimateUnit === 'points' ? latest.estimatedPoints : latest.totalTimeAllowed) : null
+        ]]></script></actions>
+    </service>
+    <service verb="create" noun="Sprint">
+        <description>A sprint of a project (WetSprint, In Planning), id KEY-SP-n; the name, dates and capacity default as
+            get#SprintDefaults gives them. The goal is the description; the capacity is in the project's estimate unit.</description>
+        <in-parameters>
+            <parameter name="rootWorkEffortId" required="true"/>
+            <parameter name="workEffortName"/>
+            <parameter name="description"><description>The goal</description></parameter>
+            <parameter name="estimatedStartDate" type="Timestamp" format="yyyy-MM-dd"/>
+            <parameter name="estimatedCompletionDate" type="Timestamp" format="yyyy-MM-dd"/>
+            <parameter name="capacity" type="BigDecimal"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortId"/></out-parameters>
+        <actions><script><![CDATA[
+            const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', rootWorkEffortId).one()
+            if (project == null || project.workEffortTypeEnumId !== 'WetProject') { ec.message.addError(ec.resource.expand('Project ${rootWorkEffortId} not found', '', {rootWorkEffortId})); return }
+            const defaults = ec.service.sync().name('mantle.work.ProjectServices.get#SprintDefaults').parameters({rootWorkEffortId: rootWorkEffortId}).call() || {}
+            const day = (text) => ec.l10n.parseTimestamp(text + ' 00:00:00.000', 'yyyy-MM-dd HH:mm:ss.SSS')
+            const millis = (value) => value == null || value === '' ? null : (/^-?\d+$/.test(String(value)) ? Number(String(value)) : Date.parse(String(value)))
+            const start = estimatedStartDate || day(defaults.startDay)
+            const end = estimatedCompletionDate || day(defaults.endDay)
+            if (start != null && end != null && millis(end) < millis(start)) { ec.message.addError(ec.l10n.localize('A sprint ends after it starts')); return }
+            const name = workEffortName && String(workEffortName).trim() ? String(workEffortName).trim() : defaults.workEffortName
+            const fields = {workEffortId: defaults.workEffortId, workEffortTypeEnumId: 'WetSprint', rootWorkEffortId: rootWorkEffortId, statusId: 'WeInPlanning',
+                workEffortName: name, description: description || null, estimatedStartDate: start, estimatedCompletionDate: end, timeUomId: 'TF_hr'}
+            if (capacity != null) fields[defaults.estimateUnit === 'points' ? 'estimatedPoints' : 'totalTimeAllowed'] = capacity
+            workEffortId = ec.service.sync().name('create#mantle.work.effort.WorkEffort').parameters(fields).call()?.workEffortId || defaults.workEffortId
+        ]]></script></actions>
+    </service>
+    <service verb="update" noun="Sprint">
+        <description>A sprint's name, goal (description), dates and capacity (in the project's estimate unit); an empty capacity
+            clears it. A parameter not given is left as it is.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="workEffortName"/>
+            <parameter name="description"/>
+            <parameter name="estimatedStartDate" type="Timestamp" format="yyyy-MM-dd"/>
+            <parameter name="estimatedCompletionDate" type="Timestamp" format="yyyy-MM-dd"/>
+            <parameter name="capacity"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const sprint = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (sprint == null || sprint.workEffortTypeEnumId !== 'WetSprint') { ec.message.addError(ec.resource.expand('Sprint ${workEffortId} not found', '', {workEffortId})); return }
+            const fields = {workEffortId: workEffortId}
+            if (workEffortName != null) {
+                if (!String(workEffortName).trim()) { ec.message.addError(ec.l10n.localize('A sprint needs a name')); return }
+                fields.workEffortName = String(workEffortName).trim()
+            }
+            if (description != null) fields.description = String(description)
+            if (estimatedStartDate != null) fields.estimatedStartDate = estimatedStartDate
+            if (estimatedCompletionDate != null) fields.estimatedCompletionDate = estimatedCompletionDate
+            const millis = (value) => value == null || value === '' ? null : (/^-?\d+$/.test(String(value)) ? Number(String(value)) : Date.parse(String(value)))
+            const start = millis(fields.estimatedStartDate ?? sprint.estimatedStartDate)
+            const end = millis(fields.estimatedCompletionDate ?? sprint.estimatedCompletionDate)
+            if (start != null && end != null && !Number.isNaN(start) && !Number.isNaN(end) && end < start) { ec.message.addError(ec.l10n.localize('A sprint ends after it starts')); return }
+            if (capacity != null) {
+                const text = String(capacity).trim()
+                const number = text === '' ? null : Number(text)
+                if (number != null && (!Number.isFinite(number) || number < 0)) { ec.message.addError(ec.l10n.localize('The capacity is a number of 0 or more')); return }
+                const settings = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectSettings').parameters({workEffortId: sprint.rootWorkEffortId}).call()?.settings || {}
+                fields[settings.WstEstimateUnit === 'points' ? 'estimatedPoints' : 'totalTimeAllowed'] = number
+            }
+            ec.service.sync().name('update#mantle.work.effort.WorkEffort').parameters(fields).call()
+        ]]></script></actions>
+    </service>
+    <service verb="start" noun="Sprint">
+        <description>Begins a planned sprint (In Planning, or Approved): In Progress from now (actualStartDate), with new dates or
+            goal when given. Refused while another sprint of the project is in progress, naming it, unless the project allows
+            several (WstSeveralSprints Y, for teams sharing a project). The items in the sprint now are its commitment.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="description"/>
+            <parameter name="estimatedStartDate" type="Timestamp" format="yyyy-MM-dd"/>
+            <parameter name="estimatedCompletionDate" type="Timestamp" format="yyyy-MM-dd"/>
+        </in-parameters>
+        <out-parameters><parameter name="itemCount" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            const sprint = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (sprint == null || sprint.workEffortTypeEnumId !== 'WetSprint') { ec.message.addError(ec.resource.expand('Sprint ${workEffortId} not found', '', {workEffortId})); return }
+            if (!['WeInPlanning', 'WeApproved'].includes(sprint.statusId)) {
+                ec.message.addError(ec.resource.expand('${name} is not planned, so it cannot start', '', {name: sprint.workEffortName || workEffortId})); return
+            }
+            const settings = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectSettings').parameters({workEffortId: sprint.rootWorkEffortId}).call()?.settings || {}
+            if (settings.WstSeveralSprints !== 'Y') {
+                const active = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', sprint.rootWorkEffortId)
+                        .condition('workEffortTypeEnumId', 'WetSprint').condition('statusId', 'WeInProgress').condition('workEffortId', 'not-equals', workEffortId).list())
+                if (active.length) {
+                    ec.message.addError(ec.resource.expand('${names} is in progress: complete it first, or let the project run several sprints at once', '',
+                        {names: active.map((row) => row.workEffortName || row.workEffortId).join(', ')}))
+                    return
+                }
+            }
+            const fields = {workEffortId: workEffortId, statusId: 'WeInProgress', actualStartDate: ec.user.nowTimestamp}
+            if (description != null) fields.description = description
+            if (estimatedStartDate != null) fields.estimatedStartDate = estimatedStartDate
+            if (estimatedCompletionDate != null) fields.estimatedCompletionDate = estimatedCompletionDate
+            ec.service.sync().name('update#mantle.work.effort.WorkEffort').parameters(fields).call()
+            itemCount = ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', workEffortId)
+                    .condition('workEffortAssocTypeEnumId', 'WeatSprint').conditionDate('fromDate', 'thruDate', null).count()
+        ]]></script></actions>
+    </service>
+    <service verb="complete" noun="Sprint">
+        <description>Ends a sprint in progress: Complete from now (actualCompletionDate). Its items that are done (Complete or
+            Closed) and cancelled stay in it; the rest are carried over, their membership ending at the completion: to
+            carryToSprintId (a planned or active sprint of the project), else by carryTo: next (the default: the next planned
+            sprint by its start, a new one when there is none), new (a new sprint, newSprintName or the default name) or
+            backlog (no sprint).</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="carryTo" default-value="next"/>
+            <parameter name="carryToSprintId"/>
+            <parameter name="newSprintName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="doneCount" type="Integer"/>
+            <parameter name="notDoneCount" type="Integer"/>
+            <parameter name="carriedToSprintId"/>
+            <parameter name="carriedIds" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            doneCount = 0; notDoneCount = 0; carriedToSprintId = null; carriedIds = []
+            const sprint = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (sprint == null || sprint.workEffortTypeEnumId !== 'WetSprint') { ec.message.addError(ec.resource.expand('Sprint ${workEffortId} not found', '', {workEffortId})); return }
+            if (sprint.statusId !== 'WeInProgress') { ec.message.addError(ec.resource.expand('${name} is not in progress, so it cannot complete', '', {name: sprint.workEffortName || workEffortId})); return }
+            const memberships = Array.from(ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', workEffortId)
+                    .condition('workEffortAssocTypeEnumId', 'WeatSprint').conditionDate('fromDate', 'thruDate', null).list())
+            const items = memberships.length ? Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'in', memberships.map((assoc) => assoc.toWorkEffortId)).list()) : []
+            const open = items.filter((item) => !['WeComplete', 'WeClosed', 'WeCancelled'].includes(item.statusId))
+            doneCount = items.filter((item) => ['WeComplete', 'WeClosed'].includes(item.statusId)).length
+            notDoneCount = open.length
+            // where the open items go
+            const openSprint = ['WeInPlanning', 'WeApproved', 'WeInProgress']
+            if (open.length) {
+                if (carryToSprintId) {
+                    const target = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', carryToSprintId).one()
+                    if (target == null || target.workEffortTypeEnumId !== 'WetSprint' || target.rootWorkEffortId !== sprint.rootWorkEffortId
+                            || target.workEffortId === workEffortId || !openSprint.includes(target.statusId)) {
+                        ec.message.addError(ec.resource.expand('${carryToSprintId} is not an open sprint of the project', '', {carryToSprintId})); return
+                    }
+                    carriedToSprintId = carryToSprintId
+                } else if (carryTo === 'next' || carryTo === 'new') {
+                    const toMillis = (value) => value == null || value === '' ? Number.MAX_SAFE_INTEGER : (/^-?\d+$/.test(String(value)) ? Number(String(value)) : Date.parse(String(value)))
+                    const next = carryTo === 'next' ? Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', sprint.rootWorkEffortId)
+                            .condition('workEffortTypeEnumId', 'WetSprint').condition('statusId', 'in', ['WeInPlanning', 'WeApproved']).list())
+                            .sort((left, right) => toMillis(left.estimatedStartDate) - toMillis(right.estimatedStartDate) || String(left.workEffortId).localeCompare(String(right.workEffortId)))[0] : null
+                    carriedToSprintId = next ? next.workEffortId : ec.service.sync().name('mantle.work.ProjectServices.create#Sprint').parameters({rootWorkEffortId: sprint.rootWorkEffortId,
+                        workEffortName: newSprintName || null}).call()?.workEffortId
+                    if (ec.message.hasError()) return
+                } else if (carryTo !== 'backlog') {
+                    ec.message.addError(ec.resource.expand('${carryTo} is not where open items go: next, new or backlog', '', {carryTo})); return
+                }
+            }
+            const now = ec.user.nowTimestamp
+            ec.service.sync().name('update#mantle.work.effort.WorkEffort').parameters({workEffortId: workEffortId, statusId: 'WeComplete', actualCompletionDate: now}).call()
+            if (ec.message.hasError()) return
+            // the carry-over: each open item's membership ends at the completion, and starts in the next sprint then; one that fails is logged and the rest go on
+            for (const item of open) {
+                try {
+                    const assoc = memberships.find((row) => row.toWorkEffortId === item.workEffortId)
+                    assoc.set('thruDate', now)
+                    assoc.update()
+                    if (carriedToSprintId) {
+                        const same = ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', carriedToSprintId).condition('toWorkEffortId', item.workEffortId)
+                                .condition('workEffortAssocTypeEnumId', 'WeatSprint').condition('fromDate', now).one()
+                        if (same != null) { same.set('thruDate', null); same.update() }
+                        else ec.service.sync().name('create#mantle.work.effort.WorkEffortAssoc').parameters({workEffortId: carriedToSprintId, toWorkEffortId: item.workEffortId,
+                            workEffortAssocTypeEnumId: 'WeatSprint', fromDate: now}).call()
+                    }
+                    carriedIds.push(item.workEffortId)
+                } catch (err) {
+                    ec.logger.error(`Complete sprint ${workEffortId}: ${item.workEffortId} not carried over: ${err && err.message ? err.message : err}`)
+                }
+            }
+        ]]></script></actions>
+    </service>
+
     <!-- ========== The project hub of IronStone Projects (design-projects.md §3, §4, §15; impl-projects.md P2) ========== -->
 
     <service verb="post" noun="ProjectUpdate">
