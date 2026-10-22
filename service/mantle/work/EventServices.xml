@@ -35,6 +35,10 @@ along with this software (see the LICENSE.md file). If not, see
             it is in an asked calendar, though not when it books an asked resource.
             With publishToken (a publish link, mantle.work.CalendarServices.share#Calendar) only that calendar's events, at
             the link's permission, and publishPassword must match its password.
+            With rootWorkEffortId (a project; IronStone Projects' calendar, design-projects.md §15 Calendar project filter) only
+            the events linked to it (WorkEffortRecord of mantle.work.effort.WorkEffort) are in: all of them for a user who is a
+            current party of the project (or ADMIN), else those the user owns or is a party of; the project's milestones,
+            releases, sprints and work items are the caller's to read.
 
             A recurring event is expanded by get#EventInstances: an RFC 5545 rule (WorkEffortRecurrence) through the
             framework's ICalendar tool, without which only the series' own first instance shows; an instance changed on its
@@ -66,6 +70,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="workEffortTypeEnumIds" type="List"><description>Default WetEvent</description></parameter>
             <parameter name="publishToken"/>
             <parameter name="publishPassword"/>
+            <parameter name="rootWorkEffortId"><description>A project: only its linked events (WorkEffortRecord)</description></parameter>
             <parameter name="titleGString" default-value="\${(workEffort.workEffortName || (workEffort.purposeEnumId ? workEffort.purpose.description : 'Event')) + ' [' + workEffort.workEffortId + ']'}"/>
             <parameter name="urlGString"/>
         </in-parameters>
@@ -158,7 +163,19 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 if (!partyIdSet.length && userPartyId) partyIdSet.push(userPartyId)
             }
-            if (!facilityIdSet.length && !partyIdSet.length && !assetIdSet.length && !calendarLevel.size) return
+            // a project's calendar: only its linked events, all of them for a party of the project, else the user's own
+            let projectEventIds = []
+            let linkedIds = null
+            if (rootWorkEffortId && !publishToken) {
+                linkedIds = Array.from(ec.entity.find('mantle.work.effort.WorkEffortRecord').condition('recordEntityName', 'mantle.work.effort.WorkEffort')
+                        .condition('recordId', rootWorkEffortId).selectField('workEffortId').list()).map((row) => row.workEffortId)
+                if (!linkedIds.length) return
+                const onProject = ec.user.isInGroup('ADMIN') || (!!userPartyId && ec.entity.find('mantle.work.effort.WorkEffortParty')
+                        .condition('workEffortId', rootWorkEffortId).condition('partyId', userPartyId).condition(cf.makeConditionDate('fromDate', 'thruDate', null)).count() > 0)
+                if (onProject) projectEventIds = linkedIds
+                else if (userPartyId && !partyIdSet.includes(userPartyId)) partyIdSet.push(userPartyId)
+            }
+            if (!facilityIdSet.length && !partyIdSet.length && !assetIdSet.length && !calendarLevel.size && !projectEventIds.length) return
             const calendarRows = new Map()
             if (calendarLevel.size) for (const row of ec.entity.find('mantle.work.calendar.Calendar')
                     .condition(cf.makeCondition('calendarId', 'in', Array.from(calendarLevel.keys()))).disableAuthz().list()) calendarRows.set(row.calendarId, row)
@@ -168,6 +185,7 @@ along with this software (see the LICENSE.md file). If not, see
             const types = workEffortTypeEnumIds && Array.from(workEffortTypeEnumIds).length ? Array.from(workEffortTypeEnumIds) : ['WetEvent']
             const typeConditions = [cf.makeCondition('workEffortTypeEnumId', 'in', types)]
             if (excludeCancelled) typeConditions.push(cf.makeCondition('statusId', 'not-equals', 'WeCancelled', true))
+            if (linkedIds) typeConditions.push(cf.makeCondition('workEffortId', 'in', linkedIds.slice(0, 1000)))
             const typeCondition = cf.makeCondition(typeConditions, 'and')
             const dayBeforeStart = new Date(rangeStartMs - 86400000)
             const recurEndOk = cf.makeCondition([cf.makeCondition('recurEndDate', 'is-null', null),
@@ -194,7 +212,7 @@ along with this software (see the LICENSE.md file). If not, see
             const memberOf = (id) => {
                 let member = members.get(id)
                 if (!member) {
-                    member = {calendarIds: [], partyRows: [], owner: false, allUsers: false, resource: false, bookingStatusId: null}
+                    member = {calendarIds: [], partyRows: [], owner: false, allUsers: false, resource: false, project: false, bookingStatusId: null}
                     members.set(id, member)
                 }
                 return member
@@ -238,6 +256,8 @@ along with this software (see the LICENSE.md file). If not, see
                     member.resource = true
                     if (row.bookingStatusId && !member.bookingStatusId) member.bookingStatusId = row.bookingStatusId
                 }
+                if (projectEventIds.length) for (let i = 0; i < projectEventIds.length; i += 500) for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition(base)
+                        .condition(cf.makeCondition('workEffortId', 'in', projectEventIds.slice(i, i + 500))).selectField('workEffortId').list()) memberOf(row.workEffortId).project = true
                 if (calendarLevel.size) for (const row of ec.entity.find('mantle.work.calendar.CalendarWorkEffortDetail').condition(base)
                         .condition(cf.makeCondition('calendarId', 'in', Array.from(calendarLevel.keys()))).selectField('workEffortId,calendarId').list()) {
                     const member = memberOf(row.workEffortId)
@@ -258,7 +278,7 @@ along with this software (see the LICENSE.md file). If not, see
                     Array.from(members.keys()))).selectField('workEffortId,ownerPartyId').list()) owners.set(row.workEffortId, row.ownerPartyId ?? null)
             const shownIds = []
             for (const [id, member] of members) {
-                const declined = member.partyRows.length > 0 && !member.owner && !member.calendarIds.length && !member.resource
+                const declined = member.partyRows.length > 0 && !member.owner && !member.calendarIds.length && !member.resource && !member.project
                         && member.partyRows.every(isDeclined)
                 // the user's own declined invitation, whatever calendar it is in
                 const mine = userPartyId ? member.partyRows.filter((row) => row.partyId === userPartyId) : []
@@ -298,7 +318,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const member = members.get(instance.workEffortId) || members.get(instance.seriesWorkEffortId) || memberOf(instance.workEffortId)
                 const calendarId = calendarOrder.find((id) => member.calendarIds.includes(id)) || null
                 const freeBusyOnly = member.calendarIds.length > 0 && member.calendarIds.every((id) => calendarLevel.get(id) === 1)
-                        && !member.partyRows.length && !member.owner && !member.allUsers && !member.resource
+                        && !member.partyRows.length && !member.owner && !member.allUsers && !member.resource && !member.project
                 const partyRow = member.partyRows.find((row) => row.partyId === userPartyId) || member.partyRows[0] || null
                 let url = ''
                 if (urlGString && !freeBusyOnly) {

@@ -765,6 +765,142 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="get" noun="TimelineData">
+        <description>
+            What the Timeline draws (design-projects.md §5 Timeline, §15 Timeline data; impl-projects.md P4c):
+            - itemList: the work items of workEffortIds (a find's items, a list or comma text) with, by withAncestors, their
+              ancestors up to the top so the tree holds them (ancestor true), each as get#WorkItemTree gives it (only items the
+              user may see, depth, childCount, the roll-up) plus startDay and dueDay (its own estimated start and due, days
+              yyyy-MM-dd in the user's time zone), spanStartDay and spanDueDay (the earliest start and latest due of it and its
+              sub-items at every depth, cancelled ones aside: a parent's summary bar), progress (0 to 100: 100 when done, else
+              the roll-up's estimate less remaining over estimate, else the done of its sub-items), isDone, and its plan items
+              (milestoneId, releaseId, sprintId, componentId).
+            - dependencyList: the current WeatDependsOn between the items, {workEffortId (the dependent), toWorkEffortId (what it
+              waits for), lagDays, violated: it starts (or is due) before the next weekday after the other's due plus the lag}.
+            - planItemList: the milestones, releases and sprints of the items' projects (and of rootWorkEffortId), not
+              cancelled, {workEffortId, kind (milestone, release, sprint), workEffortName, rootWorkEffortId, statusId, startDay,
+              dueDay, actualCompletionDay, percentDone (get#PlanItemSummary), itemCount, doneCount}.
+        </description>
+        <in-parameters>
+            <parameter name="workEffortIds" type="Object"/>
+            <parameter name="withAncestors" type="Boolean" default="true"/>
+            <parameter name="rootWorkEffortId"/>
+            <parameter name="includePlanItems" type="Boolean" default="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="itemList" type="List"/>
+            <parameter name="dependencyList" type="List"/>
+            <parameter name="planItemList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            itemList = []
+            dependencyList = []
+            planItemList = []
+            const ids = workEffortIds == null ? [] : (typeof workEffortIds === 'string' ? workEffortIds.split(',') : Array.from(workEffortIds))
+                    .map((id) => String(id).trim()).filter((id) => id)
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                if (typeof value === 'number') return value
+                const text = String(value)
+                if (/^-?\d+$/.test(text)) return Number(text)
+                const parsed = Date.parse(text)
+                return Number.isNaN(parsed) ? null : parsed
+            }
+            const dayOf = (value) => toMillis(value) == null ? null : ec.l10n.format(String(toMillis(value)), 'yyyy-MM-dd')
+            const doneStatus = (statusId) => ['WeComplete', 'WeClosed'].includes(statusId)
+            const rows = ids.length ? Array.from(ec.service.sync().name('mantle.work.ProjectServices.get#WorkItemTree').parameters({workEffortIds: ids,
+                withAncestors: withAncestors}).call()?.workItemList || []) : []
+            const asked = new Set(ids)
+            const projectIds = new Set(rootWorkEffortId ? [rootWorkEffortId] : [])
+            for (const row of rows) if (row.rootWorkEffortId) projectIds.add(row.rootWorkEffortId)
+
+            // the spans of the subtrees: one read of each project's items
+            const kids = new Map()
+            const dates = new Map()
+            for (const projectId of projectIds) {
+                for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', projectId).condition('workEffortTypeEnumId', 'WetTask')
+                        .selectField('workEffortId,parentWorkEffortId,statusId,estimatedStartDate,estimatedCompletionDate').list()) {
+                    if (row.statusId === 'WeCancelled') continue
+                    dates.set(row.workEffortId, [dayOf(row.estimatedStartDate), dayOf(row.estimatedCompletionDate)])
+                    if (row.parentWorkEffortId) {
+                        if (!kids.has(row.parentWorkEffortId)) kids.set(row.parentWorkEffortId, [])
+                        kids.get(row.parentWorkEffortId).push(row.workEffortId)
+                    }
+                }
+            }
+            const spans = new Map()
+            const spanOf = (id, depth) => {
+                if (spans.has(id)) return spans.get(id)
+                const own = dates.get(id) || [null, null]
+                let first = own[0] || own[1]
+                let last = own[1] || own[0]
+                if ((depth || 0) < 200) for (const child of kids.get(id) || []) {
+                    const [childFirst, childLast] = spanOf(child, (depth || 0) + 1)
+                    if (childFirst && (!first || childFirst < first)) first = childFirst
+                    if (childLast && (!last || childLast > last)) last = childLast
+                }
+                const span = [first || null, last || null]
+                spans.set(id, span)
+                return span
+            }
+            // the plan items each item is in now
+            const plans = {}
+            const rowIds = rows.map((row) => row.workEffortId)
+            for (let i = 0; i < rowIds.length; i += 500) for (const assoc of ec.entity.find('mantle.work.effort.WorkEffortAssoc')
+                    .condition('toWorkEffortId', 'in', rowIds.slice(i, i + 500)).condition('workEffortAssocTypeEnumId', 'in', ['WeatMilestone', 'WeatRelease', 'WeatSprint', 'WeatComponent'])
+                    .conditionDate('fromDate', 'thruDate', null).selectField('workEffortId,toWorkEffortId,workEffortAssocTypeEnumId').list()) {
+                (plans[assoc.toWorkEffortId] || (plans[assoc.toWorkEffortId] = {}))[assoc.workEffortAssocTypeEnumId] = assoc.workEffortId
+            }
+            for (const row of rows) {
+                const isDone = doneStatus(row.statusId)
+                const span = spanOf(row.workEffortId)
+                let progress = isDone ? 100 : (row.percentDone != null ? Number(row.percentDone) : null)
+                if (progress == null) progress = row.itemCount ? Math.round(Number(row.doneCount || 0) * 100 / Number(row.itemCount)) : 0
+                const plan = plans[row.workEffortId] || {}
+                itemList.push(Object.assign({}, row, {ancestor: !asked.has(row.workEffortId), startDay: dayOf(row.estimatedStartDate), dueDay: dayOf(row.estimatedCompletionDate),
+                    spanStartDay: span[0], spanDueDay: span[1], progress: Math.max(0, Math.min(100, progress)), isDone: isDone,
+                    milestoneId: plan.WeatMilestone || null, releaseId: plan.WeatRelease || null, sprintId: plan.WeatSprint || null, componentId: plan.WeatComponent || null}))
+            }
+
+            // the dependencies between the items, and whether each is kept
+            const byId = new Map(itemList.map((row) => [row.workEffortId, row]))
+            const nextWeekday = (day, count) => {
+                const d = new Date(day + 'T12:00:00Z')
+                let left = count
+                while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) left-- }
+                return d.toISOString().substring(0, 10)
+            }
+            for (let i = 0; i < rowIds.length; i += 500) for (const link of ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', 'in', rowIds.slice(i, i + 500))
+                    .condition('workEffortAssocTypeEnumId', 'WeatDependsOn').conditionDate('fromDate', 'thruDate', null).list()) {
+                const dependent = byId.get(link.workEffortId)
+                const predecessor = byId.get(link.toWorkEffortId)
+                if (!dependent || !predecessor) continue
+                const lag = link.lagDays == null ? 0 : Number(String(link.lagDays)) || 0
+                const before = predecessor.dueDay || predecessor.startDay
+                const after = dependent.startDay || dependent.dueDay
+                const violated = !!before && !!after && !dependent.isDone && after < nextWeekday(before, 1 + Math.max(0, Math.ceil(lag)))
+                dependencyList.push({workEffortId: link.workEffortId, toWorkEffortId: link.toWorkEffortId, lagDays: link.lagDays == null ? null : lag,
+                    fromDate: link.fromDate, violated: violated})
+            }
+
+            if (!includePlanItems || !projectIds.size) return
+            const kinds = {WetMilestone: 'milestone', WetRelease: 'release', WetSprint: 'sprint'}
+            const planRows = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', 'in', Array.from(projectIds))
+                    .condition('workEffortTypeEnumId', 'in', Object.keys(kinds)).condition('statusId', 'not-equals', 'WeCancelled').list())
+            const summary = planRows.length ? ec.service.sync().name('mantle.work.ProjectServices.get#PlanItemSummary')
+                    .parameters({workEffortIdList: planRows.map((row) => row.workEffortId)}).call()?.summaryMap || {} : {}
+            for (const row of planRows) {
+                const stats = summary[row.workEffortId] || {}
+                planItemList.push({workEffortId: row.workEffortId, kind: kinds[row.workEffortTypeEnumId], workEffortTypeEnumId: row.workEffortTypeEnumId,
+                    workEffortName: row.workEffortName || row.workEffortId, rootWorkEffortId: row.rootWorkEffortId, statusId: row.statusId,
+                    startDay: dayOf(row.estimatedStartDate), dueDay: dayOf(row.estimatedCompletionDate), actualCompletionDay: dayOf(row.actualCompletionDate),
+                    percentDone: stats.percentDone || 0, itemCount: stats.itemCount || 0, doneCount: stats.doneCount || 0})
+            }
+            planItemList.sort((left, right) => String(left.dueDay || left.startDay || '9999').localeCompare(String(right.dueDay || right.startDay || '9999'))
+                    || String(left.workEffortId).localeCompare(String(right.workEffortId)))
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="WorkEffortChildStats">
         <description>Gets statistics for direct children WorkEfforts plus their descendants</description>
         <in-parameters>

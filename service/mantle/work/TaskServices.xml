@@ -403,6 +403,250 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <!-- ========== Dependencies and dates (design-projects.md §5 Timeline, §15 Dependency lag and Timeline data; impl-projects.md P4c) ========== -->
+
+    <service verb="add" noun="TaskDependency">
+        <description>workEffortId depends on (is blocked by) toWorkEffortId, finish to start, with lagDays working days between the
+            end of toWorkEffortId and the start of workEffortId (WorkEffortAssoc WeatDependsOn, whose direction is fixed this way).
+            Refused: an item depending on itself, on one of its ancestors or descendants (a parent's span holds its sub-items), a
+            dependency that closes a loop (toWorkEffortId already depends on workEffortId, at any remove), a negative lag, and a
+            work item or plan item not found. A dependency already there takes the new lag (created false).</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="toWorkEffortId" required="true"/>
+            <parameter name="lagDays" type="BigDecimal"/>
+        </in-parameters>
+        <out-parameters><parameter name="created" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            created = false
+            const L = (text, values) => ec.resource.expand(ec.l10n.localize(text), '', values || {})
+            const one = (id) => ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', id).one()
+            const from = one(workEffortId)
+            const to = one(toWorkEffortId)
+            if (from == null || from.workEffortTypeEnumId !== 'WetTask') { ec.message.addError(L('Work item ${id} not found', {id: workEffortId})); return }
+            if (to == null || to.workEffortTypeEnumId !== 'WetTask') { ec.message.addError(L('Work item ${id} not found', {id: toWorkEffortId})); return }
+            if (workEffortId === toWorkEffortId) { ec.message.addError(L('A work item does not depend on itself')); return }
+            const lag = lagDays == null || lagDays === '' ? null : Number(String(lagDays))
+            if (lag != null && (!Number.isFinite(lag) || lag < 0)) { ec.message.addError(L('The lag is 0 or more working days')); return }
+            // an ancestor or a descendant: the parent's span already holds its sub-items
+            const ancestors = (row) => {
+                const out = []
+                let at = row
+                for (let guard = 0; at && at.parentWorkEffortId && guard < 500; guard++) { out.push(at.parentWorkEffortId); at = one(at.parentWorkEffortId) }
+                return out
+            }
+            if (ancestors(from).includes(toWorkEffortId) || ancestors(to).includes(workEffortId)) {
+                ec.message.addError(L('${from} and ${to} are in one branch of the tree: a parent spans its sub-items', {from: workEffortId, to: toWorkEffortId})); return
+            }
+            // a loop: toWorkEffortId depends on workEffortId already, through any chain
+            const dependsOn = (id) => Array.from(ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', id)
+                    .condition('workEffortAssocTypeEnumId', 'WeatDependsOn').conditionDate('fromDate', 'thruDate', null).selectField('toWorkEffortId').list())
+                    .map((row) => row.toWorkEffortId)
+            const seen = new Set([toWorkEffortId])
+            const queue = [toWorkEffortId]
+            for (let i = 0; i < queue.length && i < 20000; i++) {
+                for (const next of dependsOn(queue[i])) {
+                    if (next === workEffortId) {
+                        ec.message.addError(L('${to} already waits for ${from}, so ${from} cannot wait for it', {from: workEffortId, to: toWorkEffortId})); return
+                    }
+                    if (!seen.has(next)) { seen.add(next); queue.push(next) }
+                }
+            }
+            const existing = Array.from(ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', workEffortId)
+                    .condition('toWorkEffortId', toWorkEffortId).condition('workEffortAssocTypeEnumId', 'WeatDependsOn')
+                    .conditionDate('fromDate', 'thruDate', null).list())
+            if (existing.length) {
+                for (const row of existing) if ((row.lagDays == null ? null : Number(String(row.lagDays))) !== lag) { row.set('lagDays', lag); row.update() }
+                return
+            }
+            ec.service.sync().name('create#mantle.work.effort.WorkEffortAssoc').parameters({workEffortId: workEffortId, toWorkEffortId: toWorkEffortId,
+                workEffortAssocTypeEnumId: 'WeatDependsOn', fromDate: ec.user.nowTimestamp, lagDays: lag}).call()
+            if (!ec.message.hasError()) created = true
+        ]]></script></actions>
+    </service>
+    <service verb="remove" noun="TaskDependency">
+        <description>Ends the dependency of workEffortId on toWorkEffortId (thruDate now); removed false when there was none.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="toWorkEffortId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="removed" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            removed = false
+            for (const row of ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', workEffortId).condition('toWorkEffortId', toWorkEffortId)
+                    .condition('workEffortAssocTypeEnumId', 'WeatDependsOn').conditionDate('fromDate', 'thruDate', null).list()) {
+                row.set('thruDate', ec.user.nowTimestamp)
+                row.update()
+                removed = true
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="set" noun="TaskDates">
+        <description>
+            Moves or resizes a work item, or a milestone, release or sprint, on the timeline: its start (estimatedStartDate) and
+            due (estimatedCompletionDate) as days, yyyy-MM-dd in the user's time zone (a time of day the field had is kept; an
+            empty text clears the date, a parameter not given leaves it). Refused when it would be due before it starts.
+            - shiftDays (a bar dragged along): its own dates move by that many days (startDay and dueDay not given), so an item
+              with only a due date, or a parent with none of its own, moves too.
+            - moveSubtree (a parent's summary bar dragged): its sub-items at every depth move by the same number of days.
+            - autoSchedule: the work items that depend on it (WeatDependsOn, at any remove) and would start before the next
+              business day after their predecessor's due day plus the lag move forward to it, keeping their length in business
+              days; business days as mantle.work.EventServices.get#FutureBusinessDay counts them (Saturday and Sunday, and the
+              holidays of the project's organization, ownerPartyId, skipped). An item is only moved later, never earlier, and
+              an item done (Complete, Closed, Cancelled) is not moved. Each dependent is moved on its own: one that fails is
+              logged and named in failedList, the rest go on.
+            movedList: every item whose dates changed, {workEffortId, startDay, dueDay}.
+        </description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="startDay"/>
+            <parameter name="dueDay"/>
+            <parameter name="shiftDays" type="Integer"/>
+            <parameter name="moveSubtree" type="Boolean" default="false"/>
+            <parameter name="autoSchedule" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="movedList" type="List"/>
+            <parameter name="failedList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            movedList = []
+            failedList = []
+            const L = (text, values) => ec.resource.expand(ec.l10n.localize(text), '', values || {})
+            const one = (id) => ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', id).one()
+            const item = one(workEffortId)
+            if (item == null || !['WetTask', 'WetMilestone', 'WetRelease', 'WetSprint'].includes(item.workEffortTypeEnumId)) {
+                ec.message.addError(L('Work item ${id} not found', {id: workEffortId})); return
+            }
+            const isDay = (text) => /^\d{4}-\d{2}-\d{2}$/.test(String(text))
+            if (startDay != null && startDay !== '' && !isDay(startDay)) { ec.message.addError(L('The start is a day, yyyy-MM-dd')); return }
+            if (dueDay != null && dueDay !== '' && !isDay(dueDay)) { ec.message.addError(L('The due date is a day, yyyy-MM-dd')); return }
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                if (typeof value === 'number') return value
+                const text = String(value)
+                if (/^-?\d+$/.test(text)) return Number(text)
+                const parsed = Date.parse(text)
+                return Number.isNaN(parsed) ? null : parsed
+            }
+            const dayOf = (value) => toMillis(value) == null ? null : ec.l10n.format(String(toMillis(value)), 'yyyy-MM-dd')
+            const timeOf = (value) => toMillis(value) == null ? '00:00:00.000' : ec.l10n.format(String(toMillis(value)), 'HH:mm:ss.SSS')
+            const stamp = (day, old) => day ? ec.l10n.parseTimestamp(day + ' ' + timeOf(old), 'yyyy-MM-dd HH:mm:ss.SSS') : null
+            const addDays = (text, days) => { const d = new Date(text + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().substring(0, 10) }
+            const daysBetween = (from, to) => Math.round((Date.parse(to + 'T12:00:00Z') - Date.parse(from + 'T12:00:00Z')) / 86400000)
+            const write = (row, start, due) => {
+                const fields = {workEffortId: row.workEffortId}
+                const oldStart = dayOf(row.estimatedStartDate)
+                const oldDue = dayOf(row.estimatedCompletionDate)
+                if (start !== undefined && start !== oldStart) fields.estimatedStartDate = stamp(start, row.estimatedStartDate)
+                if (due !== undefined && due !== oldDue) fields.estimatedCompletionDate = stamp(due, row.estimatedCompletionDate)
+                if (Object.keys(fields).length === 1) return false
+                ec.service.sync().name('update#mantle.work.effort.WorkEffort').parameters(fields).call()
+                if (ec.message.hasError()) return false
+                movedList.push({workEffortId: row.workEffortId, startDay: start !== undefined ? start : oldStart, dueDay: due !== undefined ? due : oldDue})
+                return true
+            }
+
+            const oldStart = dayOf(item.estimatedStartDate)
+            const oldDue = dayOf(item.estimatedCompletionDate)
+            const shiftBy = shiftDays == null || shiftDays === '' ? null : Math.round(Number(String(shiftDays)))
+            if (shiftBy != null && Number.isFinite(shiftBy)) {
+                startDay = oldStart ? addDays(oldStart, shiftBy) : null
+                dueDay = oldDue ? addDays(oldDue, shiftBy) : null
+            }
+            const newStart = startDay == null ? oldStart : (startDay === '' ? null : String(startDay))
+            const newDue = dueDay == null ? oldDue : (dueDay === '' ? null : String(dueDay))
+            if (newStart && newDue && newDue < newStart) { ec.message.addError(L('${id} is due on or after the day it starts', {id: workEffortId})); return }
+            write(item, startDay == null ? undefined : newStart, dueDay == null ? undefined : newDue)
+            if (ec.message.hasError()) return
+
+            // a summary bar moved: its sub-items by the same days
+            const shift = shiftBy != null && Number.isFinite(shiftBy) ? shiftBy
+                : (oldStart && newStart ? daysBetween(oldStart, newStart) : (oldDue && newDue ? daysBetween(oldDue, newDue) : 0))
+            if (moveSubtree && shift && item.workEffortTypeEnumId === 'WetTask') {
+                const queue = [workEffortId]
+                for (let i = 0; i < queue.length && i < 20000; i++) {
+                    for (const child of ec.entity.find('mantle.work.effort.WorkEffort').condition('parentWorkEffortId', queue[i]).orderBy('workEffortId').list()) {
+                        queue.push(child.workEffortId)
+                        const childStart = dayOf(child.estimatedStartDate)
+                        const childDue = dayOf(child.estimatedCompletionDate)
+                        if (!childStart && !childDue) continue
+                        write(child, childStart ? addDays(childStart, shift) : undefined, childDue ? addDays(childDue, shift) : undefined)
+                        if (ec.message.hasError()) return
+                    }
+                }
+            }
+            if (!autoSchedule || item.workEffortTypeEnumId !== 'WetTask') return
+
+            // the dependents, moved forward by business days
+            const project = item.rootWorkEffortId ? one(item.rootWorkEffortId) : null
+            const organizationPartyId = project?.ownerPartyId || null
+            const future = (day, days) => {
+                if (days <= 0) return day
+                const out = ec.service.sync().name('mantle.work.EventServices.get#FutureBusinessDay').parameters({startDate: day, businessDays: days,
+                    organizationPartyId: organizationPartyId}).call()
+                // a Date comes back as yyyy-MM-dd text or as epoch millis of its UTC midnight
+                const value = out?.futureDayDate
+                if (value == null) return addDays(day, days)
+                const text = String(value)
+                return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.substring(0, 10) : new Date(Number(text)).toISOString().substring(0, 10)
+            }
+            // the business days from one day to a later one (each step a next business day), at most 400
+            const businessLength = (from, to) => {
+                let count = 0
+                let at = from
+                while (at < to && count < 400) { at = future(at, 1); count++ }
+                return count
+            }
+            const dependentsOf = (id) => Array.from(ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('toWorkEffortId', id)
+                    .condition('workEffortAssocTypeEnumId', 'WeatDependsOn').conditionDate('fromDate', 'thruDate', null).list())
+            const dueOf = new Map([[workEffortId, newDue || newStart]])
+            const queue = [workEffortId]
+            const visits = new Map()
+            for (let i = 0; i < queue.length && i < 5000; i++) {
+                const predecessorId = queue[i]
+                const predecessorDue = dueOf.get(predecessorId)
+                if (!predecessorDue) continue
+                for (const link of dependentsOf(predecessorId)) {
+                    const dependentId = link.workEffortId
+                    // a loop in old data is left after a few passes
+                    const count = (visits.get(dependentId) || 0) + 1
+                    visits.set(dependentId, count)
+                    if (count > 20) continue
+                    ec.message.pushErrors()
+                    try {
+                        const dependent = one(dependentId)
+                        if (dependent == null || ['WeComplete', 'WeClosed', 'WeCancelled'].includes(dependent.statusId)) continue
+                        const lag = link.lagDays == null ? 0 : Math.max(0, Math.ceil(Number(String(link.lagDays)) || 0))
+                        const earliest = future(predecessorDue, 1 + lag)
+                        const start = dayOf(dependent.estimatedStartDate)
+                        const due = dayOf(dependent.estimatedCompletionDate)
+                        if (!start && !due) continue
+                        if ((start || due) >= earliest) { dueOf.set(dependentId, due || start); continue }
+                        let nextStart, nextDue
+                        if (start && due) { nextStart = earliest; nextDue = future(earliest, businessLength(start, due)) }
+                        else if (start) nextStart = earliest
+                        else nextDue = earliest
+                        ec.service.sync().name('mantle.work.TaskServices.set#TaskDates').parameters({workEffortId: dependentId,
+                            startDay: nextStart, dueDay: nextDue}).call()
+                        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                        movedList.push({workEffortId: dependentId, startDay: nextStart || null, dueDay: nextDue || null})
+                        dueOf.set(dependentId, nextDue || nextStart)
+                        queue.push(dependentId)
+                    } catch (err) {
+                        const error = String(err && err.message ? err.message : err)
+                        ec.logger.error(`Auto-schedule after ${workEffortId}: ${dependentId} not moved: ${error}`)
+                        failedList.push({workEffortId: dependentId, error: error})
+                    } finally {
+                        ec.message.clearErrors()
+                        ec.message.popErrors()
+                    }
+                }
+            }
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="TaskStatusFlow">
         <description>The status flow of a task: its own statusFlowId, else its project's (rootWorkEffortId), else Default
             (impl-projects.md F11); the flow's transitions from the task's status (toStatusId and transitionName, by the
