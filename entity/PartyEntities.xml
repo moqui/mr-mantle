@@ -913,6 +913,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
             <mantle.party.PartySettingType partySettingTypeId="ProjTimesheetPolicy" description="Projects - Timesheet Policy">
                 <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
+            <mantle.party.PartySettingType partySettingTypeId="ProjWorkTypes" description="Projects - Work Types Offered">
+                <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
             <mantle.party.PartySettingType partySettingTypeId="ProjBillingDefaults" description="Projects - Billing Defaults">
                 <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
             <mantle.party.PartySettingType partySettingTypeId="ProjRepositoryDefaults" description="Projects - Repository Defaults">
