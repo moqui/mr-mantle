@@ -2359,12 +2359,15 @@ along with this software (see the LICENSE.md file). If not, see
             - reviewsWaiting: the open merge requests of the repositories the user may view where the user is a requested
               reviewer who has not reviewed yet (org.moqui.impl.GitReviewServices.find#MergeRequests waitingForUserId); null
               when the build has no git hosting;
-            - hoursWeek: the hours of the user's time entries this week (the timesheet's status comes with timesheets);
+            - hoursWeek: the hours of the user's time entries this week (the week of the user's timesheet policy,
+              TimesheetServices.get#WeekRange), with expectedWeek (the week's working hours) and timesheetStatusId (TmshInProcess
+              when the week has no timesheet yet) beside the counts;
             - with managers: projectsAtRisk, the open projects the user manages (ADMIN: all) whose health is At risk or Off track
               or whose numbers warn (get#ProjectStats projectWarning or projectDanger), and milestonesSoon, their open
               milestones due in fourteen days.
-            The counters that need records of later phases (timesheetsToApprove, allocationRequests, unbilledAmount) are null
-            until those phases. Each counter is computed on its own: one that fails is logged, named
+            - with managers, timesheetsToApprove: the submitted timesheets the user approves (TimesheetServices.find#Timesheets
+              list toApprove).
+            The counters that need records of later phases (allocationRequests, unbilledAmount) are null until those phases. Each counter is computed on its own: one that fails is logged, named
             in failedParts and left null.
         </description>
         <in-parameters><parameter name="managers" type="Boolean" default="false"/></in-parameters>
@@ -2374,8 +2377,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="failedParts" type="List"/>
         </out-parameters>
         <actions><script><![CDATA[
-            counts = {myOpen: null, dueWeek: null, overdue: null, reviewsWaiting: null, hoursWeek: null, projectsAtRisk: null, milestonesSoon: null,
-                timesheetsToApprove: null, allocationRequests: null, unbilledAmount: null}
+            counts = {myOpen: null, dueWeek: null, overdue: null, reviewsWaiting: null, hoursWeek: null, expectedWeek: null, timesheetStatusId: null,
+                projectsAtRisk: null, milestonesSoon: null, timesheetsToApprove: null, allocationRequests: null, unbilledAmount: null}
             atRiskProjectIds = []
             failedParts = []
             const part = (name, run) => {
@@ -2429,11 +2432,17 @@ along with this software (see the LICENSE.md file). If not, see
             })
             part('hoursWeek', () => {
                 if (!me) { counts.hoursWeek = 0; return }
-                const week = ec.user.getPeriodRange('week', '0')
+                const policyOut = ec.service.sync().name('mantle.work.TimesheetServices.get#TimesheetPolicy').parameters({partyId: me}).call() || {}
+                const policy = policyOut.policy || {}
+                const week = ec.service.sync().name('mantle.work.TimesheetServices.get#WeekRange').parameters({weekStart: policy.weekStart || 1}).call()
                 let hours = 0
-                for (const row of ec.entity.find('mantle.work.time.TimeEntry').condition('partyId', me).condition('fromDate', 'greater-equals', week[0])
-                        .condition('fromDate', 'less-than', week[1]).selectField('hours').list()) hours += Number(String(row.hours ?? 0))
+                for (const row of ec.entity.find('mantle.work.time.TimeEntry').condition('partyId', me).condition('fromDate', 'greater-equals', week.fromDate)
+                        .condition('fromDate', 'less-than', week.thruDate).selectField('hours').list()) hours += Number(String(row.hours ?? 0))
                 counts.hoursWeek = Math.round(hours * 100) / 100
+                const sheet = ec.service.sync().name('mantle.work.TimesheetServices.get#PartyTimesheet').parameters({partyId: me, date: week.weekStartDay, make: false}).call() || {}
+                counts.timesheetStatusId = sheet.timesheet?.statusId || 'TmshInProcess'
+                counts.expectedWeek = Number(String(ec.service.sync().name('mantle.work.TimesheetServices.get#WeekDays').parameters({dayList: week.dayList, policy: policy,
+                    organizationPartyId: policyOut.organizationPartyId || null}).call()?.expectedTotal ?? 0))
             })
             if (managers) {
                 const managed = all ? null : Array.from(vis.managedProjectIds || [])
@@ -2453,6 +2462,10 @@ along with this software (see the LICENSE.md file). If not, see
                         if (risky) atRiskProjectIds.push(project.workEffortId)
                     }
                     counts.projectsAtRisk = atRiskProjectIds.length
+                })
+                part('timesheetsToApprove', () => {
+                    const out = ec.service.sync().name('mantle.work.TimesheetServices.find#Timesheets').parameters({list: 'toApprove', withCounts: false}).call() || {}
+                    counts.timesheetsToApprove = Array.from(out.rowList || []).length
                 })
                 part('milestonesSoon', () => {
                     const ids = projects().map((project) => project.workEffortId)

@@ -46,6 +46,9 @@ along with this software (see the LICENSE.md file). If not, see
 
     <userPermissions userPermissionId="TIME_ENTRY_RATE" description="Time Entry Rate Override"/>
     <userGroupPermissions userGroupId="ADMIN" userPermissionId="TIME_ENTRY_RATE" fromDate="0"/>
+    <!-- approving anyone's timesheet when the organization's timesheet policy says any (mantle.work.TimesheetServices) -->
+    <userPermissions userPermissionId="TIMESHEET_APPROVE" description="Timesheet Approve (any person, by policy)"/>
+    <userGroupPermissions userGroupId="ADMIN" userPermissionId="TIMESHEET_APPROVE" fromDate="0"/>
 
     <!-- deleting a directory party (mantle.party.ContactBookServices.delete#Contact); a personal contact's owner needs none -->
     <userPermissions userPermissionId="CONTACT_ADMIN" description="Contact Admin (delete directory contacts)"/>
@@ -237,6 +240,25 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="RequestUpdate" inboxEnumId="NinUpdates" description="Request Update" typeString="info"
             showAlert="N" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
             titleTemplate="Request ${requestId} ${statusLabel}: ${requestName}"/>
+    <!-- weekly timesheets (mantle.work.TimesheetServices): timesheetId, partyId, personName, weekText, weekStart, hoursText, change,
+        actorName and reason, the timesheet as the record. A submitted week asks its approvers for a decision (TimesheetApproval, whose
+        approve and refuse services approve or return it; a return needs a reason); the person hears of a return or reopen
+        (TimesheetReturned) and of the approval (TimesheetApproved, Updates); TimesheetMissing reminds a person of a week not
+        submitted (weekText, hoursText, expectedText; send#MissingTimeReminders). The app that shows timesheets sets the links
+        (IronStone Projects: BossSetupData.xml). -->
+    <moqui.security.user.NotificationTopic topic="TimesheetApproval" inboxEnumId="NinNotifications" description="Timesheet to Approve" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            approveServiceName="mantle.work.TimesheetServices.approve#TimesheetNotice" refuseServiceName="mantle.work.TimesheetServices.return#TimesheetNotice"
+            refuseReasonRequired="Y" titleTemplate="Approve ${personName}'s week of ${weekText}: ${hoursText} h"/>
+    <moqui.security.user.NotificationTopic topic="TimesheetReturned" inboxEnumId="NinNotifications" description="Timesheet Returned" typeString="warning"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Your week of ${weekText} was ${change} by ${actorName}: ${reason}"/>
+    <moqui.security.user.NotificationTopic topic="TimesheetApproved" inboxEnumId="NinUpdates" description="Timesheet Approved" typeString="success"
+            showAlert="N" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Your week of ${weekText} was approved by ${actorName} (${hoursText} h)"/>
+    <moqui.security.user.NotificationTopic topic="TimesheetMissing" inboxEnumId="NinNotifications" description="Missing Time Reminder" typeString="warning"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Your week of ${weekText} is not submitted: ${hoursText} of ${expectedText} h"/>
     <!-- the actions of the mail client's rules that make requests and work items (org.moqui.impl.EmailClientServices
         run#EmailRules runs the service in optionValue for the action in enumCode; impl-projects.md F6) -->
     <moqui.basic.Enumeration enumId="ErActCreateRequest" enumTypeId="EmailRuleAction" enumCode="createRequest" sequenceNum="1"
@@ -365,6 +387,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="send_DueReminders" description="Send Due Task and Event Reminders"
             serviceName="mantle.work.EventServices.send#DueReminders" cronExpression="0 0/1 * * * ?" paused="N"
             transactionTimeout="300"/>
+    <!-- Service Job: Send Missing Time Reminders - every hour; each organization's timesheet policy says on which day and hour its people
+        are reminded of last week's timesheet (mantle.work.TimesheetServices.send#MissingTimeReminders), once a week each -->
+    <moqui.service.job.ServiceJob jobName="send_MissingTimeReminders" description="Send Missing Time Reminders"
+            serviceName="mantle.work.TimesheetServices.send#MissingTimeReminders" cronExpression="0 0 * * * ?" paused="N"
+            transactionTimeout="600"/>
     <!-- Service Job: Fetch Calendar Subscriptions that are due (each its own refresh interval) - every 15 minutes; nothing is
         fetched until the framework's ICalendar tool exists -->
     <moqui.service.job.ServiceJob jobName="fetch_CalendarSubscriptions" description="Fetch Calendar Subscriptions"

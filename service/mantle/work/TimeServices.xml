@@ -36,6 +36,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <entity-find-one entity-name="mantle.party.Party" value-field="party"/>
                 <if condition="party.disabled == 'Y'"><return error="true" message="Time Entry not created, ${party.pseudoId} is not active."/></if>
             </if>
+            <!-- an entry with no timesheet given goes on its person's timesheet of its week (below) -->
+            <set field="timesheetGiven" from="!!timesheetId"/>
             <set field="entryHasHours" from="false"/>
             <if condition="timeEntryId">
                 <entity-find-one entity-name="mantle.work.time.TimeEntry" value-field="timeEntry" for-update="true"/>
@@ -90,6 +92,15 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script>
             <if condition="fromAfterThru">
                 <return error="true" message="From date ${ec.l10n.format(fromDate, 'yyyy-MM-dd HH:mm:ss.SSS')} is after thru date ${ec.l10n.format(thruDate, 'yyyy-MM-dd HH:mm:ss.SSS')}"/></if>
+
+            <!-- the week's timesheet (mantle.work.TimesheetServices, IronStone Projects design §8): an entry with a person and a start goes
+                on that person's timesheet of its week unless one is given; with the policy's lock the entries of a submitted or approved
+                week are not changed (their time, item, person, work type or comment), moved in or out, or added -->
+            <service-call name="mantle.work.TimeServices.check#TimeEntryTimesheet" out-map="sheetCheck"
+                    in-map="{timeEntry:(timeEntry ? timeEntry.getMap() : null), timesheetId:(timesheetGiven ? timesheetId : null), partyId:partyId, fromDate:fromDate, thruDate:thruDate,
+                        hours:hours, breakHours:breakHours, workEffortId:workEffortId, workTypeEnumId:workTypeEnumId, comments:comments, pieceCount:pieceCount}"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <if condition="sheetCheck.timesheetId"><set field="timesheetId" from="sheetCheck.timesheetId"/></if>
 
             <!-- what is the party's emplPositionClassId? try WorkEffortParty with task first, then root/project, then try EmplPositionClassParty -->
             <if condition="workEffortId">
@@ -335,8 +346,80 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="timeEntryId"/></out-parameters>
         <actions>
+            <!-- on the person's timesheet of the week, which must not be submitted (check#TimeEntryTimesheet) -->
+            <service-call name="mantle.work.TimeServices.check#TimeEntryTimesheet" out-map="sheetCheck"
+                    in-map="{timesheetId:timesheetId, partyId:partyId, fromDate:fromDate, workEffortId:workEffortId}"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <if condition="sheetCheck.timesheetId"><set field="timesheetId" from="sheetCheck.timesheetId"/></if>
             <service-call name="create#mantle.work.time.TimeEntry" out-map="context" in-map="context"/>
         </actions>
+    </service>
+    <service verb="check" noun="TimeEntryTimesheet" allow-remote="false">
+        <description>The timesheet of a time entry being stored (store#TimeEntry, create#TimeEntryClockIn): the given timesheetId, else
+            the person's timesheet of the week of fromDate (mantle.work.TimesheetServices.get#PartyTimesheet, made when there is none;
+            a failure there is logged and the entry goes on no timesheet). With the timesheet policy's lock (the default) an entry
+            of a submitted or approved timesheet is an error when it is new, moves in or out of it, or changes its time, work item,
+            person, work type, comment or pieces (timeEntry: the stored entry; its rates may still change).</description>
+        <in-parameters>
+            <parameter name="timeEntry" type="Map"/>
+            <parameter name="timesheetId"/>
+            <parameter name="partyId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="hours" type="BigDecimal"/>
+            <parameter name="breakHours" type="BigDecimal"/>
+            <parameter name="workEffortId"/>
+            <parameter name="workTypeEnumId"/>
+            <parameter name="comments"/>
+            <parameter name="pieceCount" type="BigDecimal"/>
+        </in-parameters>
+        <out-parameters><parameter name="timesheetId"/></out-parameters>
+        <actions><script><![CDATA[
+            const millis = (value) => value == null || value === '' ? null : Number(String(value))
+            if (!timesheetId && partyId && fromDate != null) {
+                ec.message.pushErrors()
+                try {
+                    timesheetId = ec.service.sync().name('mantle.work.TimesheetServices.get#PartyTimesheet').parameters({partyId: partyId,
+                        date: millis(fromDate)}).call()?.timesheetId || null
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                } catch (err) {
+                    timesheetId = null
+                    ec.logger.error(`Time entry of ${partyId}: its week's timesheet was not found or made, the entry goes on none: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            // the lock: the stored entry's timesheet, and the one it goes on
+            const lockedSheets = {}
+            const isLocked = (id) => {
+                if (!id) return false
+                if (!(id in lockedSheets)) {
+                    const sheet = ec.entity.find('mantle.work.time.Timesheet').condition('timesheetId', id).disableAuthz().one()
+                    let locked = !!sheet && (sheet.statusId === 'TmshCompleted' || sheet.statusId === 'TmshApproved')
+                    if (locked) locked = ec.service.sync().name('mantle.work.TimesheetServices.get#TimesheetPolicy').parameters({partyId: sheet.partyId})
+                            .call()?.policy?.lock !== false
+                    lockedSheets[id] = locked
+                }
+                return lockedSheets[id]
+            }
+            const stored = timeEntry || null
+            const storedSheet = stored?.timesheetId || null
+            const L = (text) => ec.l10n.localize(text)
+            if (!stored) {
+                if (isLocked(timesheetId)) ec.message.addError(L('That week is submitted: its time is locked until it is returned or reopened'))
+                return
+            }
+            const same = (a, b) => {
+                if (a == null || a === '') return b == null || b === ''
+                if (b == null || b === '') return false
+                const na = Number(String(a)), nb = Number(String(b))
+                return !Number.isNaN(na) && !Number.isNaN(nb) ? Math.abs(na - nb) < 0.0001 : String(a) === String(b)
+            }
+            const changed = !same(fromDate, stored.fromDate) || !same(thruDate, stored.thruDate) || !same(hours, stored.hours) || !same(breakHours, stored.breakHours)
+                    || !same(workEffortId, stored.workEffortId) || !same(partyId, stored.partyId) || !same(workTypeEnumId, stored.workTypeEnumId)
+                    || !same(comments, stored.comments) || !same(pieceCount, stored.pieceCount)
+            const moved = (timesheetId || null) !== storedSheet
+            if ((isLocked(storedSheet) && (changed || moved)) || (moved && isLocked(timesheetId)))
+                ec.message.addError(ec.resource.expand('Time entry ${id} is on a submitted week: it is locked until the week is returned or reopened', '', {id: stored.timeEntryId}))
+        ]]></script></actions>
     </service>
 
     <service verb="delete" noun="TimeEntry">
@@ -350,6 +433,12 @@ along with this software (see the LICENSE.md file). If not, see
 
             <if condition="timeEntry.invoiceId || timeEntry.vendorInvoiceId">
                 <return error="true" message="Cannot delete time entry ${timeEntryId}. It has already been invoiced."/></if>
+            <!-- an entry of a submitted or approved week is locked (mantle.work.TimesheetServices, the policy's lock) -->
+            <if condition="timeEntry.timesheetId">
+                <service-call name="mantle.work.TimeServices.check#TimeEntryTimesheet" in-map="{timeEntry:timeEntry.getMap(), timesheetId:timeEntry.timesheetId,
+                        partyId:timeEntry.partyId, fromDate:null, workEffortId:null}"/>
+                <if condition="ec.message.hasError()"><return/></if>
+            </if>
 
             <entity-find entity-name="mantle.work.time.TimeEntry" list="childTimeEntries">
                 <econdition field-name="parentEntryId" from="timeEntry.timeEntryId"/></entity-find>

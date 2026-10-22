@@ -1816,6 +1816,9 @@ along with this software (see the LICENSE.md file). If not, see
             A merge request or a git repository (moqui.resource.GitMergeRequest, GitRepository, framework entities no entity
             filter covers) is seen by whoever may view the repository (org.moqui.impl.GitServices.get#GitRepositoryAccess,
             canView), whenever authorization is on, as a wiki page is; so are the review comments filed on a merge request.
+
+            A timesheet (mantle.work.time.Timesheet, which no entity filter covers) is seen by its person, its approvers and ADMIN
+            (mantle.work.TimesheetServices.get#TimesheetAccess, canView) whenever authorization is on.
         </description>
         <in-parameters>
             <parameter name="recordEntityName" required="true"/>
@@ -1887,6 +1890,7 @@ along with this software (see the LICENSE.md file). If not, see
             const WIKI_PAGE = 'moqui.resource.wiki.WikiPage'
             const GIT_MERGE_REQUEST = 'moqui.resource.GitMergeRequest'
             const GIT_REPOSITORY = 'moqui.resource.GitRepository'
+            const TIMESHEET = 'mantle.work.time.Timesheet'
             recordVisible = null
             notVisibleReason = null
             // a refusal: an error, or with checkOnly the answer false
@@ -2116,6 +2120,9 @@ along with this software (see the LICENSE.md file). If not, see
                 // a merge request or a repository: whoever may view the repository (org.moqui.impl.GitServices)
                 if (entityName === GIT_MERGE_REQUEST || entityName === GIT_REPOSITORY) return !!ec.service.sync()
                         .name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameter('repositoryId', value.repositoryId).call()?.canView
+                // a timesheet: its person, its approvers and ADMIN (mantle.work.TimesheetServices.get#TimesheetAccess)
+                if (entityName === TIMESHEET) return !!ec.service.sync()
+                        .name('mantle.work.TimesheetServices.get#TimesheetAccess').parameter('timesheetId', value.timesheetId).call()?.canView
                 if (entityName !== WORK_EFFORT && entityName !== REQUEST && entityName !== ORDER) return true
                 const s = userScope()
                 if (s.orgIds == null || staffSees(entityName)) return true
