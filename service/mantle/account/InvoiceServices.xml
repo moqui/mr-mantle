@@ -915,6 +915,11 @@ along with this software (see the LICENSE.md file). If not, see
                 </iterate>
             </if>
 
+            <!-- a milestone's share billed on the item is due again (as cancel#Invoice zeroes its percentage) -->
+            <entity-find entity-name="mantle.work.effort.WorkEffortBilling" list="itemWorkEffortBillingList">
+                <econdition field-name="invoiceId"/><econdition field-name="invoiceItemSeqId"/></entity-find>
+            <iterate list="itemWorkEffortBillingList" entry="workEffortBilling"><entity-delete value-field="workEffortBilling"/></iterate>
+
             <!-- the time billed on the item is unbilled again (as cancel#Invoice frees an invoice's time) -->
             <entity-find entity-name="mantle.work.time.TimeEntry" list="itemTimeEntryList" for-update="true">
                 <econdition field-name="invoiceId"/><econdition field-name="invoiceItemSeqId"/></entity-find>
@@ -1709,6 +1714,95 @@ along with this software (see the LICENSE.md file). If not, see
                 <message>Added ${invoiceItemCreatedCount} items to Invoice ${invoiceId}</message>
             </else></if>
         </actions>
+    </service>
+
+    <service verb="create" noun="MilestoneInvoiceItems">
+        <description>A reached milestone's billing shares on a client invoice (design-projects.md §15 Milestone billing share; impl-projects.md
+            P8b): for each order line share of the milestone (OrderItemWorkEffort invoicePercent or invoiceAmount, mantle.work.ProjectServices
+            get#MilestoneBilling) that is due (the milestone Complete or Closed, its gate approved when it requires one, not billed), an
+            invoice item of the share's amount (the order line's item type when a sales type, else ItemServiceProduct, and its product),
+            recorded in WorkEffortBilling (the milestone, with the percentage) and OrderItemBilling (the line, the part of its quantity);
+            one line only with orderId and orderItemSeqId. Added to invoiceId (an In-Process invoice from the project's vendor to its
+            client) or a new client invoice of the project (WorkEffortInvoice). Refused when nothing is due. Cancelling the invoice or
+            deleting the item makes the share due again. For one who manages money (ADMIN, TIME_ENTRY_RATE).</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"><description>The milestone</description></parameter>
+            <parameter name="invoiceId"/>
+            <parameter name="orderId"/>
+            <parameter name="orderItemSeqId"/>
+            <parameter name="invoiceDate" type="Timestamp" default="ec.user.nowTimestamp"/>
+            <parameter name="settlementTermId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="invoiceItemCreatedCount" type="Integer"/>
+            <parameter name="amount" type="BigDecimal"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            invoiceItemCreatedCount = 0
+            amount = toDecimal(0)
+            const L = (text) => ec.l10n.localize(text)
+            const billing = ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneBilling').parameters({workEffortId: workEffortId}).call() || {}
+            if (ec.message.hasError()) return
+            const shares = Array.from(billing.shareList || []).filter((share) => !orderId || (share.orderId === orderId && (!orderItemSeqId || share.orderItemSeqId === orderItemSeqId)))
+            if (!shares.length) { ec.message.addError(ec.resource.expand('Milestone ${workEffortId} has no billing share', '', {workEffortId})); return }
+            const due = shares.filter((share) => share.due)
+            if (!due.length) {
+                const first = shares[0]
+                ec.message.addError(first.billed ? ec.resource.expand('The share of ${name} is billed on invoice ${invoiceId}', '', {name: first.milestoneName, invoiceId: first.invoiceId})
+                    : !first.reached ? ec.resource.expand('${name} is not reached yet', '', {name: first.milestoneName})
+                    : ec.resource.expand('${name} waits for its approval', '', {name: first.milestoneName}))
+                return
+            }
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const milestone = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+                const projectId = milestone.rootWorkEffortId
+                const partyOf = (roles) => Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', projectId)
+                        .condition('roleTypeId', 'in', roles).conditionDate('fromDate', 'thruDate', null).orderBy('fromDate').list())[0]?.partyId || null
+                const clientPartyId = partyOf(['Customer', 'CustomerBillTo'])
+                const vendorPartyId = partyOf(['Vendor', 'VendorBillFrom'])
+                if (!clientPartyId) { ec.message.addError(L('The project has no client')); return }
+                if (!vendorPartyId) { ec.message.addError(L('The project has no vendor to bill from')); return }
+                const currencies = Array.from(new Set(due.map((share) => share.currencyUomId)))
+                if (currencies.length > 1) { ec.message.addError(L('The shares are in more than one currency: invoice each line on its own')); return }
+                if (invoiceId) {
+                    const invoice = ec.entity.find('mantle.account.invoice.Invoice').condition('invoiceId', invoiceId).forUpdate(true).one()
+                    if (!invoice || invoice.statusId !== 'InvoiceInProcess' || invoice.toPartyId !== clientPartyId || invoice.fromPartyId !== vendorPartyId) {
+                        ec.message.addError(ec.resource.expand('Invoice ${invoiceId} is not an open draft from the project\'s vendor to its client', '', {invoiceId})); return }
+                    if (invoice.currencyUomId && invoice.currencyUomId !== currencies[0]) {
+                        ec.message.addError(ec.resource.expand('Invoice ${invoiceId} is in ${uom}, the shares in ${shareUom}', '', {invoiceId, uom: invoice.currencyUomId, shareUom: currencies[0]})); return }
+                } else {
+                    invoiceId = ec.service.sync().name('mantle.account.InvoiceServices.create#Invoice').parameters({invoiceTypeEnumId: 'InvoiceSales', fromPartyId: vendorPartyId,
+                        toPartyId: clientPartyId, invoiceDate: invoiceDate, currencyUomId: currencies[0], settlementTermId: settlementTermId || null,
+                        description: ec.resource.expand('Invoice for project ${name}', '', {name: (ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', projectId).one()?.workEffortName || projectId)})}).call()?.invoiceId
+                    if (ec.message.hasError()) return
+                }
+                const salesTypes = new Set(Array.from(ec.entity.find('moqui.basic.EnumGroupMember').condition('enumGroupEnumId', 'EngItemsSales').useCache(true).list()).map((row) => row.enumId))
+                for (const share of due) {
+                    const item = ec.entity.find('mantle.order.OrderItem').condition({orderId: share.orderId, orderItemSeqId: share.orderItemSeqId}).one()
+                    const percentText = share.invoicePercent != null ? ec.l10n.format(share.percent, '#,##0.##') + '%' : ec.l10n.formatCurrency(share.amount, share.currencyUomId)
+                    const description = ec.resource.expand('${milestone}: ${share} of ${line}', '', {milestone: share.milestoneName, share: percentText,
+                        line: share.itemDescription || (share.orderId + ' ' + share.orderItemSeqId)})
+                    const seqId = ec.service.sync().name('mantle.account.InvoiceServices.create#InvoiceItem').parameters({invoiceId: invoiceId,
+                        itemTypeEnumId: item?.itemTypeEnumId && salesTypes.has(item.itemTypeEnumId) ? item.itemTypeEnumId : 'ItemServiceProduct',
+                        productId: item?.productId || null, quantity: toDecimal(1), amount: share.amount, description: description,
+                        itemDate: share.reachedDate != null ? share.reachedDate : ec.user.nowTimestamp}).call()?.invoiceItemSeqId
+                    if (ec.message.hasError()) return
+                    ec.service.sync().name('create#mantle.work.effort.WorkEffortBilling').parameters({workEffortId: workEffortId, invoiceId: invoiceId, invoiceItemSeqId: seqId,
+                        percentage: share.percent}).call()
+                    const lineTotal = toDecimal(share.lineTotal)
+                    const quantity = lineTotal.isZero() ? toDecimal(0) : toDecimal(item?.quantity ?? 1).multiply(share.amount).divide(lineTotal).setScale(6, 'HALF_UP')
+                    ec.service.sync().name('create#mantle.order.OrderItemBilling').parameters({orderId: share.orderId, orderItemSeqId: share.orderItemSeqId, invoiceId: invoiceId,
+                        invoiceItemSeqId: seqId, quantity: quantity, amount: item?.unitAmount ?? share.amount}).call()
+                    if (ec.message.hasError()) return
+                    invoiceItemCreatedCount++
+                    amount = amount.add(share.amount)
+                }
+                if (!ec.entity.find('mantle.work.effort.WorkEffortInvoice').condition({invoiceId: invoiceId, workEffortId: projectId}).count())
+                    ec.service.sync().name('create#mantle.work.effort.WorkEffortInvoice').parameters({invoiceId: invoiceId, workEffortId: projectId}).call()
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
     </service>
 
     <service verb="create" noun="WorkerInvoiceItems">

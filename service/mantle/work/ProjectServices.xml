@@ -1322,7 +1322,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>A plan item's (a milestone, release or component) name, description, dates and status; a parameter not given
             is left as it is, and clearFields (a list or comma text of description, estimatedStartDate, estimatedCompletionDate)
             empties those. A release keeps a version no other release of its project has; the due date is not before the start.
-            A status moves by the Default flow.</description>
+            A status moves by the Default flow. A milestone whose gate requires approval (WstApprovalRequired Y) is not reached
+            (Complete or Closed) until its latest request is approved (approve#MilestoneApproval reaches it).</description>
         <in-parameters>
             <parameter name="workEffortId" required="true"/>
             <parameter name="workEffortName"/>
@@ -1359,6 +1360,15 @@ along with this software (see the LICENSE.md file). If not, see
             const end = millis('estimatedCompletionDate' in fields ? fields.estimatedCompletionDate : plan.estimatedCompletionDate)
             if (start != null && end != null && !Number.isNaN(start) && !Number.isNaN(end) && end < start) { ec.message.addError(ec.l10n.localize('The due date is not before the start')); return }
             if (statusId && statusId !== plan.statusId) {
+                // a gated milestone is reached only by its approval (approve#MilestoneApproval)
+                if (plan.workEffortTypeEnumId === 'WetMilestone' && ['WeComplete', 'WeClosed'].includes(statusId) && !['WeComplete', 'WeClosed'].includes(plan.statusId)
+                        && ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('workEffortId', workEffortId).condition('settingTypeEnumId', 'WstApprovalRequired')
+                            .disableAuthz().one()?.settingValue === 'Y') {
+                    const latest = Array.from(ec.entity.find('mantle.work.effort.WorkEffortApproval').condition('workEffortId', workEffortId)
+                            .orderBy('-requestedDate').orderBy('-workEffortApprovalId').limit(1).disableAuthz().list())[0]
+                    if (latest?.statusId !== 'WeaApproved') {
+                        ec.message.addError(ec.resource.expand('${name} needs approval before it is reached: ask for it', '', {name: plan.workEffortName || workEffortId})); return }
+                }
                 fields.statusId = statusId
                 if (['WeComplete', 'WeClosed'].includes(statusId) && plan.actualCompletionDate == null) fields.actualCompletionDate = ec.user.nowTimestamp
                 if (['WeInPlanning', 'WeApproved', 'WeInProgress'].includes(statusId) && plan.actualCompletionDate != null) fields.actualCompletionDate = null
@@ -2520,7 +2530,11 @@ along with this software (see the LICENSE.md file). If not, see
             (millis of the entries' fromDate), expenseCount and expenseAmount (the project's expense invoices paid and not
             billed through, which a client invoice adds), lastInvoiceId and lastInvoiceDate (the project's latest client invoice
             not cancelled), draftInvoiceList (its In-Process invoices to the client: invoiceId, invoiceDate, invoiceTotal), and
-            canInvoice with cannotReason (no client, no vendor, nothing ready, a ready entry without a rate). With withEntries
+            milestoneDueList (the milestone billing shares due: reached, approved when gated, not billed; get#MilestoneBilling: workEffortId,
+            milestoneName, orderId, orderItemSeqId, itemDescription, percent, invoicePercent, amount, currencyUomId, reachedDate),
+            milestoneDueCount and milestoneDueAmount (a project with only shares due is listed too), timeReady (approved time to invoice
+            and each with a rate), and canInvoice with cannotReason (no client, no vendor, nothing ready: no approved time and no share
+            due, a ready entry without a rate). With withEntries
             also entryList (each entry: timeEntryId, partyId, personName, workEffortId, workEffortName, fromDate, thruDate,
             hours, rate, amount, ready, sheetStatusId, comments, missingRate), for one project's invoice dialog.
 
@@ -2541,7 +2555,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             projectList = []
             totals = {projectCount: 0, entryCount: 0, hours: toDecimal(0), amount: toDecimal(0), readyHours: toDecimal(0), readyAmount: toDecimal(0),
-                missingRateCount: 0, currencyUomId: null, mixedCurrency: false, byClient: []}
+                missingRateCount: 0, milestoneDueCount: 0, milestoneDueAmount: toDecimal(0), currencyUomId: null, mixedCurrency: false, byClient: []}
             if (!(ec.user.userId && (ec.user.isInGroup('ADMIN') || ec.user.hasPermission('TIME_ENTRY_RATE')))) {
                 ec.message.addError(ec.l10n.localize('Only those who manage money see what is unbilled')); return }
             const cf = ec.entity.conditionFactory
@@ -2572,7 +2586,14 @@ along with this software (see the LICENSE.md file). If not, see
                     if (scope && !scope.includes(root)) continue
                     ;(byProject[root] || (byProject[root] = [])).push(entry)
                 }
-                const projectIds = Object.keys(byProject)
+                // the milestone shares due (reached, approved, not billed): a project with only those is listed too
+                const dueByProject = {}
+                const billingOut = ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneBilling').parameters({rootWorkEffortId: workEffortId || null, dueOnly: true}).call() || {}
+                for (const share of Array.from(billingOut.shareList || [])) {
+                    if (scope && !scope.includes(share.rootWorkEffortId)) continue
+                    ;(dueByProject[share.rootWorkEffortId] || (dueByProject[share.rootWorkEffortId] = [])).push(share)
+                }
+                const projectIds = Array.from(new Set(Object.keys(byProject).concat(Object.keys(dueByProject))))
                 if (!projectIds.length) return
                 const projects = {}
                 for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'in', projectIds).list()) projects[row.workEffortId] = row
@@ -2622,9 +2643,17 @@ along with this software (see the LICENSE.md file). If not, see
                         clientName: nameOf(parties.client), vendorPartyId: parties.vendor || null, currencyUomId: null, entryCount: 0, hours: zero, amount: zero,
                         readyCount: 0, readyHours: zero, readyAmount: zero, waitingHours: zero, openHours: zero, missingRateCount: 0, readyMissingRateCount: 0,
                         firstDate: null, lastDate: null, expenseCount: 0, expenseAmount: zero, lastInvoiceId: null, lastInvoiceDate: null, draftInvoiceList: [],
-                        canInvoice: false, cannotReason: null}
+                        milestoneDueList: [], milestoneDueCount: 0, milestoneDueAmount: zero, timeReady: false, canInvoice: false, cannotReason: null}
                     if (withEntries) row.entryList = []
-                    for (const entry of byProject[projectId]) {
+                    for (const share of dueByProject[projectId] || []) {
+                        row.milestoneDueList.push({workEffortId: share.workEffortId, milestoneName: share.milestoneName, orderId: share.orderId, orderItemSeqId: share.orderItemSeqId,
+                            itemDescription: share.itemDescription, percent: share.percent, invoicePercent: share.invoicePercent, amount: share.amount,
+                            currencyUomId: share.currencyUomId, reachedDate: share.reachedDate})
+                        row.milestoneDueCount++
+                        row.milestoneDueAmount = row.milestoneDueAmount.add(share.amount)
+                        if (!row.currencyUomId) row.currencyUomId = share.currencyUomId
+                    }
+                    for (const entry of byProject[projectId] || []) {
                         const hours = toDecimal(entry.hours ?? 0)
                         const rateAmount = entry.clientHourRate == null ? rateOf(entry.rateAmountId) : null
                         const rate = entry.clientHourRate != null ? toDecimal(entry.clientHourRate) : (rateAmount?.rateAmount != null ? toDecimal(rateAmount.rateAmount) : null)
@@ -2662,10 +2691,12 @@ along with this software (see the LICENSE.md file). If not, see
                             row.expenseAmount = row.expenseAmount.add(toDecimal(inv.invoiceTotal ?? 0))
                         }
                     }
+                    const timeReason = !row.readyCount ? ec.l10n.localize('No approved time yet')
+                        : row.readyMissingRateCount ? ec.resource.expand('${count} approved entries have no client rate', '', {count: row.readyMissingRateCount}) : null
+                    row.timeReady = timeReason == null
                     row.cannotReason = !row.clientPartyId ? ec.l10n.localize('The project has no client')
                         : !row.vendorPartyId ? ec.l10n.localize('The project has no vendor to bill from')
-                        : !row.readyCount ? ec.l10n.localize('No approved time yet')
-                        : row.readyMissingRateCount ? ec.resource.expand('${count} approved entries have no client rate', '', {count: row.readyMissingRateCount}) : null
+                        : row.milestoneDueCount ? null : timeReason
                     row.canInvoice = row.cannotReason == null
                     currencies.add(row.currencyUomId)
                     projectList.push(row)
@@ -2676,6 +2707,8 @@ along with this software (see the LICENSE.md file). If not, see
                     totals.readyHours = totals.readyHours.add(row.readyHours)
                     totals.readyAmount = totals.readyAmount.add(row.readyAmount)
                     totals.missingRateCount += row.missingRateCount
+                    totals.milestoneDueCount += row.milestoneDueCount
+                    totals.milestoneDueAmount = totals.milestoneDueAmount.add(row.milestoneDueAmount)
                     const clientKey = row.clientPartyId || ''
                     const client = clientTotals[clientKey] || (clientTotals[clientKey] = {clientPartyId: row.clientPartyId, clientName: row.clientName, hours: zero, amount: zero})
                     client.hours = client.hours.add(row.hours)
@@ -2685,7 +2718,7 @@ along with this software (see the LICENSE.md file). If not, see
                 totals.mixedCurrency = currencies.size > 1
                 totals.currencyUomId = currencies.size === 1 ? Array.from(currencies)[0] : null
                 // amounts in more than one currency have no one total
-                if (totals.mixedCurrency) { totals.amount = null; totals.readyAmount = null }
+                if (totals.mixedCurrency) { totals.amount = null; totals.readyAmount = null; totals.milestoneDueAmount = null }
                 totals.byClient = Object.values(clientTotals).sort((a, b) => b.amount.compare(a.amount))
             } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
         ]]></script></actions>
@@ -2866,6 +2899,846 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.service.sync().name('mantle.work.ProjectServices.create#Project').parameters({workEffortId: workEffortId, workEffortName: workEffortName,
                     isTemplate: 'Y', ownerPartyId: ownerPartyId || null, description: description || null, visibilityEnumId: 'WevGeneral'}).call()
             }
+        ]]></script></actions>
+    </service>
+    <!-- ========== Milestone gates, the estimate, milestone billing and the project's money (impl-projects.md P8b) ==========
+        A milestone's gate (design-projects.md §4 MilestoneDetail, §15 Milestone approval): its WorkEffortSetting WstApprovalRequired
+        (Y) and WstApproverParty (a party on the project: a manager or a client contact); the requests are WorkEffortApproval rows.
+        A gated milestone is reached (Complete) only by the approval of its request: update#Milestone refuses Complete or Closed
+        before it, and approve#MilestoneApproval reaches it. The approver's own user decides, or one who manages the project (or holds
+        MILESTONE_APPROVE, or ADMIN) records the approver's decision (recordedFor Y): until client users sign in (impl-projects.md P10)
+        the manager records the client's approval.
+        The estimate (send#EstimateForApproval) is a file of the project's Estimate milestone (its WstEstimateMilestone setting; made
+        when missing, gated, the approver the project's ClientManager, else its Customer), and its gate's request; its approval moves
+        the project from In Planning to Approved and the project's open or proposed sales orders to Approved.
+        The billing share (design-projects.md §15 Milestone billing share): an OrderItemWorkEffort of an order line and a milestone with
+        invoicePercent (of the line's total) or invoiceAmount; once the milestone is reached (and its gate approved) the share is due,
+        and mantle.account.InvoiceServices.create#MilestoneInvoiceItems bills it (WorkEffortBilling, OrderItemBilling). Money (the
+        shares, the order lines' amounts, the project's money summary) is for ADMIN and holders of TIME_ENTRY_RATE, as
+        get#UnbilledSummary. -->
+
+    <service verb="get" noun="MilestoneApprovalAccess">
+        <description>A milestone (WetMilestone) of a project the user sees, its gate and what the user may do: canView, canRequest (a
+            current party of the project, one who manages it, a holder of MILESTONE_APPROVE, ADMIN), canDecide (the approver's own user;
+            or, recording it for the approver, one who manages the project, a holder of MILESTONE_APPROVE, ADMIN), canSetGate (one who
+            manages the project, MILESTONE_APPROVE, ADMIN), isApprover. gate: required, approverPartyId, approverName, the latest request
+            (approval: its fields, with statusId) and approved (the latest request approved), awaiting (the latest requested). An error
+            "not available" when the user does not see it, unless need is none.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="need" default-value="view"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="milestone" type="Map"/>
+            <parameter name="gate" type="Map"/>
+            <parameter name="canView" type="Boolean"/>
+            <parameter name="canRequest" type="Boolean"/>
+            <parameter name="canDecide" type="Boolean"/>
+            <parameter name="canSetGate" type="Boolean"/>
+            <parameter name="isApprover" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            milestone = null; gate = null; canView = false; canRequest = false; canDecide = false; canSetGate = false; isApprover = false
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const row = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+                if (row != null && row.workEffortTypeEnumId === 'WetMilestone' && row.rootWorkEffortId) {
+                    const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+                    const all = !!vis.allProjects
+                    const projectId = row.rootWorkEffortId
+                    const settings = {}
+                    for (const setting of ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('workEffortId', workEffortId).list())
+                        settings[setting.settingTypeEnumId] = setting.settingValue
+                    const approverPartyId = settings.WstApproverParty || null
+                    const userPartyId = vis.userPartyId || null
+                    isApprover = !!userPartyId && userPartyId === approverPartyId
+                    canView = all || Array.from(vis.visibleProjectIds || []).includes(projectId) || isApprover
+                    if (canView) {
+                        const manages = all || Array.from(vis.managedProjectIds || []).includes(projectId)
+                                || (Array.from(vis.visibleProjectIds || []).includes(projectId) && ec.user.hasPermission('MILESTONE_APPROVE'))
+                        canSetGate = manages
+                        canRequest = manages || Array.from(vis.memberProjectIds || []).includes(projectId)
+                        canDecide = manages || isApprover
+                        milestone = row.getMap()
+                        const latest = Array.from(ec.entity.find('mantle.work.effort.WorkEffortApproval').condition('workEffortId', workEffortId)
+                                .orderBy('-requestedDate').orderBy('-workEffortApprovalId').limit(1).list())[0] || null
+                        const party = approverPartyId ? ec.entity.find('mantle.party.PartyDetail').condition('partyId', approverPartyId).one() : null
+                        gate = {required: settings.WstApprovalRequired === 'Y', approverPartyId: approverPartyId,
+                            approverName: party ? (party.organizationName || [party.firstName, party.lastName].filter((part) => part).join(' ') || party.pseudoId || approverPartyId) : '',
+                            approval: latest ? latest.getMap() : null, approved: latest?.statusId === 'WeaApproved', awaiting: latest?.statusId === 'WeaRequested'}
+                    }
+                }
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            if (need === 'none') return
+            if (!canView) { ec.message.addError(ec.resource.expand('Milestone ${workEffortId} is not available', '', {workEffortId})); return }
+            if (need === 'request' && !canRequest) ec.message.addError(ec.l10n.localize('Only the project team asks for an approval'))
+            else if (need === 'decide' && !canDecide) ec.message.addError(ec.l10n.localize('Only the approver, or one who manages the project for them, decides'))
+            else if (need === 'gate' && !canSetGate) ec.message.addError(ec.l10n.localize('Only those who manage the project set its gates'))
+        ]]></script></actions>
+    </service>
+
+    <service verb="store" noun="MilestoneGate">
+        <description>A milestone's gate: whether reaching it needs approval (approvalRequired Y or N) and the approver, a party with a
+            current role on the project (a manager or a client contact); by one who manages the project. A gate is not taken off while
+            a request waits (cancel it first).</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="approvalRequired"/>
+            <parameter name="approverPartyId"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const access = ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneApprovalAccess').parameters({workEffortId: workEffortId, need: 'gate'}).call() || {}
+            if (ec.message.hasError()) return
+            const required = approvalRequired === 'Y' || approvalRequired === true || approvalRequired === 'true'
+            if (!required && access.gate.awaiting) { ec.message.addError(ec.l10n.localize('An approval is waiting: cancel it before taking the gate off')); return }
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                if (approverPartyId) {
+                    const onProject = ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', access.milestone.rootWorkEffortId)
+                            .condition('partyId', approverPartyId).conditionDate('fromDate', 'thruDate', null).count() > 0
+                    if (!onProject) { ec.message.addError(ec.l10n.localize('The approver is someone on the project: a manager or a client contact')); return }
+                }
+                if (required && !approverPartyId && !access.gate.approverPartyId) { ec.message.addError(ec.l10n.localize('Choose the approver')); return }
+                ec.service.sync().name('mantle.work.ProjectServices.store#ProjectSetting').parameters({workEffortId: workEffortId,
+                    settingTypeEnumId: 'WstApprovalRequired', settingValue: required ? 'Y' : 'N'}).call()
+                if (approverPartyId != null) ec.service.sync().name('mantle.work.ProjectServices.store#ProjectSetting').parameters({workEffortId: workEffortId,
+                    settingTypeEnumId: 'WstApproverParty', settingValue: approverPartyId || ''}).call()
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="request" noun="MilestoneApproval">
+        <description>Asks the approver of a gated milestone to approve it (a WorkEffortApproval, Requested): by the project's team; the
+            milestone open (not reached, closed or cancelled) and no request waiting. workEffortContentId: the file to approve (the
+            estimate). The approver's users get MilestoneApproval in the tray (a client contact has none until impl-projects.md P10:
+            the manager then records the decision).</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="comments"/>
+            <parameter name="workEffortContentId"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortApprovalId"/></out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            const access = ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneApprovalAccess').parameters({workEffortId: workEffortId, need: 'request'}).call() || {}
+            if (ec.message.hasError()) return
+            const gate = access.gate
+            if (!gate.required) { ec.message.addError(L('The milestone needs no approval: set its gate first')); return }
+            if (!gate.approverPartyId) { ec.message.addError(L('The gate has no approver')); return }
+            if (gate.awaiting) { ec.message.addError(L('An approval is already waiting')); return }
+            if (['WeComplete', 'WeClosed', 'WeCancelled'].includes(access.milestone.statusId)) { ec.message.addError(L('The milestone is not open')); return }
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                workEffortApprovalId = ec.service.sync().name('create#mantle.work.effort.WorkEffortApproval').parameters({workEffortId: workEffortId,
+                    approverPartyId: gate.approverPartyId, statusId: 'WeaRequested', workEffortContentId: workEffortContentId || null,
+                    requestedByUserId: ec.user.userId || null, requestedDate: ec.user.nowTimestamp, requestComments: comments || null}).call()?.workEffortApprovalId
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            if (!ec.message.hasError() && workEffortApprovalId)
+                ec.service.sync().name('mantle.work.ProjectServices.notify#MilestoneApproval').parameters({workEffortApprovalId: workEffortApprovalId, change: 'requested'}).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="approve" noun="MilestoneApproval">
+        <description>The approver's approval of a milestone's waiting request (workEffortApprovalId, or the milestone's waiting one by
+            workEffortId), by the approver's user or recorded for them (get#MilestoneApprovalAccess canDecide): the request Approved,
+            then the milestone reached (Complete) when open. When it is the project's Estimate milestone, the project moves from In
+            Planning to Approved and its open or proposed sales orders (OrderItemWorkEffort) to Approved. All in one transaction.</description>
+        <in-parameters>
+            <parameter name="workEffortApprovalId"/>
+            <parameter name="workEffortId"/>
+            <parameter name="comments"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortApprovalId"/><parameter name="projectMoved" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            projectMoved = false
+            const L = (text) => ec.l10n.localize(text)
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const request = workEffortApprovalId ? ec.entity.find('mantle.work.effort.WorkEffortApproval').condition('workEffortApprovalId', workEffortApprovalId).forUpdate(true).one()
+                    : Array.from(ec.entity.find('mantle.work.effort.WorkEffortApproval').condition('workEffortId', workEffortId || '_NA_').condition('statusId', 'WeaRequested')
+                        .orderBy('-requestedDate').forUpdate(true).list())[0] || null
+                if (request == null) { ec.message.addError(L('No approval waits on this milestone')); return }
+                workEffortApprovalId = request.workEffortApprovalId
+                const access = ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneApprovalAccess').parameters({workEffortId: request.workEffortId, need: 'decide'}).call() || {}
+                if (ec.message.hasError()) return
+                if (request.statusId !== 'WeaRequested') { ec.message.addError(L('This approval was decided already')); return }
+                const userPartyId = ec.user.userAccount?.partyId || null
+                ec.service.sync().name('update#mantle.work.effort.WorkEffortApproval').parameters({workEffortApprovalId: workEffortApprovalId, statusId: 'WeaApproved',
+                    decidedByUserId: ec.user.userId || null, decidedDate: ec.user.nowTimestamp, decisionComments: comments || null,
+                    recordedFor: userPartyId && userPartyId === request.approverPartyId ? 'N' : 'Y'}).call()
+                if (ec.message.hasError()) return
+                const milestone = access.milestone
+                if (!['WeComplete', 'WeClosed', 'WeCancelled'].includes(milestone.statusId)) {
+                    ec.service.sync().name('mantle.work.ProjectServices.update#Milestone').parameters({workEffortId: milestone.workEffortId, statusId: 'WeComplete'}).call()
+                    if (ec.message.hasError()) return
+                }
+                // the estimate approved moves the project on: In Planning to Approved, its open or proposed orders approved
+                const estimateId = ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('workEffortId', milestone.rootWorkEffortId)
+                        .condition('settingTypeEnumId', 'WstEstimateMilestone').one()?.settingValue
+                if (estimateId && estimateId === milestone.workEffortId) {
+                    const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', milestone.rootWorkEffortId).one()
+                    if (project?.statusId === 'WeInPlanning') {
+                        ec.service.sync().name('update#mantle.work.effort.WorkEffort').parameters({workEffortId: project.workEffortId, statusId: 'WeApproved'}).call()
+                        if (ec.message.hasError()) return
+                        projectMoved = true
+                    }
+                    const orderIds = Array.from(new Set(Array.from(ec.entity.find('mantle.order.OrderItemWorkEffort').condition('workEffortId', project.workEffortId).list())
+                            .map((link) => link.orderId)))
+                    for (const orderId of orderIds) {
+                        const header = ec.entity.find('mantle.order.OrderHeader').condition('orderId', orderId).one()
+                        if (!header || !['OrderOpen', 'OrderProposed'].includes(header.statusId)) continue
+                        // placed (from the quote), then approved unless the store approved it on placing
+                        ec.service.sync().name('mantle.order.OrderServices.update#OrderStatus').parameters({orderId: orderId, statusId: 'OrderPlaced',
+                            placedDate: ec.user.nowTimestamp}).call()
+                        if (ec.message.hasError()) return
+                        if (ec.entity.find('mantle.order.OrderHeader').condition('orderId', orderId).one()?.statusId === 'OrderPlaced')
+                            ec.service.sync().name('mantle.order.OrderServices.update#OrderStatus').parameters({orderId: orderId, statusId: 'OrderApproved',
+                                approvedDate: ec.user.nowTimestamp}).call()
+                        if (ec.message.hasError()) return
+                    }
+                }
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            ec.service.sync().name('mantle.work.ProjectServices.notify#MilestoneApproval').parameters({workEffortApprovalId: workEffortApprovalId, change: 'approved'}).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="refuse" noun="MilestoneApproval">
+        <description>The approver's refusal of a milestone's waiting request, with the reason (required), by the approver's user or
+            recorded for them; the milestone stays open and a new request may follow.</description>
+        <in-parameters>
+            <parameter name="workEffortApprovalId"/>
+            <parameter name="workEffortId"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortApprovalId"/></out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            if (!String(reason || '').trim()) { ec.message.addError(L('Give the reason')); return }
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const request = workEffortApprovalId ? ec.entity.find('mantle.work.effort.WorkEffortApproval').condition('workEffortApprovalId', workEffortApprovalId).forUpdate(true).one()
+                    : Array.from(ec.entity.find('mantle.work.effort.WorkEffortApproval').condition('workEffortId', workEffortId || '_NA_').condition('statusId', 'WeaRequested')
+                        .orderBy('-requestedDate').forUpdate(true).list())[0] || null
+                if (request == null) { ec.message.addError(L('No approval waits on this milestone')); return }
+                workEffortApprovalId = request.workEffortApprovalId
+                ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneApprovalAccess').parameters({workEffortId: request.workEffortId, need: 'decide'}).call()
+                if (ec.message.hasError()) return
+                if (request.statusId !== 'WeaRequested') { ec.message.addError(L('This approval was decided already')); return }
+                const userPartyId = ec.user.userAccount?.partyId || null
+                ec.service.sync().name('update#mantle.work.effort.WorkEffortApproval').parameters({workEffortApprovalId: workEffortApprovalId, statusId: 'WeaRefused',
+                    decidedByUserId: ec.user.userId || null, decidedDate: ec.user.nowTimestamp, decisionComments: String(reason).trim(),
+                    recordedFor: userPartyId && userPartyId === request.approverPartyId ? 'N' : 'Y'}).call()
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            if (!ec.message.hasError()) ec.service.sync().name('mantle.work.ProjectServices.notify#MilestoneApproval').parameters({workEffortApprovalId: workEffortApprovalId,
+                change: 'refused', reason: String(reason).trim()}).call()
+        ]]></script></actions>
+    </service>
+
+    <service verb="cancel" noun="MilestoneApproval">
+        <description>Withdraws a milestone's waiting request (as a new estimate replaces the one sent), by the project's team.</description>
+        <in-parameters><parameter name="workEffortId" required="true"/></in-parameters>
+        <out-parameters><parameter name="cancelledCount" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            cancelledCount = 0
+            ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneApprovalAccess').parameters({workEffortId: workEffortId, need: 'request'}).call()
+            if (ec.message.hasError()) return
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                for (const request of ec.entity.find('mantle.work.effort.WorkEffortApproval').condition('workEffortId', workEffortId).condition('statusId', 'WeaRequested').forUpdate(true).list()) {
+                    ec.service.sync().name('update#mantle.work.effort.WorkEffortApproval').parameters({workEffortApprovalId: request.workEffortApprovalId, statusId: 'WeaCancelled',
+                        decidedByUserId: ec.user.userId || null, decidedDate: ec.user.nowTimestamp}).call()
+                    ec.service.sync().name('mantle.work.ProjectServices.notify#MilestoneApproval').parameters({workEffortApprovalId: request.workEffortApprovalId, change: 'cancelled'}).call()
+                    cancelledCount++
+                }
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <!-- the decision services of the MilestoneApproval topic (org.moqui.impl.NotificationServices approve# and refuse#NotificationMessage) -->
+    <service verb="approve" noun="MilestoneApprovalNotice">
+        <in-parameters>
+            <parameter name="recordEntityName"/><parameter name="recordId" required="true"/>
+            <parameter name="message" type="Map"/><parameter name="notificationMessageId"/>
+        </in-parameters>
+        <out-parameters><parameter name="decision"/></out-parameters>
+        <actions>
+            <service-call name="mantle.work.ProjectServices.approve#MilestoneApproval" in-map="{workEffortApprovalId:recordId}"/>
+            <set field="decision" value="approved"/>
+        </actions>
+    </service>
+    <service verb="refuse" noun="MilestoneApprovalNotice">
+        <in-parameters>
+            <parameter name="recordEntityName"/><parameter name="recordId" required="true"/>
+            <parameter name="message" type="Map"/><parameter name="notificationMessageId"/><parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="decision"/></out-parameters>
+        <actions>
+            <service-call name="mantle.work.ProjectServices.refuse#MilestoneApproval" in-map="{workEffortApprovalId:recordId, reason:reason}"/>
+            <set field="decision" value="refused"/>
+        </actions>
+    </service>
+
+    <service verb="notify" noun="MilestoneApproval" allow-remote="false">
+        <description>The notices of a milestone's approval (requested: MilestoneApproval to the approver's users; approved, refused and
+            cancelled: MilestoneDecision to the one who asked, not the one deciding), with workEffortId, milestoneName, rootWorkEffortId,
+            projectName, approverName, requesterName, actorName, decision and reasonSuffix; a decision marks the open approval notices
+            of the request decided. A failure is logged and the change stays.</description>
+        <in-parameters>
+            <parameter name="workEffortApprovalId" required="true"/>
+            <parameter name="change" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="userIdList" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            userIdList = []
+            const L = (text) => ec.l10n.localize(text)
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const row = ec.entity.find('mantle.work.effort.WorkEffortApproval').condition('workEffortApprovalId', workEffortApprovalId).one()
+                if (!row) return
+                if (change !== 'requested') {
+                    const messageIds = Array.from(ec.entity.find('moqui.security.user.NotificationMessage').condition('topic', 'MilestoneApproval')
+                            .condition('recordEntityName', 'mantle.work.effort.WorkEffortApproval').condition('recordId', workEffortApprovalId)
+                            .selectField('notificationMessageId').list()).map((one) => one.notificationMessageId)
+                    if (messageIds.length) for (const user of ec.entity.find('moqui.security.user.NotificationMessageUser').condition('notificationMessageId', 'in', messageIds)
+                            .condition('viewedDate', 'is-null', null).list()) { user.viewedDate = ec.user.nowTimestamp; user.update() }
+                }
+                const nameOf = (partyId) => {
+                    const party = partyId ? ec.entity.find('mantle.party.PartyDetail').condition('partyId', partyId).one() : null
+                    return party ? (party.organizationName || [party.firstName, party.lastName].filter((part) => part).join(' ') || partyId) : (partyId || '')
+                }
+                const milestone = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', row.workEffortId).one()
+                const project = milestone ? ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', milestone.rootWorkEffortId).one() : null
+                const requester = row.requestedByUserId ? ec.entity.find('moqui.security.UserAccount').condition('userId', row.requestedByUserId).one() : null
+                const message = {workEffortApprovalId: workEffortApprovalId, workEffortId: row.workEffortId, milestoneName: milestone?.workEffortName || row.workEffortId,
+                    rootWorkEffortId: milestone?.rootWorkEffortId || null, projectName: project?.workEffortName || milestone?.rootWorkEffortId || '',
+                    approverName: nameOf(row.approverPartyId), requesterName: requester?.userFullName || requester?.username || '',
+                    actorName: ec.user.userAccount?.userFullName || ec.user.username || '',
+                    decision: {approved: L('approved'), refused: L('refused'), cancelled: L('withdrawn'), requested: L('requested')}[change] || change,
+                    reason: reason || '', reasonSuffix: reason ? ': ' + reason : ''}
+                let topic, userIds = []
+                if (change === 'requested') {
+                    topic = 'MilestoneApproval'
+                    userIds = Array.from(ec.entity.find('moqui.security.UserAccount').condition('partyId', row.approverPartyId || '_NA_').list())
+                            .filter((account) => account.disabled !== 'Y' && account.userId !== ec.user.userId).map((account) => account.userId)
+                } else {
+                    topic = 'MilestoneDecision'
+                    if (row.requestedByUserId && row.requestedByUserId !== ec.user.userId) userIds = [row.requestedByUserId]
+                }
+                if (!userIds.length) return
+                const nm = ec.makeNotificationMessage().topic(topic).userIds(userIds).message(message)
+                nm.record('mantle.work.effort.WorkEffortApproval', workEffortApprovalId)
+                nm.send()
+                userIdList = userIds
+            } catch (err) {
+                ec.logger.error(`Milestone approval ${workEffortApprovalId}: the ${change} notice was not sent: ${err && err.message ? err.message : err}`)
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="ProjectEstimate">
+        <description>A project's estimate (design-projects.md §14 Project estimate): the work breakdown from the top-level items down to
+            depth (1 to 4, default 2), each line with its roll-up estimate in hours (a leaf's estimatedWorkTime, a parent's the sum of its
+            children's; cancelled items left out) and its amount at the project's client rate (mantle.work.TimeServices.find#RateAmount:
+            the standard client rate of the project, for no one in particular); the milestones with their due dates; the project's order
+            lines (OrderItemWorkEffort); the totals. estimateHtml: the printed estimate (escaped), which the Estimate milestone keeps as
+            its file when sent for approval. For one who manages money (ADMIN, TIME_ENTRY_RATE) and sees the project.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="depth" type="Integer" default="2"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="estimate" type="Map"/>
+            <parameter name="estimateHtml"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            estimate = null; estimateHtml = ''
+            const L = (text) => ec.l10n.localize(text)
+            if (!(ec.user.userId && (ec.user.isInGroup('ADMIN') || ec.user.hasPermission('TIME_ENTRY_RATE')))) { ec.message.addError(L('Only those who manage money see the estimate')); return }
+            const levels = Math.max(1, Math.min(4, Number(depth || 2)))
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+                const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+                if (!project || project.workEffortTypeEnumId !== 'WetProject' || !(vis.allProjects || Array.from(vis.visibleProjectIds || []).includes(workEffortId))) {
+                    ec.message.addError(ec.resource.expand('Project ${workEffortId} is not available', '', {workEffortId})); return }
+                const nameOf = (partyId) => {
+                    const party = partyId ? ec.entity.find('mantle.party.PartyDetail').condition('partyId', partyId).one() : null
+                    return party ? (party.organizationName || [party.firstName, party.lastName].filter((part) => part).join(' ') || partyId) : ''
+                }
+                const partyOf = (roles) => Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', workEffortId)
+                        .condition('roleTypeId', 'in', roles).conditionDate('fromDate', 'thruDate', null).orderBy('fromDate').list())[0]?.partyId || null
+                const clientPartyId = partyOf(['Customer', 'CustomerBillTo'])
+                const vendorPartyId = partyOf(['Vendor', 'VendorBillFrom'])
+                const uom = project.costUomId || (vendorPartyId ? ec.entity.find('mantle.ledger.config.PartyAcctgPreference').condition('organizationPartyId', vendorPartyId).one()?.baseCurrencyUomId : null) || 'USD'
+                const rateOut = ec.service.sync().name('mantle.work.TimeServices.find#RateAmount').parameters({rateTypeEnumId: 'RatpStandard', ratePurposeEnumId: 'RaprClient',
+                    rateCurrencyUomId: uom, workEffortId: workEffortId}).call() || {}
+                ec.message.clearErrors()
+                const rate = rateOut.rateAmount != null ? toDecimal(rateOut.rateAmount) : null
+                const items = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', workEffortId).condition('workEffortTypeEnumId', 'WetTask')
+                        .condition('statusId', 'not-equals', 'WeCancelled').selectField('workEffortId,parentWorkEffortId,workEffortName,estimatedWorkTime,sequenceNum,statusId')
+                        .limit(20000).list()).map((row) => row.getMap())
+                const children = {}
+                const ids = new Set(items.map((item) => item.workEffortId))
+                for (const item of items) {
+                    const parent = item.parentWorkEffortId && ids.has(item.parentWorkEffortId) ? item.parentWorkEffortId : ''
+                    ;(children[parent] || (children[parent] = [])).push(item)
+                }
+                const order = (a, b) => Number(a.sequenceNum ?? 0) - Number(b.sequenceNum ?? 0) || String(a.workEffortId).localeCompare(String(b.workEffortId), undefined, {numeric: true})
+                const rollup = {}
+                const hoursOf = (item) => {
+                    if (item.workEffortId in rollup) return rollup[item.workEffortId]
+                    const kids = children[item.workEffortId] || []
+                    const value = kids.length ? kids.reduce((total, kid) => total.add(hoursOf(kid)), toDecimal(0)) : toDecimal(item.estimatedWorkTime ?? 0)
+                    rollup[item.workEffortId] = value
+                    return value
+                }
+                const fmtHours = (value) => ec.l10n.format(value, '#,##0.##')
+                const money = (value) => value == null ? '' : ec.l10n.formatCurrency(value, uom)
+                const lines = []
+                const walk = (parentId, level) => {
+                    for (const item of (children[parentId] || []).slice().sort(order)) {
+                        const hours = hoursOf(item)
+                        const amount = rate != null ? hours.multiply(rate).setScale(2, 'HALF_UP') : null
+                        lines.push({workEffortId: item.workEffortId, workEffortName: item.workEffortName || item.workEffortId, level: level, hours: hours,
+                            hoursText: fmtHours(hours), amount: amount, amountText: money(amount)})
+                        if (level < levels) walk(item.workEffortId, level + 1)
+                    }
+                }
+                walk('', 1)
+                const totalHours = (children[''] || []).reduce((total, item) => total.add(hoursOf(item)), toDecimal(0))
+                const totalAmount = rate != null ? totalHours.multiply(rate).setScale(2, 'HALF_UP') : null
+                const milestones = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', workEffortId).condition('workEffortTypeEnumId', 'WetMilestone')
+                        .condition('statusId', 'not-equals', 'WeCancelled').orderBy('estimatedCompletionDate').list()).map((row) => ({workEffortId: row.workEffortId,
+                    workEffortName: row.workEffortName || row.workEffortId, dueText: row.estimatedCompletionDate != null ? ec.l10n.format(row.estimatedCompletionDate, 'MMM d, yyyy') : ''}))
+                const orderLines = []
+                for (const link of ec.entity.find('mantle.order.OrderItemWorkEffort').condition('workEffortId', workEffortId).list()) {
+                    const item = ec.entity.find('mantle.order.OrderItem').condition({orderId: link.orderId, orderItemSeqId: link.orderItemSeqId}).one()
+                    if (!item) continue
+                    const header = ec.entity.find('mantle.order.OrderHeader').condition('orderId', link.orderId).one()
+                    const total = toDecimal(item.quantity ?? 1).multiply(toDecimal(item.unitAmount ?? 0)).setScale(2, 'HALF_UP')
+                    orderLines.push({orderId: link.orderId, orderItemSeqId: link.orderItemSeqId, description: item.itemDescription || link.orderId,
+                        quantityText: ec.l10n.format(item.quantity ?? 1, '#,##0.##'), total: total, totalText: ec.l10n.formatCurrency(total, header?.currencyUomId || uom)})
+                }
+                const today = ec.l10n.format(ec.user.nowTimestamp, 'MMM d, yyyy')
+                estimate = {workEffortId: workEffortId, projectName: project.workEffortName || workEffortId, description: project.description || '',
+                    clientPartyId: clientPartyId, clientName: nameOf(clientPartyId), vendorPartyId: vendorPartyId, vendorName: nameOf(vendorPartyId),
+                    startText: project.estimatedStartDate != null ? ec.l10n.format(project.estimatedStartDate, 'MMM d, yyyy') : '',
+                    dueText: project.estimatedCompletionDate != null ? ec.l10n.format(project.estimatedCompletionDate, 'MMM d, yyyy') : '',
+                    depth: levels, currencyUomId: uom, rate: rate, rateText: rate != null ? money(rate) + ' / h' : '', hasRate: rate != null, lineList: lines, milestoneList: milestones,
+                    orderLineList: orderLines, totalHours: totalHours, totalHoursText: fmtHours(totalHours), totalAmount: totalAmount, totalAmountText: money(totalAmount), dateText: today}
+                const enc = (text) => String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+                const row = (label, value) => value ? '<tr><td class="field-title">' + enc(L(label)) + '</td><td class="field-value">' + enc(value) + '</td></tr>' : ''
+                let html = '<table style="width:100%"><tr><td style="vertical-align:top"><div class="box-header">' + enc(estimate.vendorName) + '</div></td>'
+                    + '<td style="vertical-align:top;text-align:right"><div class="box-header">' + enc(L('Estimate')) + '</div><table class="field" style="margin-left:auto">'
+                    + row('Project', estimate.projectName + ' (' + workEffortId + ')') + row('For', estimate.clientName) + row('Date', today) + row('Start', estimate.startText)
+                    + row('Target date', estimate.dueText) + row('Rate', estimate.rateText) + '</table></td></tr></table>'
+                    + (estimate.description ? '<p>' + enc(estimate.description) + '</p>' : '')
+                    + '<div class="group-title" style="margin-top:8pt">' + enc(L('Work')) + '</div><table class="list"><tr><th>' + enc(L('Work item')) + '</th><th style="text-align:right">'
+                    + enc(L('Hours')) + '</th><th style="text-align:right">' + enc(L('Amount')) + '</th></tr>'
+                    + lines.map((line) => '<tr><td style="padding-left:' + ((line.level - 1) * 14 + 4) + 'px' + (line.level === 1 ? ';font-weight:bold' : '') + '">' + enc(line.workEffortName)
+                        + '</td><td style="text-align:right;white-space:nowrap">' + enc(line.hoursText) + '</td><td style="text-align:right;white-space:nowrap">' + enc(line.amountText) + '</td></tr>').join('')
+                    + '<tr><td style="font-weight:bold">' + enc(L('Total')) + '</td><td style="text-align:right;font-weight:bold">' + enc(estimate.totalHoursText)
+                    + '</td><td style="text-align:right;font-weight:bold">' + enc(estimate.totalAmountText) + '</td></tr></table>'
+                if (!estimate.hasRate) html += '<p>' + enc(L('The project has no client rate: the amounts are left out.')) + '</p>'
+                if (orderLines.length) html += '<div class="group-title" style="margin-top:8pt">' + enc(L('Order')) + '</div><table class="list"><tr><th>' + enc(L('Line')) + '</th><th>'
+                    + enc(L('Description')) + '</th><th style="text-align:right">' + enc(L('Amount')) + '</th></tr>' + orderLines.map((line) => '<tr><td>' + enc(line.orderId + ' ' + line.orderItemSeqId)
+                    + '</td><td>' + enc(line.description) + '</td><td style="text-align:right;white-space:nowrap">' + enc(line.totalText) + '</td></tr>').join('') + '</table>'
+                if (milestones.length) html += '<div class="group-title" style="margin-top:8pt">' + enc(L('Milestones')) + '</div><table class="list"><tr><th>' + enc(L('Milestone'))
+                    + '</th><th>' + enc(L('Due')) + '</th></tr>' + milestones.map((one) => '<tr><td>' + enc(one.workEffortName) + '</td><td>' + enc(one.dueText) + '</td></tr>').join('') + '</table>'
+                estimateHtml = html
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="send" noun="EstimateForApproval">
+        <description>Sends a project's estimate for approval (design-projects.md §4 ProjectMoney, §14): its printed estimate (get#ProjectEstimate
+            at depth) saved as a file (WectEstimate, an html document under the content root at work/milestoneId/) of the project's
+            Estimate milestone (its WstEstimateMilestone; made when missing, In Progress, with a gate whose approver is the project's
+            ClientManager, else its Customer), any request waiting on it withdrawn, and its gate's approval requested with the file;
+            the project's open sales orders become Proposed (a quote). By one who manages money and manages the project
+            (get#MilestoneApprovalAccess canSetGate on the milestone). Refused when the project has no client.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="depth" type="Integer" default="2"/>
+            <parameter name="comments"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="milestoneId"/>
+            <parameter name="workEffortContentId"/>
+            <parameter name="workEffortApprovalId"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            const out = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectEstimate').parameters({workEffortId: workEffortId, depth: depth}).call() || {}
+            if (ec.message.hasError()) return
+            const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+            if (!(vis.allProjects || Array.from(vis.managedProjectIds || []).includes(workEffortId) || ec.user.hasPermission('MILESTONE_APPROVE'))) {
+                ec.message.addError(L('Only those who manage the project send its estimate')); return }
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const approver = Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', workEffortId).condition('roleTypeId', 'ClientManager')
+                        .conditionDate('fromDate', 'thruDate', null).orderBy('fromDate').list())[0]?.partyId || out.estimate.clientPartyId
+                if (!approver) { ec.message.addError(L('The project has no client to approve its estimate')); return }
+                milestoneId = ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('workEffortId', workEffortId).condition('settingTypeEnumId', 'WstEstimateMilestone').one()?.settingValue || null
+                const existing = milestoneId ? ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', milestoneId).one() : null
+                if (!existing || existing.workEffortTypeEnumId !== 'WetMilestone' || existing.statusId === 'WeCancelled') {
+                    milestoneId = ec.service.sync().name('mantle.work.ProjectServices.create#Milestone').parameters({rootWorkEffortId: workEffortId, workEffortName: L('Estimate'),
+                        description: L('The client approves the project estimate through this milestone\'s gate.'), statusId: 'WeInProgress',
+                        estimatedCompletionDate: ec.user.nowTimestamp}).call()?.workEffortId
+                    if (ec.message.hasError()) return
+                    ec.service.sync().name('mantle.work.ProjectServices.store#ProjectSetting').parameters({workEffortId: workEffortId, settingTypeEnumId: 'WstEstimateMilestone',
+                        settingValue: milestoneId}).call()
+                } else if (['WeComplete', 'WeClosed'].includes(existing.statusId)) {
+                    // a new estimate after an approved one: the milestone opens again for the new approval
+                    ec.service.sync().name('mantle.work.ProjectServices.update#Milestone').parameters({workEffortId: milestoneId, statusId: 'WeInProgress'}).call()
+                    if (ec.message.hasError()) return
+                }
+                for (const [type, value] of [['WstApprovalRequired', 'Y'], ['WstApproverParty', approver]]) {
+                    const current = ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('workEffortId', milestoneId).condition('settingTypeEnumId', type).one()
+                    if (type === 'WstApproverParty' && current?.settingValue) continue
+                    ec.service.sync().name('mantle.work.ProjectServices.store#ProjectSetting').parameters({workEffortId: milestoneId, settingTypeEnumId: type, settingValue: value}).call()
+                }
+                if (ec.message.hasError()) return
+                const root = String(ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content').replace(/\/+$/, '')
+                const stamp = ec.l10n.format(ec.user.nowTimestamp, 'yyyyMMdd-HHmmss')
+                const location = root + '/work/' + milestoneId + '/estimate-' + stamp + '.html'
+                const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + String(L('Estimate')) + '</title><style>body{font-family:sans-serif;font-size:10pt}'
+                    + 'table.list{border-collapse:collapse;width:100%}table.list th,table.list td{border-bottom:1px solid #ccc;padding:3px 4px;text-align:left}'
+                    + '.box-header{font-size:14pt;font-weight:bold}.group-title{font-weight:bold;margin:6pt 0 2pt}td.field-title{color:#666;padding-right:8px}</style></head><body>'
+                    + out.estimateHtml + '</body></html>'
+                ec.resource.getLocationReference(location).putText(html)
+                workEffortContentId = ec.service.sync().name('create#mantle.work.effort.WorkEffortContent').parameters({workEffortId: milestoneId, contentTypeEnumId: 'WectEstimate',
+                    contentLocation: location, description: ec.resource.expand('Estimate of ${projectName}: ${hours} h, ${amount}', '', {projectName: out.estimate.projectName,
+                        hours: out.estimate.totalHoursText, amount: out.estimate.totalAmountText || L('no rate')}), contentDate: ec.user.nowTimestamp, userId: ec.user.userId || null}).call()?.workEffortContentId
+                if (ec.message.hasError()) return
+                ec.service.sync().name('mantle.work.ProjectServices.cancel#MilestoneApproval').parameters({workEffortId: milestoneId}).call()
+                if (ec.message.hasError()) return
+                workEffortApprovalId = ec.service.sync().name('mantle.work.ProjectServices.request#MilestoneApproval').parameters({workEffortId: milestoneId,
+                    comments: comments || null, workEffortContentId: workEffortContentId}).call()?.workEffortApprovalId
+                if (ec.message.hasError()) return
+                // the project's open orders are quotes now
+                for (const orderId of Array.from(new Set(Array.from(ec.entity.find('mantle.order.OrderItemWorkEffort').condition('workEffortId', workEffortId).list()).map((link) => link.orderId)))) {
+                    const header = ec.entity.find('mantle.order.OrderHeader').condition('orderId', orderId).one()
+                    if (header?.statusId === 'OrderOpen') ec.service.sync().name('mantle.order.OrderServices.update#OrderStatus').parameters({orderId: orderId, statusId: 'OrderProposed'}).call()
+                    if (ec.message.hasError()) return
+                }
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="MilestoneBilling">
+        <description>The billing shares of milestones (design-projects.md §4 MilestoneBilling, MilestoneBillingShare; §10 MilestonesDue):
+            each OrderItemWorkEffort of a milestone (one milestone by workEffortId, a project's by rootWorkEffortId, an order's by orderId)
+            with invoicePercent or invoiceAmount: the milestone (name, status, reached date, gate required and approved), the order line
+            (orderId, orderItemSeqId, description, its total, currency, the order's status), the share (percent, amount: the fixed amount,
+            else the percent of the line's total, rounded to the cent), billed (invoiceId, invoiceItemSeqId, invoice status: a
+            WorkEffortBilling not cancelled with the line's OrderItemBilling) and due (reached, its gate approved when required, not
+            billed). lineList: the order lines linked to the project or the milestones (orderId, orderItemSeqId, description, total,
+            sharedPercent, sharedAmount, billedAmount). For those who manage money (ADMIN, TIME_ENTRY_RATE) and see the project; else an
+            error.</description>
+        <in-parameters>
+            <parameter name="workEffortId"/>
+            <parameter name="rootWorkEffortId"/>
+            <parameter name="orderId"/>
+            <parameter name="dueOnly" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="shareList" type="List"/>
+            <parameter name="lineList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            shareList = []; lineList = []
+            const L = (text) => ec.l10n.localize(text)
+            if (!(ec.user.userId && (ec.user.isInGroup('ADMIN') || ec.user.hasPermission('TIME_ENTRY_RATE')))) { ec.message.addError(L('Only those who manage money see billing shares')); return }
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+                const visible = (projectId) => !!vis.allProjects || Array.from(vis.visibleProjectIds || []).includes(projectId)
+                let links = []
+                if (workEffortId) links = Array.from(ec.entity.find('mantle.order.OrderItemWorkEffort').condition('workEffortId', workEffortId).list())
+                else if (orderId) links = Array.from(ec.entity.find('mantle.order.OrderItemWorkEffort').condition('orderId', orderId).list())
+                else if (rootWorkEffortId) {
+                    const milestoneIds = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', rootWorkEffortId)
+                            .condition('workEffortTypeEnumId', 'WetMilestone').selectField('workEffortId').list()).map((row) => row.workEffortId)
+                    links = Array.from(ec.entity.find('mantle.order.OrderItemWorkEffort').condition('workEffortId', 'in', milestoneIds.concat([rootWorkEffortId])).list())
+                } else {
+                    links = Array.from(ec.entity.find('mantle.order.OrderItemWorkEffort').condition(ec.entity.conditionFactory.makeCondition([
+                        ec.entity.conditionFactory.makeCondition('invoicePercent', 'is-not-null', null), ec.entity.conditionFactory.makeCondition('invoiceAmount', 'is-not-null', null)], 'or')).limit(5000).list())
+                }
+                const efforts = {}
+                const effortOf = (id) => id in efforts ? efforts[id] : (efforts[id] = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', id).one())
+                const items = {}, headers = {}
+                const itemOf = (link) => { const key = link.orderId + ' ' + link.orderItemSeqId; return key in items ? items[key]
+                    : (items[key] = ec.entity.find('mantle.order.OrderItem').condition({orderId: link.orderId, orderItemSeqId: link.orderItemSeqId}).one()) }
+                const headerOf = (id) => id in headers ? headers[id] : (headers[id] = ec.entity.find('mantle.order.OrderHeader').condition('orderId', id).one())
+                const lineTotal = (item) => toDecimal(item.quantity ?? 1).multiply(toDecimal(item.unitAmount ?? 0)).setScale(2, 'HALF_UP')
+                const statusText = (id) => id ? (ec.entity.find('moqui.basic.StatusItem').condition('statusId', id).useCache(true).one()?.description || id) : ''
+                const lines = {}
+                const lineEntry = (link, item, header) => {
+                    const key = link.orderId + ' ' + link.orderItemSeqId
+                    return lines[key] || (lines[key] = {orderId: link.orderId, orderItemSeqId: link.orderItemSeqId, description: item.itemDescription || '',
+                        total: lineTotal(item), currencyUomId: header?.currencyUomId || 'USD', orderStatusId: header?.statusId || null, orderStatusText: statusText(header?.statusId),
+                        sharedPercent: toDecimal(0), sharedAmount: toDecimal(0), billedAmount: toDecimal(0), projectIds: [], shareCount: 0})
+                }
+                for (const link of links) {
+                    const effort = effortOf(link.workEffortId)
+                    if (!effort) continue
+                    const projectId = effort.workEffortTypeEnumId === 'WetProject' ? effort.workEffortId : effort.rootWorkEffortId
+                    if (!projectId || !visible(projectId)) continue
+                    const item = itemOf(link)
+                    if (!item) continue
+                    const header = headerOf(link.orderId)
+                    const line = lineEntry(link, item, header)
+                    if (!line.projectIds.includes(projectId)) line.projectIds.push(projectId)
+                    if (effort.workEffortTypeEnumId !== 'WetMilestone' || (link.invoicePercent == null && link.invoiceAmount == null)) continue
+                    const total = line.total
+                    const amount = link.invoiceAmount != null ? toDecimal(link.invoiceAmount).setScale(2, 'HALF_UP')
+                        : total.multiply(toDecimal(link.invoicePercent)).divide(toDecimal(100)).setScale(2, 'HALF_UP')
+                    const percent = link.invoicePercent != null ? toDecimal(link.invoicePercent) : (total.isZero() ? toDecimal(0) : amount.multiply(toDecimal(100)).divide(total).setScale(2, 'HALF_UP'))
+                    // billed: a WorkEffortBilling of the milestone not cancelled whose invoice item bills this line
+                    let billed = null
+                    for (const web of ec.entity.find('mantle.work.effort.WorkEffortBilling').condition('workEffortId', link.workEffortId).list()) {
+                        if (web.percentage != null && toDecimal(web.percentage).isZero()) continue
+                        const oib = ec.entity.find('mantle.order.OrderItemBilling').condition({invoiceId: web.invoiceId, invoiceItemSeqId: web.invoiceItemSeqId,
+                            orderId: link.orderId, orderItemSeqId: link.orderItemSeqId}).count()
+                        if (!oib) continue
+                        const invoice = ec.entity.find('mantle.account.invoice.Invoice').condition('invoiceId', web.invoiceId).one()
+                        if (!invoice || invoice.statusId === 'InvoiceCancelled') continue
+                        billed = {invoiceId: web.invoiceId, invoiceItemSeqId: web.invoiceItemSeqId, statusId: invoice.statusId, statusText: statusText(invoice.statusId)}
+                        break
+                    }
+                    const settings = {}
+                    for (const setting of ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('workEffortId', link.workEffortId).list()) settings[setting.settingTypeEnumId] = setting.settingValue
+                    const gateRequired = settings.WstApprovalRequired === 'Y'
+                    const latest = gateRequired ? Array.from(ec.entity.find('mantle.work.effort.WorkEffortApproval').condition('workEffortId', link.workEffortId)
+                            .orderBy('-requestedDate').orderBy('-workEffortApprovalId').limit(1).list())[0] : null
+                    const approved = !gateRequired || latest?.statusId === 'WeaApproved'
+                    const reached = ['WeComplete', 'WeClosed'].includes(effort.statusId)
+                    const due = reached && approved && !billed
+                    line.sharedPercent = line.sharedPercent.add(percent)
+                    line.sharedAmount = line.sharedAmount.add(amount)
+                    line.shareCount++
+                    if (billed) line.billedAmount = line.billedAmount.add(amount)
+                    if (dueOnly && !due) continue
+                    shareList.push({workEffortId: link.workEffortId, milestoneName: effort.workEffortName || link.workEffortId, rootWorkEffortId: projectId,
+                        milestoneStatusId: effort.statusId, milestoneStatusText: statusText(effort.statusId), reached: reached,
+                        reachedDate: effort.actualCompletionDate == null ? null : Number(String(effort.actualCompletionDate)),
+                        dueDate: effort.estimatedCompletionDate == null ? null : Number(String(effort.estimatedCompletionDate)),
+                        gateRequired: gateRequired, approved: approved, awaiting: latest?.statusId === 'WeaRequested',
+                        orderId: link.orderId, orderItemSeqId: link.orderItemSeqId, itemDescription: item.itemDescription || '', lineTotal: line.total,
+                        currencyUomId: line.currencyUomId, invoicePercent: link.invoicePercent != null ? toDecimal(link.invoicePercent) : null,
+                        invoiceAmount: link.invoiceAmount != null ? toDecimal(link.invoiceAmount) : null, percent: percent, amount: amount,
+                        billed: !!billed, invoiceId: billed?.invoiceId || null, invoiceItemSeqId: billed?.invoiceItemSeqId || null,
+                        invoiceStatusId: billed?.statusId || null, invoiceStatusText: billed?.statusText || '', due: due})
+                }
+                shareList.sort((a, b) => String(a.rootWorkEffortId).localeCompare(String(b.rootWorkEffortId)) || (a.dueDate ?? Number.MAX_SAFE_INTEGER) - (b.dueDate ?? Number.MAX_SAFE_INTEGER)
+                        || String(a.workEffortId).localeCompare(String(b.workEffortId)))
+                lineList = Object.values(lines).sort((a, b) => String(a.orderId).localeCompare(String(b.orderId)) || String(a.orderItemSeqId).localeCompare(String(b.orderItemSeqId)))
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="store" noun="MilestoneShare">
+        <description>A milestone's billing share of an order line (OrderItemWorkEffort invoicePercent or invoiceAmount), or with remove
+            the share taken off. The line is the project's (linked to the project or one of its milestones, or a line of a sales order
+            to the project's client); the shares of a line total at most the line's total; a percent is over 0 and at most 100, an
+            amount over 0; a billed share is not changed. By one who manages money and manages the project.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="orderId" required="true"/>
+            <parameter name="orderItemSeqId" required="true"/>
+            <parameter name="invoicePercent" type="BigDecimal"/>
+            <parameter name="invoiceAmount" type="BigDecimal"/>
+            <parameter name="remove" type="Boolean" default="false"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            if (!(ec.user.userId && (ec.user.isInGroup('ADMIN') || ec.user.hasPermission('TIME_ENTRY_RATE')))) { ec.message.addError(L('Only those who manage money set billing shares')); return }
+            const access = ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneApprovalAccess').parameters({workEffortId: workEffortId, need: 'gate'}).call() || {}
+            if (ec.message.hasError()) return
+            const projectId = access.milestone.rootWorkEffortId
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const item = ec.entity.find('mantle.order.OrderItem').condition({orderId: orderId, orderItemSeqId: orderItemSeqId}).one()
+                if (!item) { ec.message.addError(ec.resource.expand('Order line ${orderId} ${orderItemSeqId} not found', '', {orderId, orderItemSeqId})); return }
+                const billing = ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneBilling').parameters({orderId: orderId}).call() || {}
+                if (ec.message.hasError()) return
+                const line = Array.from(billing.lineList || []).find((one) => one.orderItemSeqId === orderItemSeqId)
+                const linked = line && Array.from(line.projectIds || []).includes(projectId)
+                if (!linked) {
+                    const part = ec.entity.find('mantle.order.OrderPart').condition({orderId: orderId, orderPartSeqId: item.orderPartSeqId}).one()
+                    const client = ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', projectId).condition('roleTypeId', 'in', ['Customer', 'CustomerBillTo'])
+                            .condition('partyId', part?.customerPartyId || '_NA_').conditionDate('fromDate', 'thruDate', null).count() > 0
+                    if (!client) { ec.message.addError(L('The order line is not of this project or its client')); return }
+                }
+                const mine = Array.from(billing.shareList || []).find((one) => one.workEffortId === workEffortId && one.orderItemSeqId === orderItemSeqId)
+                if (mine?.billed) { ec.message.addError(ec.resource.expand('The share is billed on invoice ${invoiceId}: it does not change', '', {invoiceId: mine.invoiceId})); return }
+                const current = ec.entity.find('mantle.order.OrderItemWorkEffort').condition({orderId: orderId, orderItemSeqId: orderItemSeqId, workEffortId: workEffortId}).one()
+                if (remove) {
+                    if (current) current.delete()
+                    return
+                }
+                const hasPercent = invoicePercent != null, hasAmount = invoiceAmount != null
+                if (hasPercent === hasAmount) { ec.message.addError(L('Give the share as a percent or as an amount')); return }
+                if (hasPercent && (toDecimal(invoicePercent).compare(0) <= 0 || toDecimal(invoicePercent).compare(100) > 0)) { ec.message.addError(L('A percent is over 0 and at most 100')); return }
+                if (hasAmount && toDecimal(invoiceAmount).compare(0) <= 0) { ec.message.addError(L('An amount is over 0')); return }
+                const total = toDecimal(item.quantity ?? 1).multiply(toDecimal(item.unitAmount ?? 0)).setScale(2, 'HALF_UP')
+                const amount = hasAmount ? toDecimal(invoiceAmount).setScale(2, 'HALF_UP') : total.multiply(toDecimal(invoicePercent)).divide(toDecimal(100)).setScale(2, 'HALF_UP')
+                const others = (line ? toDecimal(line.sharedAmount) : toDecimal(0)).subtract(mine ? toDecimal(mine.amount) : toDecimal(0))
+                if (others.add(amount).compare(total) > 0) { ec.message.addError(ec.resource.expand('The shares of the line pass its total (${total})', '', {total: ec.l10n.formatCurrency(total, line?.currencyUomId || 'USD')})); return }
+                const fields = {orderId: orderId, orderItemSeqId: orderItemSeqId, workEffortId: workEffortId, invoicePercent: hasPercent ? toDecimal(invoicePercent) : null,
+                    invoiceAmount: hasAmount ? toDecimal(invoiceAmount) : null}
+                ec.service.sync().name(current ? 'update#mantle.order.OrderItemWorkEffort' : 'create#mantle.order.OrderItemWorkEffort').parameters(fields).call()
+                // the line is the project's from now on
+                if (!linked && !ec.entity.find('mantle.order.OrderItemWorkEffort').condition({orderId: orderId, orderItemSeqId: orderItemSeqId, workEffortId: projectId}).count())
+                    ec.service.sync().name('create#mantle.order.OrderItemWorkEffort').parameters({orderId: orderId, orderItemSeqId: orderItemSeqId, workEffortId: projectId}).call()
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="link" noun="ProjectOrderItem">
+        <description>The order line a project fulfils (design-projects.md §4 ProjectMoneyStep, Commercial; §10 OrderDetail): an
+            OrderItemWorkEffort of the project and a line of a sales order to the project's client (OrderPart customerPartyId), not
+            cancelled; with remove the link is taken off (refused while its milestones' shares on the line are billed: they are taken
+            off with it otherwise). By one who manages money and manages the project.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="orderId" required="true"/>
+            <parameter name="orderItemSeqId" required="true"/>
+            <parameter name="remove" type="Boolean" default="false"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            if (!(ec.user.userId && (ec.user.isInGroup('ADMIN') || ec.user.hasPermission('TIME_ENTRY_RATE')))) { ec.message.addError(L('Only those who manage money link orders')); return }
+            const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+            if (!(vis.allProjects || Array.from(vis.managedProjectIds || []).includes(workEffortId)
+                    || (Array.from(vis.visibleProjectIds || []).includes(workEffortId) && ec.user.hasPermission('MILESTONE_APPROVE')))) {
+                ec.message.addError(ec.resource.expand('Only the managers of ${workEffortId} change that', '', {workEffortId})); return }
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+                if (!project || project.workEffortTypeEnumId !== 'WetProject') { ec.message.addError(ec.resource.expand('Project ${workEffortId} not found', '', {workEffortId})); return }
+                const item = ec.entity.find('mantle.order.OrderItem').condition({orderId: orderId, orderItemSeqId: orderItemSeqId}).one()
+                if (!item) { ec.message.addError(ec.resource.expand('Order line ${orderId} ${orderItemSeqId} not found', '', {orderId, orderItemSeqId})); return }
+                const current = ec.entity.find('mantle.order.OrderItemWorkEffort').condition({orderId: orderId, orderItemSeqId: orderItemSeqId, workEffortId: workEffortId}).one()
+                if (remove) {
+                    const milestoneIds = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', workEffortId)
+                            .condition('workEffortTypeEnumId', 'WetMilestone').selectField('workEffortId').list()).map((row) => row.workEffortId)
+                    const shares = milestoneIds.length ? Array.from(ec.entity.find('mantle.order.OrderItemWorkEffort').condition({orderId: orderId, orderItemSeqId: orderItemSeqId})
+                            .condition('workEffortId', 'in', milestoneIds).list()) : []
+                    if (shares.length) {
+                        const billing = ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneBilling').parameters({orderId: orderId}).call() || {}
+                        if (Array.from(billing.shareList || []).some((share) => share.orderItemSeqId === orderItemSeqId && share.billed && milestoneIds.includes(share.workEffortId))) {
+                            ec.message.addError(L('A milestone share of the line is billed: the line stays the project\'s')); return }
+                        for (const share of shares) share.delete()
+                    }
+                    if (current) current.delete()
+                    return
+                }
+                if (current) return
+                const header = ec.entity.find('mantle.order.OrderHeader').condition('orderId', orderId).one()
+                if (!header || ['OrderCancelled', 'OrderRejected'].includes(header.statusId)) { ec.message.addError(L('The order is cancelled')); return }
+                const part = ec.entity.find('mantle.order.OrderPart').condition({orderId: orderId, orderPartSeqId: item.orderPartSeqId}).one()
+                const client = ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', workEffortId).condition('roleTypeId', 'in', ['Customer', 'CustomerBillTo'])
+                        .condition('partyId', part?.customerPartyId || '_NA_').conditionDate('fromDate', 'thruDate', null).count() > 0
+                if (!client) { ec.message.addError(L('The order is not to the project\'s client')); return }
+                ec.service.sync().name('create#mantle.order.OrderItemWorkEffort').parameters({orderId: orderId, orderItemSeqId: orderItemSeqId, workEffortId: workEffortId}).call()
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="ProjectMoneySummary">
+        <description>A project's money (design-projects.md §4 ProjectMoney BudgetActuals, ProjectInvoices, ProjectExpenses, Commercial):
+            the caps (hours budget totalTimeAllowed, client budget totalClientCostAllowed) against the actuals (estimated, actual and
+            remaining hours from get#ProjectStats; the time's cost at the workers' rates actualCost and its value at the client rates
+            actualClientCost, rolled up from the time; profit; budget used and remaining); what was billed (the project's client invoices
+            not cancelled: invoiced, paid, open; a list of them), the expenses (expense invoices on the project: total, billed through),
+            the unbilled time (get#UnbilledSummary), the order lines and the milestone shares (get#MilestoneBilling: contracted, shared,
+            billed, due). BigDecimal amounts in currencyUomId. For those who manage money and see the project; else an error.</description>
+        <in-parameters><parameter name="workEffortId" required="true"/></in-parameters>
+        <out-parameters><parameter name="summary" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            summary = null
+            const L = (text) => ec.l10n.localize(text)
+            if (!(ec.user.userId && (ec.user.isInGroup('ADMIN') || ec.user.hasPermission('TIME_ENTRY_RATE')))) { ec.message.addError(L('Only those who manage money see it')); return }
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+                const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+                if (!project || project.workEffortTypeEnumId !== 'WetProject' || !(vis.allProjects || Array.from(vis.visibleProjectIds || []).includes(workEffortId))) {
+                    ec.message.addError(ec.resource.expand('Project ${workEffortId} is not available', '', {workEffortId})); return }
+                const D = (value) => toDecimal(value ?? 0)
+                const zero = toDecimal(0)
+                const stats = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectStats').parameters({workEffort: project}).call() || {}
+                const partyOf = (roles) => Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', workEffortId)
+                        .condition('roleTypeId', 'in', roles).conditionDate('fromDate', 'thruDate', null).orderBy('fromDate').list())[0]?.partyId || null
+                const clientPartyId = partyOf(['Customer', 'CustomerBillTo'])
+                const vendorPartyId = partyOf(['Vendor', 'VendorBillFrom'])
+                const unbilledOut = ec.service.sync().name('mantle.work.ProjectServices.get#UnbilledSummary').parameters({workEffortId: workEffortId}).call() || {}
+                const unbilled = Array.from(unbilledOut.projectList || [])[0] || null
+                const uom = project.costUomId || unbilled?.currencyUomId || (vendorPartyId ? ec.entity.find('mantle.ledger.config.PartyAcctgPreference').condition('organizationPartyId', vendorPartyId).one()?.baseCurrencyUomId : null) || 'USD'
+                // the project's invoices: client ones (to its client) and expense ones (from others)
+                const invoices = [], expenses = []
+                let invoiced = zero, paid = zero, open = zero, expenseTotal = zero, expenseBilled = zero
+                const invoiceIds = new Set(Array.from(ec.entity.find('mantle.work.effort.WorkEffortInvoice').condition('workEffortId', workEffortId).list()).map((row) => row.invoiceId))
+                for (const row of ec.entity.find('mantle.work.time.TimeEntryAndWorkEffort').condition(ec.entity.conditionFactory.makeCondition([
+                        ec.entity.conditionFactory.makeCondition('rootWorkEffortId', 'equals', workEffortId), ec.entity.conditionFactory.makeCondition('workEffortId', 'equals', workEffortId)], 'or'))
+                        .condition('invoiceId', 'is-not-null', null).selectField('invoiceId').distinct(true).limit(5000).list()) invoiceIds.add(row.invoiceId)
+                const statusText = (id) => id ? (ec.entity.find('moqui.basic.StatusItem').condition('statusId', id).useCache(true).one()?.description || id) : ''
+                const nameOf = (partyId) => {
+                    const party = partyId ? ec.entity.find('mantle.party.PartyDetail').condition('partyId', partyId).one() : null
+                    return party ? (party.organizationName || [party.firstName, party.lastName].filter((part) => part).join(' ') || partyId) : ''
+                }
+                const ids = Array.from(invoiceIds)
+                for (let i = 0; i < ids.length; i += 500) for (const inv of ec.entity.find('mantle.account.invoice.Invoice').condition('invoiceId', 'in', ids.slice(i, i + 500)).list()) {
+                    const total = D(inv.invoiceTotal)
+                    const unpaid = D(inv.unpaidTotal ?? inv.invoiceTotal)
+                    const row = {invoiceId: inv.invoiceId, statusId: inv.statusId, statusText: statusText(inv.statusId), fromPartyId: inv.fromPartyId, fromName: nameOf(inv.fromPartyId),
+                        toPartyId: inv.toPartyId, toName: nameOf(inv.toPartyId), invoiceDate: inv.invoiceDate == null ? null : Number(String(inv.invoiceDate)),
+                        dueDate: inv.dueDate == null ? null : Number(String(inv.dueDate)), total: total, unpaid: unpaid, currencyUomId: inv.currencyUomId || uom}
+                    if (clientPartyId && inv.toPartyId === clientPartyId) {
+                        row.kind = 'client'
+                        invoices.push(row)
+                        if (inv.statusId !== 'InvoiceCancelled') {
+                            invoiced = invoiced.add(total)
+                            paid = paid.add(total.subtract(unpaid))
+                            if (['InvoiceFinalized', 'InvoiceSent', 'InvoiceAcked'].includes(inv.statusId)) open = open.add(unpaid)
+                        }
+                    } else if (inv.fromPartyId !== vendorPartyId) {
+                        row.kind = 'expense'
+                        expenses.push(row)
+                        if (inv.statusId !== 'InvoiceCancelled') {
+                            expenseTotal = expenseTotal.add(total)
+                            if (inv.statusId === 'InvoiceBilledThrough') expenseBilled = expenseBilled.add(total)
+                        }
+                    }
+                }
+                const byDate = (a, b) => (b.invoiceDate || 0) - (a.invoiceDate || 0) || String(b.invoiceId).localeCompare(String(a.invoiceId))
+                invoices.sort(byDate); expenses.sort(byDate)
+                const billing = ec.service.sync().name('mantle.work.ProjectServices.get#MilestoneBilling').parameters({rootWorkEffortId: workEffortId}).call() || {}
+                const shares = Array.from(billing.shareList || [])
+                const lines = Array.from(billing.lineList || [])
+                const contracted = lines.reduce((total, line) => total.add(D(line.total)), zero)
+                const sharesDue = shares.filter((share) => share.due).reduce((total, share) => total.add(D(share.amount)), zero)
+                const sharesBilled = shares.filter((share) => share.billed).reduce((total, share) => total.add(D(share.amount)), zero)
+                const budget = D(project.totalClientCostAllowed)
+                const actualClient = D(project.actualClientCost)
+                const actualCost = D(project.actualCost)
+                summary = {workEffortId: workEffortId, currencyUomId: uom, clientPartyId: clientPartyId, clientName: nameOf(clientPartyId), vendorPartyId: vendorPartyId,
+                    hoursBudget: project.totalTimeAllowed != null ? D(project.totalTimeAllowed) : null, clientBudget: project.totalClientCostAllowed != null ? budget : null,
+                    estimatedHours: D(project.estimatedWorkTime), actualHours: D(project.actualWorkTime), remainingHours: D(project.remainingWorkTime),
+                    actualCost: actualCost, actualClientCost: actualClient, profit: actualClient.subtract(actualCost),
+                    budgetUsedPercent: budget.isZero() ? null : actualClient.multiply(toDecimal(100)).divide(budget).setScale(1, 'HALF_UP'),
+                    budgetRemaining: project.totalClientCostAllowed != null ? budget.subtract(actualClient) : null,
+                    hoursUsedPercent: D(project.totalTimeAllowed).isZero() ? null : D(project.actualWorkTime).multiply(toDecimal(100)).divide(D(project.totalTimeAllowed)).setScale(1, 'HALF_UP'),
+                    overBudget: !!stats.clientActualOverBudget, overHours: !!stats.actualPlusRemainingOverTimeBudget && !D(project.totalTimeAllowed).isZero(),
+                    projectWarning: !!stats.projectWarning, projectDanger: !!stats.projectDanger,
+                    invoiced: invoiced, paid: paid, openReceivable: open, invoiceList: invoices, expenseTotal: expenseTotal, expenseBilled: expenseBilled, expenseList: expenses,
+                    unbilledHours: unbilled ? D(unbilled.hours) : zero, unbilledAmount: unbilled ? D(unbilled.amount) : zero, readyAmount: unbilled ? D(unbilled.readyAmount) : zero,
+                    readyHours: unbilled ? D(unbilled.readyHours) : zero, unbilledExpenses: unbilled ? D(unbilled.expenseAmount) : zero, unbilled: unbilled,
+                    contracted: contracted, sharesDue: sharesDue, sharesBilled: sharesBilled, shareList: shares, lineList: lines}
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
         ]]></script></actions>
     </service>
 </services>
