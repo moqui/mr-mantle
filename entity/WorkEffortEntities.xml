@@ -1019,6 +1019,62 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="WORKEFF_UPD_DATE" unique="false"><index-field name="workEffortId"/><index-field name="updateDate"/></index>
     </entity>
 
+    <entity entity-name="WorkEffortAllocation" package="mantle.work.effort" cache="never">
+        <description>A plan of a person's time on a project (IronStone Projects, design-projects.md §9 and §15 Allocations): hours a
+            week, or a percent of the person's capacity, from one day to another, on a project or one of its work items. Not an
+            assignment (WorkEffortParty) and not time (TimeEntry). With no partyId it is a placeholder: a project role (and a skill)
+            to be staffed. Requested by a project's manager, then allocated or rejected by one who approves allocations
+            (mantle.work.ResourceServices).</description>
+        <field name="workEffortAllocationId" type="id" is-pk="true"/>
+        <field name="workEffortId" type="id"><description>The project, or a work item of it</description></field>
+        <field name="rootWorkEffortId" type="id"><description>The project (workEffortId itself for a project)</description></field>
+        <field name="partyId" type="id"><description>The person; empty for a placeholder to staff</description></field>
+        <field name="roleTypeId" type="id"><description>The project role (RgpProject) it fills; a person staffed is added to the
+            project in it</description></field>
+        <field name="emplPositionClassId" type="id"/>
+        <field name="skillTypeEnumId" type="id"/>
+        <field name="fromDate" type="date"><description>The first day</description></field>
+        <field name="thruDate" type="date"><description>The last day (inclusive)</description></field>
+        <field name="hoursPerWeek" type="number-decimal"/>
+        <field name="allocationPercent" type="number-decimal"><description>A percent of the person's capacity, in place of
+            hoursPerWeek</description></field>
+        <field name="statusId" type="id" enable-audit-log="true"/>
+        <field name="requestedByUserId" type="id"/>
+        <field name="requestedDate" type="date-time"/>
+        <field name="reviewedByUserId" type="id"/>
+        <field name="reviewedDate" type="date-time"/>
+        <field name="comments" type="text-medium"/>
+        <field name="reviewComments" type="text-medium"><description>The reason of a rejection</description></field>
+        <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
+        <relationship type="one" title="Root" related="mantle.work.effort.WorkEffort" short-alias="project">
+            <key-map field-name="rootWorkEffortId" related="workEffortId"/></relationship>
+        <relationship type="one" related="mantle.party.Party" short-alias="party"/>
+        <relationship type="one" related="mantle.party.RoleType" short-alias="roleType"/>
+        <relationship type="one" related="mantle.humanres.position.EmplPositionClass"/>
+        <relationship type="one" title="SkillType" related="moqui.basic.Enumeration" short-alias="skillType">
+            <key-map field-name="skillTypeEnumId"/></relationship>
+        <relationship type="one" title="WorkEffortAllocation" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one" title="RequestedBy" related="moqui.security.UserAccount">
+            <key-map field-name="requestedByUserId" related="userId"/></relationship>
+        <relationship type="one" title="ReviewedBy" related="moqui.security.UserAccount">
+            <key-map field-name="reviewedByUserId" related="userId"/></relationship>
+        <index name="WORKEFF_ALLOC_PARTY" unique="false"><index-field name="partyId"/><index-field name="fromDate"/></index>
+        <index name="WORKEFF_ALLOC_ROOT" unique="false"><index-field name="rootWorkEffortId"/></index>
+        <index name="WORKEFF_ALLOC_STATUS" unique="false"><index-field name="statusId"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Work Effort Allocation" statusTypeId="WorkEffortAllocation"/>
+            <moqui.basic.StatusItem description="Requested" sequenceNum="1" statusId="WealRequested" statusTypeId="WorkEffortAllocation"/>
+            <moqui.basic.StatusItem description="Allocated" sequenceNum="2" statusId="WealAllocated" statusTypeId="WorkEffortAllocation"/>
+            <moqui.basic.StatusItem description="Rejected" sequenceNum="3" statusId="WealRejected" statusTypeId="WorkEffortAllocation"/>
+            <moqui.basic.StatusItem description="Cancelled" sequenceNum="4" statusId="WealCancelled" statusTypeId="WorkEffortAllocation"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WealRequested" toStatusId="WealAllocated" transitionName="Approve"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WealRequested" toStatusId="WealRejected" transitionName="Reject"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WealRequested" toStatusId="WealCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WealAllocated" toStatusId="WealCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WealRejected" toStatusId="WealRequested" transitionName="Request again"/>
+        </seed-data>
+    </entity>
+
     <entity entity-name="WikiPageWorkEffort" package="mantle.work.effort" cache="never">
         <field name="wikiPageId" type="id" is-pk="true"/>
         <field name="workEffortId" type="id" is-pk="true"/>
