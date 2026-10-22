@@ -210,6 +210,12 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="WorkEffortReminder" description="Task or Event Reminder" typeString="info"
             showAlert="Y" alertNoAutoHide="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
             titleTemplate="Reminder: ${workEffortName}, ${whenText}" linkTemplate=""/>
+    <!-- a work item of a project assigned to the user by someone else (mantle.work.TaskServices.notify#TaskAssigned):
+        workEffortId, workEffortName, rootWorkEffortId, projectName, assignedByName, the task as the record; in the
+        Notifications inbox. The app that shows work items sets the link (IronStone Projects: BossSetupData.xml). -->
+    <moqui.security.user.NotificationTopic topic="WorkItemAssigned" inboxEnumId="NinNotifications" description="Work Item Assigned to You" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="${assignedByName} assigned you ${workEffortId}: ${workEffortName} (${projectName})"/>
     <!-- a page to review and the decision on it: the framework seeds both topics (moqui.resource.wiki.WikiPageReview in
         framework/entity/ResourceEntities.xml), with the approval services of WikiPageReview (approveServiceName,
         refuseServiceName, refuseReasonRequired) and the message fields (wikiPageReviewId, wikiPageId, wikiSpaceId, pagePath,

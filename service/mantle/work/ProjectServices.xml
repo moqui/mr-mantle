@@ -552,6 +552,199 @@ along with this software (see the LICENSE.md file). If not, see
             </script>
         </actions>
     </service>
+    <service verb="get" noun="WorkItemTree">
+        <description>
+            Work items (WetTask) as the work item tree shows them (design-projects.md §5 "The work item tree", style-guide §3.15),
+            one level per call (impl-projects.md F13), each row with its subtree's roll-up:
+            - parentWorkEffortId: its children; topLevel with rootWorkEffortId: the project's items with no parent; or
+              workEffortIds (a list or comma text): those items, and with withAncestors each one's ancestors up to the top
+              (first, from the top down), so the matches of a find sit in their place.
+            - A level is in rank order (sequenceNum, then the number of the key); statusId (comma list) narrows it.
+            - Each row has the work effort's fields, childCount (its children the user sees), depth (0 at the top) and the
+              roll-up of itself and its descendants, cancelled items and their subtrees left out (as get#WorkEffortChildStats
+              sums them): totalEstimatedWorkTime, totalRemainingWorkTime, totalActualWorkTime, totalBudget (the
+              totalTimeAllowed of the subtree), totalEstimatedPoints, itemCount and doneCount (descendants, and those
+              Complete or Closed), percentDone (estimate less remaining over estimate, 0 to 100, null with no estimate).
+            - totals: the same sums over the rows returned that are not an ancestor added for them.
+            Only items the user may see (get#VisibleProjectInfo, impl-projects.md F1): of a project the user sees, a Restricted
+            or Confidential one only for its parties and the project's managers; an item of no project for its owner and
+            parties. Items of a project are read once per project, so the roll-ups of a level cost one find of the project.
+        </description>
+        <in-parameters>
+            <parameter name="rootWorkEffortId"/>
+            <parameter name="parentWorkEffortId"/>
+            <parameter name="topLevel" type="Boolean" default="false"/>
+            <parameter name="workEffortIds" type="Object"/>
+            <parameter name="withAncestors" type="Boolean" default="false"/>
+            <parameter name="statusId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="workItemList" type="List"><parameter name="workItem" type="Map"/></parameter>
+            <parameter name="totals" type="Map"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            workItemList = []
+            totals = {totalEstimatedWorkTime: 0, totalRemainingWorkTime: 0, totalActualWorkTime: 0, totalBudget: 0, totalEstimatedPoints: 0,
+                itemCount: 0, doneCount: 0, percentDone: null}
+            const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+            const all = !!vis.allProjects
+            const visible = new Set(Array.from(vis.visibleProjectIds || []))
+            const managed = new Set(Array.from(vis.managedProjectIds || []))
+            const restricted = new Set(Array.from(vis.restrictedItemIds || []))
+            const me = vis.userPartyId || null
+            const fields = ['workEffortId', 'workEffortName', 'parentWorkEffortId', 'rootWorkEffortId', 'workEffortTypeEnumId', 'statusId', 'purposeEnumId',
+                'priority', 'sequenceNum', 'visibilityEnumId', 'ownerPartyId', 'estimatedWorkTime', 'remainingWorkTime', 'actualWorkTime', 'totalTimeAllowed',
+                'estimatedPoints', 'estimatedStartDate', 'estimatedCompletionDate', 'resolutionEnumId']
+            const num = (value) => value == null || value === '' ? 0 : Number(String(value))
+            const rankOf = (row) => row.sequenceNum == null || row.sequenceNum === '' ? null : Number(String(row.sequenceNum))
+            const numberOf = (id) => { const match = /(\d+)$/.exec(String(id)); return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER }
+            const byRank = (left, right) => {
+                const l = rankOf(left), r = rankOf(right)
+                if (l != null && r != null && l !== r) return l - r
+                if (l != null && r == null) return -1
+                if (l == null && r != null) return 1
+                return numberOf(left.workEffortId) - numberOf(right.workEffortId) || String(left.workEffortId).localeCompare(String(right.workEffortId))
+            }
+            const plain = (row) => { const out = {}; for (const name of fields) out[name] = row[name] ?? null; return out }
+            // the items of no project the user is on: owner or a current party
+            const myLooseIds = new Set()
+            const seen = (row) => {
+                if (all) return true
+                if (!row.rootWorkEffortId) return (!!me && row.ownerPartyId === me) || myLooseIds.has(row.workEffortId)
+                if (!visible.has(row.rootWorkEffortId)) return false
+                if (['WevRestricted', 'WevConfidential'].includes(row.visibilityEnumId))
+                    return managed.has(row.rootWorkEffortId) || restricted.has(row.workEffortId)
+                return true
+            }
+            const find = () => ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortTypeEnumId', 'WetTask')
+
+            // the items of each project, read once: by id and by parent
+            const universes = new Map()
+            const universeOf = (root) => {
+                if (universes.has(root)) return universes.get(root)
+                const byId = new Map()
+                const kids = new Map()
+                let rows
+                if (root) rows = Array.from(find().condition('rootWorkEffortId', root).list()).map(plain)
+                else rows = []
+                for (const row of rows) {
+                    if (!seen(row)) continue
+                    byId.set(row.workEffortId, row)
+                }
+                for (const row of byId.values()) {
+                    const parent = row.parentWorkEffortId || ''
+                    if (!kids.has(parent)) kids.set(parent, [])
+                    kids.get(parent).push(row)
+                }
+                const universe = {byId, kids, rollups: new Map()}
+                universes.set(root, universe)
+                return universe
+            }
+            // an item of no project: its subtree by parent, a level at a time
+            const looseKids = new Map()
+            const looseKidsOf = (id) => {
+                if (!looseKids.has(id)) looseKids.set(id, Array.from(find().condition('parentWorkEffortId', id).list()).map(plain).filter(seen))
+                return looseKids.get(id)
+            }
+            const childrenOf = (row) => row.rootWorkEffortId ? (universeOf(row.rootWorkEffortId).kids.get(row.workEffortId) || []) : looseKidsOf(row.workEffortId)
+            const looseRollups = new Map()
+            const rollupOf = (row, depth) => {
+                const cache = row.rootWorkEffortId ? universeOf(row.rootWorkEffortId).rollups : looseRollups
+                if (cache.has(row.workEffortId)) return cache.get(row.workEffortId)
+                const sum = {estimated: num(row.estimatedWorkTime), remaining: num(row.remainingWorkTime), actual: num(row.actualWorkTime),
+                    budget: num(row.totalTimeAllowed), points: num(row.estimatedPoints), items: 0, done: 0}
+                if ((depth || 0) < 200) for (const child of childrenOf(row)) {
+                    if (child.statusId === 'WeCancelled') continue
+                    const under = rollupOf(child, (depth || 0) + 1)
+                    sum.estimated += under.estimated; sum.remaining += under.remaining; sum.actual += under.actual
+                    sum.budget += under.budget; sum.points += under.points
+                    sum.items += 1 + under.items
+                    sum.done += (['WeComplete', 'WeClosed'].includes(child.statusId) ? 1 : 0) + under.done
+                }
+                cache.set(row.workEffortId, sum)
+                return sum
+            }
+            const round = (value) => Math.round(value * 100) / 100
+            const decorate = (row, depth) => {
+                const sum = rollupOf(row)
+                return Object.assign({}, row, {childCount: childrenOf(row).length, hasChildren: childrenOf(row).length > 0, depth: depth,
+                    totalEstimatedWorkTime: round(sum.estimated), totalRemainingWorkTime: round(sum.remaining), totalActualWorkTime: round(sum.actual),
+                    totalBudget: round(sum.budget), totalEstimatedPoints: round(sum.points), itemCount: sum.items, doneCount: sum.done,
+                    percentDone: sum.estimated > 0 ? Math.max(0, Math.min(100, Math.round((sum.estimated - sum.remaining) / sum.estimated * 100))) : null})
+            }
+            const depthOf = (row) => {
+                let depth = 0
+                let at = row
+                const byId = row.rootWorkEffortId ? universeOf(row.rootWorkEffortId).byId : null
+                for (let guard = 0; at && at.parentWorkEffortId && guard < 500; guard++) {
+                    at = byId ? byId.get(at.parentWorkEffortId) : find().condition('workEffortId', at.parentWorkEffortId).one()
+                    depth++
+                }
+                return depth
+            }
+            const statusIds = statusId ? String(statusId).split(',').map((id) => id.trim()).filter((id) => id) : []
+            const statusOk = (row) => !statusIds.length || statusIds.includes(row.statusId)
+            if (me && !all) for (const wep of ec.entity.find('mantle.work.effort.WorkEffortParty').condition('partyId', me)
+                    .conditionDate('fromDate', 'thruDate', null).selectField('workEffortId').list()) myLooseIds.add(wep.workEffortId)
+
+            let rows = []
+            const added = new Set()
+            if (parentWorkEffortId) {
+                const parent = find().condition('workEffortId', parentWorkEffortId).one()
+                if (parent == null || !seen(parent)) return
+                const parentRow = plain(parent)
+                const depth = depthOf(parentRow) + 1
+                rows = childrenOf(parentRow).filter(statusOk).sort(byRank).map((row) => decorate(row, depth))
+            } else if (topLevel && rootWorkEffortId) {
+                if (!all && !visible.has(rootWorkEffortId)) return
+                rows = (universeOf(rootWorkEffortId).kids.get('') || []).filter(statusOk).sort(byRank).map((row) => decorate(row, 0))
+            } else if (workEffortIds) {
+                const ids = (typeof workEffortIds === 'string' ? workEffortIds.split(',') : Array.from(workEffortIds)).map((id) => String(id).trim()).filter((id) => id)
+                if (!ids.length) return
+                const found = Array.from(find().condition('workEffortId', 'in', ids).list()).map(plain).filter(seen)
+                const wanted = []
+                for (const row of found) {
+                    const fromUniverse = row.rootWorkEffortId ? universeOf(row.rootWorkEffortId).byId.get(row.workEffortId) || row : row
+                    wanted.push(fromUniverse)
+                }
+                const ancestors = []
+                if (withAncestors) {
+                    for (const row of wanted) {
+                        const chain = []
+                        let at = row
+                        const byId = row.rootWorkEffortId ? universeOf(row.rootWorkEffortId).byId : null
+                        for (let guard = 0; at && at.parentWorkEffortId && guard < 500; guard++) {
+                            at = byId ? byId.get(at.parentWorkEffortId) : (() => { const one = find().condition('workEffortId', at.parentWorkEffortId).one(); return one && seen(one) ? plain(one) : null })()
+                            if (at) chain.unshift(at)
+                        }
+                        for (const ancestor of chain) if (!added.has(ancestor.workEffortId) && !ids.includes(ancestor.workEffortId)) {
+                            added.add(ancestor.workEffortId)
+                            ancestors.push(ancestor)
+                        }
+                    }
+                }
+                const byOrder = new Map(ids.map((id, i) => [id, i]))
+                wanted.sort((left, right) => byOrder.get(left.workEffortId) - byOrder.get(right.workEffortId))
+                rows = ancestors.map((row) => decorate(row, depthOf(row))).concat(wanted.map((row) => decorate(row, depthOf(row))))
+            }
+            workItemList = rows
+            for (const row of rows) {
+                if (added.has(row.workEffortId)) continue
+                totals.totalEstimatedWorkTime += row.totalEstimatedWorkTime
+                totals.totalRemainingWorkTime += row.totalRemainingWorkTime
+                totals.totalActualWorkTime += row.totalActualWorkTime
+                totals.totalBudget += row.totalBudget
+                totals.totalEstimatedPoints += row.totalEstimatedPoints
+                totals.itemCount += 1 + row.itemCount
+                totals.doneCount += (['WeComplete', 'WeClosed'].includes(row.statusId) ? 1 : 0) + row.doneCount
+            }
+            for (const key of ['totalEstimatedWorkTime', 'totalRemainingWorkTime', 'totalActualWorkTime', 'totalBudget', 'totalEstimatedPoints'])
+                totals[key] = round(totals[key])
+            totals.percentDone = totals.totalEstimatedWorkTime > 0 ? Math.max(0, Math.min(100, Math.round((totals.totalEstimatedWorkTime
+                    - totals.totalRemainingWorkTime) / totals.totalEstimatedWorkTime * 100))) : null
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="WorkEffortChildStats">
         <description>Gets statistics for direct children WorkEfforts plus their descendants</description>
         <in-parameters>
