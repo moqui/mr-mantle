@@ -15,7 +15,9 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="clone" noun="Project">
-        <description>Meant for copying projects setup as template for copy then use, but can be used for any project</description>
+        <description>Meant for copying projects setup as template for copy then use, but can be used for any project. The copy's
+            task numbers (Project_KEY sequence) go on after the highest number copied from the base project, so a template
+            numbered from 1 gives a project numbered from 1; the copy is not a template unless isTemplate is Y.</description>
         <in-parameters>
             <parameter name="baseWorkEffortId" required="true"/>
             <parameter name="workEffortId" required="true"><matches regexp="[A-Za-z0-9]{1,8}"
@@ -26,6 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="priority" type="Long"/>
             <parameter name="estimatedStartDate" type="Timestamp" format="yyyy-MM-dd"/>
             <parameter name="estimatedCompletionDate" type="Timestamp" format="yyyy-MM-dd"/>
+            <parameter name="isTemplate" default-value="N"/>
 
             <parameter name="deepClone" type="Boolean" default="true"/>
             <parameter name="deepIdIsPrefix" type="Boolean" default="true"/>
@@ -43,6 +46,17 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="workEffortId"/></out-parameters>
         <actions>
+            <!-- the copies keep the numbers after the key (BASE-12 becomes KEY-12): new tasks start after the highest -->
+            <script><![CDATA[
+                lastTaskNum = 0
+                const prefix = baseWorkEffortId + '-'
+                for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'like', prefix + '%')
+                        .selectField('workEffortId').disableAuthz().list()) {
+                    const rest = String(row.workEffortId).substring(prefix.length)
+                    if (/^\d{1,15}$/.test(rest)) lastTaskNum = Math.max(lastTaskNum, Number(rest))
+                }
+            ]]></script>
+            <service-call name="mantle.work.ProjectServices.init#ProjectSequence" in-map="{workEffortId:workEffortId, lastTaskNum:lastTaskNum}"/>
             <service-call name="mantle.work.WorkEffortServices.clone#WorkEffort" in-map="context" out-map="context"/>
         </actions>
     </service>
@@ -75,6 +89,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <return error="true" message="Project date range is not valid."/>
             </if>
             <service-call name="create#mantle.work.effort.WorkEffort" out-map="context" in-map="context"/>
+            <!-- a project's tasks are numbered from 1 (KEY-1, KEY-2) -->
+            <service-call name="mantle.work.ProjectServices.init#ProjectSequence" in-map="{workEffortId:workEffortId}"/>
 
             <!-- always assign the user who creates the project as a manager -->
             <if condition="!vendorManagerPartyId &amp;&amp; ec.user.userAccount?.partyId">
@@ -177,6 +193,181 @@ along with this software (see the LICENSE.md file). If not, see
                         in-map="{workEffortId:workEffortId, roleTypeId:'Manager', newPartyId:managerPartyId, statusId:'WeptAssigned'}"/>
             </if>
         </actions>
+    </service>
+
+    <service verb="init" noun="ProjectSequence" transaction="force-new">
+        <description>Starts the task number sequence of a project (Project_KEY, which TaskServices.create#Task numbers its tasks
+            KEY-n from, a bank of 1 so there are no gaps) after lastTaskNum, so the first new task is lastTaskNum + 1. A
+            project whose sequence is already started (an existing project, or a key used before) keeps it. In its own
+            transaction: a sequence refill reads the row on another connection and would wait on an uncommitted insert.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="lastTaskNum" type="Long" default="0"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const seqName = 'Project_' + workEffortId
+                if (ec.entity.find('moqui.entity.SequenceValueItem').condition('seqName', seqName).one() == null)
+                    ec.service.sync().name('create#moqui.entity.SequenceValueItem').parameters({seqName: seqName, seqNum: lastTaskNum || 0}).call()
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="VisibleProjectInfo">
+        <description>
+            The projects the current user may see, as what a find of projects, tasks, requests or time applies as a condition
+            (no entity filter covers WorkEffort, Request or TimeEntry):
+            - allProjects: true for the ADMIN group, which sees every project; the lists below then do not limit a find.
+            - visibleProjectIds: the projects the user holds a current WorkEffortParty role on (memberProjectIds), and the
+              projects with visibility All users or General (WevAllUsers, WevGeneral) of the user's organizations (orgIds:
+              the filterOrgIds of PartyServices.get#PartyOrganizationInfo, the active organization when one is set): owned by
+              one (ownerPartyId) or with one in a current role (as the Vendor). A project in Work group, Restricted or
+              Confidential, or with no visibility, is seen only by its parties.
+            - managedProjectIds: those the user is ProjectManager or Manager of, and restrictedItemIds: the Restricted and
+              Confidential tasks the user holds a current role on. A Restricted or Confidential task is seen only by its own
+              parties and the managers of its project.
+            So a find of projects applies workEffortId in visibleProjectIds; a find of tasks applies rootWorkEffortId in
+            visibleProjectIds and (visibilityEnumId not in WevRestricted, WevConfidential, or rootWorkEffortId in
+            managedProjectIds, or workEffortId in restrictedItemIds); each unless allProjects. Four small finds, so a screen
+            may call it on each render.
+        </description>
+        <out-parameters>
+            <parameter name="allProjects" type="Boolean"/>
+            <parameter name="userPartyId"/>
+            <parameter name="orgIds" type="List"><parameter name="orgId"/></parameter>
+            <parameter name="visibleProjectIds" type="List"><parameter name="workEffortId"/></parameter>
+            <parameter name="memberProjectIds" type="List"><parameter name="workEffortId"/></parameter>
+            <parameter name="managedProjectIds" type="List"><parameter name="workEffortId"/></parameter>
+            <parameter name="restrictedItemIds" type="List"><parameter name="workEffortId"/></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            allProjects = !!ec.user.userId && ec.user.isInGroup('ADMIN')
+            userPartyId = ec.user.userAccount?.partyId || null
+            orgIds = []
+            visibleProjectIds = []
+            memberProjectIds = []
+            managedProjectIds = []
+            restrictedItemIds = []
+            if (!userPartyId) return
+            const shared = ['WevAllUsers', 'WevGeneral']
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const orgInfo = ec.service.sync().name('mantle.party.PartyServices.get#PartyOrganizationInfo').parameters({partyId: userPartyId}).call()
+                orgIds = Array.from(orgInfo?.filterOrgIds || [])
+                const visible = new Set()
+                const managed = new Set()
+                for (const row of ec.entity.find('mantle.work.effort.WorkEffortAndParty').condition('partyId', userPartyId)
+                        .condition('workEffortTypeEnumId', 'WetProject').conditionDate('fromDate', 'thruDate', null)
+                        .selectField('workEffortId').selectField('roleTypeId').list()) {
+                    if (!memberProjectIds.includes(row.workEffortId)) memberProjectIds.push(row.workEffortId)
+                    visible.add(row.workEffortId)
+                    if (row.roleTypeId === 'ProjectManager' || row.roleTypeId === 'Manager') managed.add(row.workEffortId)
+                }
+                if (orgIds.length) {
+                    for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition('ownerPartyId', 'in', orgIds)
+                            .condition('workEffortTypeEnumId', 'WetProject').condition('visibilityEnumId', 'in', shared)
+                            .selectField('workEffortId').list()) visible.add(row.workEffortId)
+                    for (const row of ec.entity.find('mantle.work.effort.WorkEffortAndParty').condition('partyId', 'in', orgIds)
+                            .condition('workEffortTypeEnumId', 'WetProject').condition('visibilityEnumId', 'in', shared)
+                            .conditionDate('fromDate', 'thruDate', null).selectField('workEffortId').list()) visible.add(row.workEffortId)
+                }
+                for (const row of ec.entity.find('mantle.work.effort.WorkEffortAndParty').condition('partyId', userPartyId)
+                        .condition('workEffortTypeEnumId', 'WetTask').condition('visibilityEnumId', 'in', ['WevRestricted', 'WevConfidential'])
+                        .conditionDate('fromDate', 'thruDate', null).selectField('workEffortId').list()) {
+                    if (!restrictedItemIds.includes(row.workEffortId)) restrictedItemIds.push(row.workEffortId)
+                }
+                visibleProjectIds = Array.from(visible).sort()
+                managedProjectIds = Array.from(managed).sort()
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="store" noun="ProjectSetting">
+        <description>Sets a project's own value of a setting (a WorkEffortSettingType); an empty value removes the project's
+            row, so the organization's applies again (get#ProjectSettings).</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="settingTypeEnumId" required="true"/>
+            <parameter name="settingValue" allow-html="any"/>
+        </in-parameters>
+        <actions>
+            <entity-find-one entity-name="moqui.basic.Enumeration" value-field="settingType" cache="true">
+                <field-map field-name="enumId" from="settingTypeEnumId"/></entity-find-one>
+            <if condition="settingType == null || settingType.enumTypeId != 'WorkEffortSettingType'">
+                <return error="true" message="${settingTypeEnumId} is not a project setting"/></if>
+            <entity-find-one entity-name="mantle.work.effort.WorkEffort" value-field="workEffort"/>
+            <if condition="workEffort == null"><return error="true" message="Project ${workEffortId} not found"/></if>
+            <entity-find-one entity-name="mantle.work.effort.WorkEffortSetting" value-field="setting"/>
+            <if condition="settingValue == null || settingValue === ''"><then>
+                <if condition="setting != null"><entity-delete value-field="setting"/></if>
+            </then><else>
+                <service-call name="store#mantle.work.effort.WorkEffortSetting"
+                        in-map="{workEffortId:workEffortId, settingTypeEnumId:settingTypeEnumId, settingValue:settingValue}"/>
+            </else></if>
+        </actions>
+    </service>
+    <service verb="get" noun="ProjectSettings">
+        <description>
+            A project's settings by WorkEffortSettingType: its own WorkEffortSetting rows, else the organization's. The
+            organization is organizationPartyId, else the project's owner when an organization, else its current Vendor. Its
+            setting is the PartySetting the type's optionValue names (a Projects app setting, ProjBillingDefaults and the like),
+            a JSON object whose enumCode key holds the value (a boolean as Y or N); a type without an optionValue has no
+            organization default. An app setting that is not a JSON object is logged and skipped. settingSources tells for each
+            value where it came from: project or organization.
+        </description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settings" type="Map"/>
+            <parameter name="settingSources" type="Map"/>
+            <parameter name="organizationPartyId"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            settings = {}
+            settingSources = {}
+            for (const row of ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('workEffortId', workEffortId).list()) {
+                if (row.settingValue == null || row.settingValue === '') continue
+                settings[row.settingTypeEnumId] = row.settingValue
+                settingSources[row.settingTypeEnumId] = 'project'
+            }
+            if (!organizationPartyId) {
+                const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+                if (project?.ownerPartyId && ec.entity.find('mantle.party.Party').condition('partyId', project.ownerPartyId)
+                        .one()?.partyTypeEnumId === 'PtyOrganization') organizationPartyId = project.ownerPartyId
+                if (!organizationPartyId) organizationPartyId = Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty')
+                        .condition('workEffortId', workEffortId).condition('roleTypeId', 'Vendor').conditionDate('fromDate', 'thruDate', null)
+                        .orderBy('fromDate').list())[0]?.partyId || null
+            }
+            if (!organizationPartyId) return
+            const types = Array.from(ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'WorkEffortSettingType').useCache(true).list())
+                    .filter((type) => type.optionValue && settings[type.enumId] === undefined)
+            if (!types.length) return
+            const appSettings = {}
+            for (const row of ec.entity.find('mantle.party.PartySetting').condition('partyId', organizationPartyId)
+                    .condition('partySettingTypeId', 'in', Array.from(new Set(types.map((type) => type.optionValue)))).list()) {
+                if (!row.settingValue) continue
+                try {
+                    const parsed = JSON.parse(row.settingValue)
+                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) appSettings[row.partySettingTypeId] = parsed
+                    else ec.logger.error(`Project settings of ${workEffortId}: the ${row.partySettingTypeId} setting of ${organizationPartyId} is not a JSON object, skipped`)
+                } catch (err) {
+                    ec.logger.error(`Project settings of ${workEffortId}: the ${row.partySettingTypeId} setting of ${organizationPartyId} is not JSON, skipped: ${err}`)
+                }
+            }
+            for (const type of types) {
+                const value = appSettings[type.optionValue]?.[type.enumCode || type.enumId]
+                if (value == null || value === '') continue
+                settings[type.enumId] = typeof value === 'boolean' ? (value ? 'Y' : 'N') : typeof value === 'string' ? value : JSON.stringify(value)
+                settingSources[type.enumId] = 'organization'
+            }
+        ]]></script></actions>
     </service>
 
     <service verb="get" noun="ProjectStats">

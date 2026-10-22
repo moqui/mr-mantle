@@ -120,8 +120,9 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <if condition="!workEffortId &amp;&amp; rootWorkEffortId">
+                <!-- a bank of 1: the numbers have no gaps (create#Project starts them at 1) -->
                 <set field="seqName" value="Project_${rootWorkEffortId}"/>
-                <set field="workEffortId" value="${rootWorkEffortId}-${ec.entity.sequencedIdPrimary(seqName, null, 10)}"/>
+                <set field="workEffortId" value="${rootWorkEffortId}-${ec.entity.sequencedIdPrimary(seqName, null, 1)}"/>
             </if>
             <service-call name="create#mantle.work.effort.WorkEffort" out-map="context" in-map="Object.assign({}, context, {workEffortTypeEnumId:'WetTask'})"/>
             <if condition="assignToPartyId">

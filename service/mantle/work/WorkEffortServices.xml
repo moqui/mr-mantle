@@ -61,7 +61,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <set field="workEffort.workEffortId" value="${idPrefix}-${idRest}"/>
                     </then><else>
                         <set field="seqName" value="Project_${idPrefix}"/>
-                        <set field="workEffort.workEffortId" value="${idPrefix}-${ec.entity.sequencedIdPrimary(seqName, null, null)}"/>
+                        <set field="workEffort.workEffortId" value="${idPrefix}-${ec.entity.sequencedIdPrimary(seqName, null, 1)}"/>
                     </else></if>
                 </then><else>
                     <set field="workEffort.workEffortId" from="null"/>
