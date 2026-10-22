@@ -1403,7 +1403,7 @@ along with this software (see the LICENSE.md file). If not, see
             billable, comments, clientPartyId, timesheetId, sheetStatusId (In-Process when none), returned, locked (its week
             submitted or approved under a locking policy), invoiceId, vendorInvoiceId, invoiced}; with rates (withRates, for
             ADMIN and holders of TIME_ENTRY_RATE: those who manage money) also clientHourRate, vendorHourRate, clientAmount and
-            vendorAmount (hours times the rate). totals (withTotals, over every match, not the page): hours, billableHours,
+            vendorAmount (hours times the rate: the entry's own hour rate, else its RateAmount's, impl-projects.md F86). totals (withTotals, over every match, not the page): hours, billableHours,
             nonBillableHours, entryCount, byPerson, byWorkType and byItem (hours of each, with an item's estimate), and with
             rates clientAmount and vendorAmount.
         </description>
@@ -1562,6 +1562,14 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 const typeLabels = {}
                 for (const type of ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'WorkType').useCache(true).list()) typeLabels[type.enumId] = type.description || type.enumId
+                const rateAmounts = {}
+                const rateOf = (own, rateAmountId) => {
+                    if (num(own) != null) return num(own)
+                    if (!rateAmountId) return null
+                    if (!(rateAmountId in rateAmounts)) rateAmounts[rateAmountId] = num(ec.entity.find('mantle.humanres.rate.RateAmount').condition('rateAmountId', rateAmountId)
+                            .useCache(true).one()?.rateAmount)
+                    return rateAmounts[rateAmountId]
+                }
                 for (const row of page) {
                     const sheet = row.timesheetId ? sheets[row.timesheetId] : null
                     const status = sheet?.statusId || 'TmshInProcess'
@@ -1577,8 +1585,9 @@ along with this software (see the LICENSE.md file). If not, see
                         locked: (status === 'TmshCompleted' || status === 'TmshApproved') && lockOf(row.partyId),
                         invoiceId: row.invoiceId || null, vendorInvoiceId: row.vendorInvoiceId || null, invoiced: !!(row.invoiceId || row.vendorInvoiceId)}
                     if (ratesShown) {
-                        out.clientHourRate = num(row.clientHourRate)
-                        out.vendorHourRate = num(row.vendorHourRate)
+                        // the entry's own hour rate, else its RateAmount's (new entries carry only rateAmountId, impl-projects.md F86)
+                        out.clientHourRate = rateOf(row.clientHourRate, row.rateAmountId)
+                        out.vendorHourRate = rateOf(row.vendorHourRate, row.vendorRateAmountId)
                         out.clientAmount = out.clientHourRate == null ? null : round(hours * out.clientHourRate)
                         out.vendorAmount = out.vendorHourRate == null ? null : round(hours * out.vendorHourRate)
                     }
@@ -1589,7 +1598,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (withTotals) {
                     let all = findOf().selectField('timeEntryId').selectField('partyId').selectField('hours').selectField('rateTypeEnumId').selectField('workTypeEnumId')
                             .selectField('workEffortId').selectField('workEffortName').selectField('estimatedWorkTime')
-                    if (ratesShown) all = all.selectField('clientHourRate').selectField('vendorHourRate')
+                    if (ratesShown) all = all.selectField('clientHourRate').selectField('vendorHourRate').selectField('rateAmountId').selectField('vendorRateAmountId')
                     const rows = Array.from(all.limit(20000).list())
                     const sum = {hours: 0, billableHours: 0, nonBillableHours: 0, entryCount: rows.length, clientAmount: ratesShown ? 0 : null, vendorAmount: ratesShown ? 0 : null}
                     const byPerson = {}, byType = {}, byItem = {}
@@ -1609,8 +1618,10 @@ along with this software (see the LICENSE.md file). If not, see
                             estimate: num(row.estimatedWorkTime), hours: 0})
                         item.hours += hours
                         if (ratesShown) {
-                            if (num(row.clientHourRate) != null) sum.clientAmount += hours * num(row.clientHourRate)
-                            if (num(row.vendorHourRate) != null) sum.vendorAmount += hours * num(row.vendorHourRate)
+                            const clientRate = rateOf(row.clientHourRate, row.rateAmountId)
+                            const vendorRate = rateOf(row.vendorHourRate, row.vendorRateAmountId)
+                            if (clientRate != null) sum.clientAmount += round(hours * clientRate)
+                            if (vendorRate != null) sum.vendorAmount += round(hours * vendorRate)
                         }
                     }
                     const sorted = (map) => Object.values(map).map((entry) => Object.assign(entry, {hours: round(entry.hours)},
