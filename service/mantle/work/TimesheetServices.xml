@@ -139,6 +139,76 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="get" noun="WorkTypes">
+        <description>The work types a person's organization (or organizationPartyId) offers for time, in order: the PartySetting
+            ProjWorkTypes, a JSON object whose offered is a comma list of WorkType enumIds; with no setting (or one that does not
+            read) the services work types Development, Design, Testing, Meeting, Support, Project Management, Consulting and
+            Travel. offeredList: [{enumId, label}] of those that exist; typeList: every WorkType with its label, whether it is
+            offered and its place (sequence).</description>
+        <in-parameters>
+            <parameter name="partyId"><description>The person; default the user's party</description></parameter>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="offeredList" type="List"/>
+            <parameter name="typeList" type="List"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="isSet" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const defaults = ['WktpDevelopment', 'WktpDesign', 'WktpTesting', 'WktpMeeting', 'WktpSupport', 'WktpProjectMgmt', 'WktpConsulting', 'WktpTravel']
+            offeredList = []; typeList = []; isSet = false
+            if (!organizationPartyId) organizationPartyId = ec.service.sync().name('mantle.work.TimesheetServices.get#TimesheetPolicy')
+                    .parameters({partyId: partyId || null}).call()?.organizationPartyId || null
+            let offered = null
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                if (organizationPartyId) {
+                    const row = ec.entity.find('mantle.party.PartySetting').condition('partyId', organizationPartyId).condition('partySettingTypeId', 'ProjWorkTypes').one()
+                    if (row?.settingValue) {
+                        try {
+                            const parsed = JSON.parse(row.settingValue)
+                            if (parsed && typeof parsed.offered === 'string') { offered = parsed.offered.split(',').map((id) => id.trim()).filter((id) => id); isSet = true }
+                        } catch (err) { ec.logger.error(`Work types of ${organizationPartyId}: ProjWorkTypes is not JSON, the defaults apply: ${err}`) }
+                    }
+                }
+                if (!offered || !offered.length) offered = defaults
+                const types = Array.from(ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'WorkType').useCache(true).list())
+                const labels = {}
+                for (const type of types) labels[type.enumId] = type.description || type.enumId
+                offeredList = offered.filter((id) => labels[id]).map((id) => ({enumId: id, label: labels[id]}))
+                typeList = types.map((type) => {
+                    const at = offered.indexOf(type.enumId)
+                    return {enumId: type.enumId, label: labels[type.enumId], offered: at >= 0, sequence: at >= 0 ? at + 1 : null,
+                        isOwn: String(type.enumId).startsWith('WktpOrg')}
+                })
+                typeList.sort((a, b) => (a.offered === b.offered ? 0 : a.offered ? -1 : 1) || (a.sequence ?? 0) - (b.sequence ?? 0) || String(a.label).localeCompare(String(b.label)))
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+    <service verb="store" noun="WorkTypes">
+        <description>Stores the work types an organization offers for time (PartySetting ProjWorkTypes, see get#WorkTypes): offered,
+            a list or comma text of WorkType enumIds in order. At least one; each a WorkType; the setting at most 255 characters.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="offered" type="Object" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="settingValue"/></out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            const list = Array.from(new Set((Array.isArray(offered) ? offered : (typeof offered === 'object' && offered.length != null ? Array.from(offered)
+                    : String(offered).split(','))).map((id) => String(id).trim()).filter((id) => id)))
+            if (!list.length) { ec.message.addError(L('Offer at least one work type')); return }
+            const known = new Set(Array.from(ec.entity.find('moqui.basic.Enumeration').condition('enumTypeId', 'WorkType').useCache(true).list()).map((row) => row.enumId))
+            const unknown = list.filter((id) => !known.has(id))
+            if (unknown.length) { ec.message.addError(ec.resource.expand('Not a work type: ${ids}', '', {ids: unknown.join(', ')})); return }
+            settingValue = JSON.stringify({offered: list.join(',')})
+            if (settingValue.length > 255) { ec.message.addError(L('Too many work types offered to store; offer fewer')); return }
+            ec.service.sync().name('store#mantle.party.PartySetting').parameters({partyId: organizationPartyId, partySettingTypeId: 'ProjWorkTypes',
+                settingValue: settingValue}).call()
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="WeekRange">
         <description>The week of a day by the policy's first day, in the session's time zone: weekStartDay (yyyy-MM-dd), fromDate
             (the start of that day) and thruDate (the start of the next week's first day, exclusive), and dayList, its seven days.</description>

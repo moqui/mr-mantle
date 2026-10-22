@@ -2478,6 +2478,132 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="get" noun="ProjectTodayItems">
+        <description>
+            The today-source of IronStone Projects (design-projects.md §1.4 and §15 Project home and Today services; Projects.xml
+            shell-providers; mantle.work.WorkEffortServices.get#UserTodayItems calls it with userId, partyId, fromDate and
+            thruDate), for the current user: the running timer (kind timer, its item as the record, startDate when it started,
+            timeEntryId to stop it); merge requests waiting for the user's review (kind review, the merge request as the record;
+            none without git hosting in the build); the user's timesheets to submit (kind timesheet, the timesheet as the record,
+            weekStart and hours): this week's from the last working day of the week, and any older one of the last eight weeks
+            still In-Process with time on it (overdue; a returned one says so); and the new requests in the projects the user
+            triages (kind triage, requestId, the project as the record: Submitted with no assignee, where the user is the
+            project's triage assignee, else one of its managers when it names none). Work items due reach Today already
+            through WorkEffortParty. Each part stands alone: one that fails is logged and left out.
+        </description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="partyId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="items" type="List"><parameter name="item" type="Map"/></parameter>
+            <parameter name="label"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            items = []
+            label = 'Projects'
+            const L = (text, values) => ec.resource.expand(ec.l10n.localize(text), '', values || {})
+            const me = ec.user.userAccount?.partyId || null
+            if (!me || !ec.user.userId) return
+            const part = (name, run) => {
+                ec.message.pushErrors()
+                try {
+                    run()
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                } catch (err) {
+                    ec.logger.error(`Projects Today of ${ec.user.userId}: ${name} failed and is left out: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            const base = {workEffortId: null, requestId: null, dueDate: null, startDate: null, endDate: null, allDay: false, priority: null,
+                statusId: null, assignees: [], canUpdate: false, hasCallLink: false}
+            const nowMillis = Number(String(ec.user.nowTimestamp))
+
+            part('timer', () => {
+                const timer = ec.service.sync().name('mantle.work.TimesheetServices.get#Timer').call()?.timer
+                if (!timer) return
+                items.push(Object.assign({}, base, {kind: 'timer', timeEntryId: timer.timeEntryId, title: timer.workEffortId
+                        ? timer.workEffortId + ' ' + (timer.workEffortName || '') : L('Timer on no work item'), startDate: new Date(Number(timer.fromDate)),
+                    elapsedMinutes: timer.elapsedMinutes, record: timer.workEffortId ? {recordEntityName: 'mantle.work.effort.WorkEffort', recordId: timer.workEffortId,
+                        recordName: timer.projectName || null} : null}))
+            })
+            part('reviews', () => {
+                const out = ec.service.sync().name('org.moqui.impl.GitReviewServices.find#MergeRequests').parameters({waitingForUserId: ec.user.userId, pageSize: 10}).call() || {}
+                if (ec.message.hasError()) {
+                    // git hosting is a build feature: without it there are no reviews, not a failure
+                    if (/not built into/.test(ec.message.getErrorsString())) { ec.message.clearErrors(); return }
+                    return
+                }
+                for (const request of Array.from(out.mergeRequestList || [])) items.push(Object.assign({}, base, {kind: 'review', title: '!' + request.mergeRequestNum + ' ' + (request.title || ''),
+                    mergeRequestId: request.mergeRequestId, record: {recordEntityName: 'moqui.resource.GitMergeRequest', recordId: request.mergeRequestId,
+                        recordName: request.repositoryId + (request.authorName ? ' · ' + request.authorName : '')}}))
+            })
+            part('timesheets', () => {
+                const policy = ec.service.sync().name('mantle.work.TimesheetServices.get#TimesheetPolicy').call()?.policy || {}
+                const week = ec.service.sync().name('mantle.work.TimesheetServices.get#WeekRange').parameters({weekStart: policy.weekStart || 1}).call()
+                const workDays = Array.from(policy.workDays || [1, 2, 3, 4, 5]).map(Number)
+                const isoOf = (day) => { const js = new Date(day + 'T12:00:00Z').getUTCDay(); return js === 0 ? 7 : js }
+                const lastWorkDay = Array.from(week.dayList).filter((day) => workDays.includes(isoOf(day))).pop() || week.dayList[6]
+                const today = ec.l10n.format(ec.user.nowTimestamp, 'yyyy-MM-dd')
+                const thisFrom = Number(String(week.fromDate))
+                const cf = ec.entity.conditionFactory
+                const sheets = Array.from(ec.entity.find('mantle.work.time.Timesheet').condition('partyId', me)
+                        .condition(cf.makeCondition('statusId', 'equals', 'TmshInProcess', true))
+                        .condition('fromDate', 'greater-equals', new Date(thisFrom - 8 * 7 * 86400000 - 86400000))
+                        .condition('fromDate', 'less-than', new Date(thisFrom + 7 * 86400000 - 86400000)).orderBy('fromDate').disableAuthz().list())
+                for (const sheet of sheets) {
+                    const middle = Number(String(sheet.fromDate)) + 3.5 * 86400000
+                    const isThisWeek = middle >= thisFrom && middle < thisFrom + 7 * 86400000
+                    if (isThisWeek && today < lastWorkDay) continue
+                    let hours = 0
+                    for (const entry of ec.entity.find('mantle.work.time.TimeEntry').condition('timesheetId', sheet.timesheetId).selectField('hours').disableAuthz().list())
+                        hours += Number(String(entry.hours ?? 0))
+                    if (!hours) continue
+                    const weekStart = ec.l10n.format(String(Number(String(sheet.fromDate)) + 43200000), 'yyyy-MM-dd')
+                    const weekText = ec.l10n.format(String(Number(String(sheet.fromDate)) + 43200000), 'MMM d')
+                    const hoursText = ec.l10n.format(Math.round(hours * 100) / 100, '#,##0.##')
+                    items.push(Object.assign({}, base, {kind: 'timesheet', timesheetId: sheet.timesheetId, weekStart: weekStart, hours: Math.round(hours * 100) / 100,
+                        returned: !!sheet.comments, overdue: !isThisWeek,
+                        title: sheet.comments ? L('Returned: fix and submit your week of ${week} (${hours} h)', {week: weekText, hours: hoursText})
+                            : L('Submit your week of ${week} (${hours} h)', {week: weekText, hours: hoursText}),
+                        record: {recordEntityName: 'mantle.work.time.Timesheet', recordId: sheet.timesheetId, recordName: L('Week of ${week}', {week: weekText})}}))
+                }
+            })
+            part('triage', () => {
+                const cf = ec.entity.conditionFactory
+                const wasDisabled = ec.artifactExecution.disableAuthz()
+                try {
+                    // the projects whose triage is the user's: named as the triage assignee, or a manager of one that names none
+                    const roles = Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty').condition('partyId', me).condition('roleTypeId', 'in', ['ProjectManager', 'Manager'])
+                            .conditionDate('fromDate', 'thruDate', null).selectField('workEffortId').list()).map((row) => row.workEffortId)
+                    const triaged = new Set()
+                    for (const projectId of new Set(roles)) {
+                        const settings = ec.service.sync().name('mantle.request.RequestServices.get#IntakeSettings').parameters({workEffortId: projectId}).call()?.settings || {}
+                        if (!settings.triagePartyId || settings.triagePartyId === me) triaged.add(projectId)
+                    }
+                    for (const row of ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('settingTypeEnumId', 'WstTriageParty').condition('settingValue', me).list())
+                        triaged.add(row.workEffortId)
+                    if (!triaged.size) return
+                    const open = Array.from(ec.entity.find('mantle.request.Request').condition('rootWorkEffortId', 'in', Array.from(triaged)).condition('statusId', 'ReqSubmitted')
+                            .orderBy('-requestDate').limit(50).list())
+                    if (!open.length) return
+                    const assigned = new Set(Array.from(ec.entity.find('mantle.request.RequestParty').condition('requestId', 'in', open.map((row) => row.requestId))
+                            .condition('roleTypeId', 'Assignee').conditionDate('fromDate', 'thruDate', null).list()).map((row) => row.requestId))
+                    const names = {}
+                    for (const request of open) {
+                        if (assigned.has(request.requestId) || items.filter((item) => item.kind === 'triage').length >= 10) continue
+                        const projectId = request.rootWorkEffortId
+                        if (!(projectId in names)) names[projectId] = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', projectId).one()?.workEffortName || projectId
+                        items.push(Object.assign({}, base, {kind: 'triage', requestId: request.requestId, title: request.requestName || request.requestId,
+                            priority: request.priority ?? null, statusId: request.statusId,
+                            record: {recordEntityName: 'mantle.work.effort.WorkEffort', recordId: projectId, recordName: names[projectId]}}))
+                    }
+                } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            })
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="ProjectTemplates">
         <description>The project templates (design-projects.md §12 Templates, §15 Template flag: WorkEffort isTemplate Y) by name,
             each with its counts: work items, milestones, members (current WorkEffortParty rows) and the projects made from it

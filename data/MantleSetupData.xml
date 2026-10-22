@@ -49,6 +49,9 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- approving anyone's timesheet when the organization's timesheet policy says any (mantle.work.TimesheetServices) -->
     <userPermissions userPermissionId="TIMESHEET_APPROVE" description="Timesheet Approve (any person, by policy)"/>
     <userGroupPermissions userGroupId="ADMIN" userPermissionId="TIMESHEET_APPROVE" fromDate="0"/>
+    <!-- the time logged on a work effort in its record timeline (Chatter; mantle.party.CommunicationServices.get#RecordTimeline) -->
+    <moqui.service.ServiceRegister serviceRegisterId="TimeEntryTimeline" serviceTypeEnumId="RecordTimelineSource"
+            description="Time logged on a work effort" serviceName="mantle.work.TimeServices.get#TimeEntryTimeline"/>
 
     <!-- deleting a directory party (mantle.party.ContactBookServices.delete#Contact); a personal contact's owner needs none -->
     <userPermissions userPermissionId="CONTACT_ADMIN" description="Contact Admin (delete directory contacts)"/>
