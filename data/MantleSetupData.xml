@@ -222,6 +222,13 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="ProjectStatusUpdate" inboxEnumId="NinUpdates" description="Project Status Update" typeString="info"
             showAlert="N" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
             titleTemplate="${workEffortName} is ${healthLabel}: ${subject} (${authorName})"/>
+    <!-- a release's notes published (mantle.work.ProjectServices.publish#ReleaseNotes) to the followers of the release and of its
+        project: workEffortId, version, rootWorkEffortId, projectName, actorName, dateText, wikiPageId (the published page), the
+        release as the record; in the Updates inbox. The app that shows releases sets the link (IronStone Projects:
+        BossSetupData.xml). -->
+    <moqui.security.user.NotificationTopic topic="ReleasePublished" inboxEnumId="NinUpdates" description="Release Notes Published" typeString="info"
+            showAlert="N" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="${projectName} ${version} released: the notes (${actorName})"/>
     <!-- merge requests and commit checks (mantle.work.GitServices.notify#MergeRequest and notify#CommitStatusFailed, by the
         rules of service/WorkGit.secas.xml): mergeRequestId, mergeRequestNum, title, repositoryId, sourceRef, targetRef,
         actorName and change, the merge request as the record; a check: repositoryId, commitId, shortId, summary, checkContext,

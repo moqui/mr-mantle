@@ -1050,33 +1050,752 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
-    <service verb="create" noun="Milestone">
+    <!-- ========== Milestones, releases and components of IronStone Projects (design-projects.md §4 Roadmap, MilestoneDetail and
+        ReleaseDetail, §15 Releases and components, Release notes; impl-projects.md P4b) ==========
+        Plan items are WorkEfforts under their project (rootWorkEffortId) on the Default flow: a milestone (WetMilestone, id
+        KEY-MS-n; with a start date it is a phase), a release (WetRelease, KEY-REL-n, its name the version, as 1.4.0) and a
+        component (WetComponent, KEY-CMP-n). Work items join them by WorkEffortAssoc (TaskServices set#TaskMilestone,
+        set#TaskRelease, set#TaskComponent). A release's notes are markdown kept as its WorkEffortContent of type
+        WectReleaseNotes, and are published as a page of the project's documentation space (WstDocsWikiSpace, under its page
+        Releases; WikiPageWorkEffort links the page to the release), as a section of CHANGELOG.md in a repository of the project,
+        and as a notice on the topic ReleasePublished to the followers of the release and of the project. -->
+
+    <service verb="get" noun="PlanItemDefaults">
+        <description>The id of a new plan item of a project: KEY-MS-n for a milestone, KEY-REL-n for a release, KEY-CMP-n for a
+            component, n one past the highest of the kind and free of other records.</description>
         <in-parameters>
             <parameter name="rootWorkEffortId" required="true"/>
-            <parameter name="workEffortId" required="true"/>
+            <parameter name="workEffortTypeEnumId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortId"/><parameter name="number" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            const infix = {WetMilestone: 'MS', WetRelease: 'REL', WetComponent: 'CMP'}[workEffortTypeEnumId]
+            if (!infix) { ec.message.addError(ec.resource.expand('${workEffortTypeEnumId} is not a kind of plan item', '', {workEffortTypeEnumId})); return }
+            const pattern = new RegExp('-' + infix + '-(\\d+)$')
+            let highest = 0
+            for (const row of Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', rootWorkEffortId)
+                    .condition('workEffortTypeEnumId', workEffortTypeEnumId).selectField('workEffortId').list())) {
+                const match = pattern.exec(String(row.workEffortId))
+                if (match) highest = Math.max(highest, Number(match[1]))
+            }
+            number = highest + 1
+            while (ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', rootWorkEffortId + '-' + infix + '-' + number).count() > 0) number++
+            workEffortId = rootWorkEffortId + '-' + infix + '-' + number
+        ]]></script></actions>
+    </service>
+    <service verb="create" noun="PlanItem" allow-remote="false">
+        <description>A milestone, release or component of a project (create#Milestone, create#Release, create#Component): the id
+            given (refused when taken) or the next of get#PlanItemDefaults; a name (a release's version, which no other release
+            of the project has); dates (the due date not before the start).</description>
+        <in-parameters>
+            <parameter name="rootWorkEffortId" required="true"/>
+            <parameter name="workEffortTypeEnumId" required="true"/>
+            <parameter name="workEffortId"/>
+            <parameter name="workEffortName"/>
+            <parameter name="description"/>
+            <parameter name="estimatedStartDate" type="Timestamp" format="yyyy-MM-dd"/>
+            <parameter name="estimatedCompletionDate" type="Timestamp" format="yyyy-MM-dd"/>
+            <parameter name="statusId" default-value="WeInPlanning"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortId"/></out-parameters>
+        <actions><script><![CDATA[
+            const kinds = {WetMilestone: 'milestone', WetRelease: 'release', WetComponent: 'component'}
+            if (!kinds[workEffortTypeEnumId]) { ec.message.addError(ec.resource.expand('${workEffortTypeEnumId} is not a kind of plan item', '', {workEffortTypeEnumId})); return }
+            const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', rootWorkEffortId).one()
+            if (project == null || project.workEffortTypeEnumId !== 'WetProject') { ec.message.addError(ec.resource.expand('Project ${rootWorkEffortId} not found', '', {rootWorkEffortId})); return }
+            const name = String(workEffortName || '').trim()
+            if (!name) { ec.message.addError(ec.l10n.localize(workEffortTypeEnumId === 'WetRelease' ? 'A release needs its version' : 'A plan item needs a name')); return }
+            if (workEffortTypeEnumId === 'WetRelease' && ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', rootWorkEffortId)
+                    .condition('workEffortTypeEnumId', 'WetRelease').condition('workEffortName', name).count() > 0) {
+                ec.message.addError(ec.resource.expand('The project has a release ${name} already', '', {name})); return
+            }
+            const millis = (value) => value == null || value === '' ? null : (/^-?\d+$/.test(String(value)) ? Number(String(value)) : Date.parse(String(value)))
+            if (estimatedStartDate != null && estimatedCompletionDate != null && millis(estimatedCompletionDate) < millis(estimatedStartDate)) {
+                ec.message.addError(ec.l10n.localize('The due date is not before the start')); return
+            }
+            let id = String(workEffortId || '').trim()
+            if (id) {
+                if (ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', id).count() > 0) {
+                    ec.message.addError(ec.resource.expand('The id ${id} is taken', '', {id})); return
+                }
+            } else {
+                id = ec.service.sync().name('mantle.work.ProjectServices.get#PlanItemDefaults').parameters({rootWorkEffortId: rootWorkEffortId,
+                    workEffortTypeEnumId: workEffortTypeEnumId}).call()?.workEffortId
+                if (ec.message.hasError()) return
+            }
+            workEffortId = ec.service.sync().name('create#mantle.work.effort.WorkEffort').parameters({workEffortId: id, workEffortTypeEnumId: workEffortTypeEnumId,
+                rootWorkEffortId: rootWorkEffortId, workEffortName: name, description: description || null, statusId: statusId || 'WeInPlanning',
+                estimatedStartDate: estimatedStartDate || null, estimatedCompletionDate: estimatedCompletionDate || null, timeUomId: 'TF_hr'}).call()?.workEffortId || id
+        ]]></script></actions>
+    </service>
+    <service verb="create" noun="Milestone">
+        <description>A milestone of a project (WetMilestone, In Planning unless statusId says otherwise), id KEY-MS-n unless
+            given; with a start date it marks a phase (create#PlanItem).</description>
+        <in-parameters>
+            <parameter name="rootWorkEffortId" required="true"/>
+            <parameter name="workEffortId"/>
             <parameter name="workEffortName" required="true"/>
+            <parameter name="description"/>
             <parameter name="estimatedStartDate" type="Timestamp" format="yyyy-MM-dd"/>
             <parameter name="estimatedCompletionDate" type="Timestamp" format="yyyy-MM-dd"/>
             <parameter name="statusId" default-value="WeInPlanning"/>
         </in-parameters>
         <out-parameters><parameter name="workEffortId"/></out-parameters>
         <actions>
-            <!-- decided to go with manual ID instead of auto <set field="seqName" value="Project_MS_${rootWorkEffortId}"/>
-            <set field="workEffortId" value="${rootWorkEffortId}-MS-${ec.entity.sequencedIdPrimary(seqName, null, null)}"/> -->
-            <service-call name="create#mantle.work.effort.WorkEffort" out-map="context" in-map="Object.assign({}, context, {workEffortTypeEnumId:'WetMilestone'})"/>
+            <service-call name="mantle.work.ProjectServices.create#PlanItem" out-map="context" in-map="{rootWorkEffortId:rootWorkEffortId,
+                    workEffortTypeEnumId:'WetMilestone', workEffortId:workEffortId, workEffortName:workEffortName, description:description,
+                    estimatedStartDate:estimatedStartDate, estimatedCompletionDate:estimatedCompletionDate, statusId:statusId}"/>
+        </actions>
+    </service>
+    <service verb="create" noun="Release">
+        <description>A release of a project (WetRelease, In Planning), id KEY-REL-n unless given: its name is the version (as
+            1.4.0), which no other release of the project has; its due date is the planned release date (create#PlanItem). A
+            tag named as the version, or v and the version, links to it (GitServices.link#RefByName).</description>
+        <in-parameters>
+            <parameter name="rootWorkEffortId" required="true"/>
+            <parameter name="workEffortId"/>
+            <parameter name="workEffortName" required="true"><description>The version</description></parameter>
+            <parameter name="description"/>
+            <parameter name="estimatedStartDate" type="Timestamp" format="yyyy-MM-dd"/>
+            <parameter name="estimatedCompletionDate" type="Timestamp" format="yyyy-MM-dd"><description>The planned date</description></parameter>
+            <parameter name="statusId" default-value="WeInPlanning"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortId"/></out-parameters>
+        <actions>
+            <service-call name="mantle.work.ProjectServices.create#PlanItem" out-map="context" in-map="{rootWorkEffortId:rootWorkEffortId,
+                    workEffortTypeEnumId:'WetRelease', workEffortId:workEffortId, workEffortName:workEffortName, description:description,
+                    estimatedStartDate:estimatedStartDate, estimatedCompletionDate:estimatedCompletionDate, statusId:statusId}"/>
+        </actions>
+    </service>
+    <service verb="create" noun="Component">
+        <description>A component of a project (WetComponent), id KEY-CMP-n unless given (create#PlanItem).</description>
+        <in-parameters>
+            <parameter name="rootWorkEffortId" required="true"/>
+            <parameter name="workEffortId"/>
+            <parameter name="workEffortName" required="true"/>
+            <parameter name="description"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortId"/></out-parameters>
+        <actions>
+            <service-call name="mantle.work.ProjectServices.create#PlanItem" out-map="context" in-map="{rootWorkEffortId:rootWorkEffortId,
+                    workEffortTypeEnumId:'WetComponent', workEffortId:workEffortId, workEffortName:workEffortName, description:description,
+                    statusId:'WeInProgress'}"/>
         </actions>
     </service>
     <service verb="update" noun="Milestone">
+        <description>A plan item's (a milestone, release or component) name, description, dates and status; a parameter not given
+            is left as it is, and clearFields (a list or comma text of description, estimatedStartDate, estimatedCompletionDate)
+            empties those. A release keeps a version no other release of its project has; the due date is not before the start.
+            A status moves by the Default flow.</description>
         <in-parameters>
             <parameter name="workEffortId" required="true"/>
             <parameter name="workEffortName"/>
+            <parameter name="description"/>
             <parameter name="estimatedStartDate" type="Timestamp" format="yyyy-MM-dd"/>
             <parameter name="estimatedCompletionDate" type="Timestamp" format="yyyy-MM-dd"/>
             <parameter name="statusId"/>
+            <parameter name="clearFields" type="Object"/>
         </in-parameters>
-        <actions>
-            <service-call name="update#mantle.work.effort.WorkEffort" out-map="context" in-map="context"/>
-        </actions>
+        <actions><script><![CDATA[
+            const plan = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (plan == null || !['WetMilestone', 'WetRelease', 'WetComponent'].includes(plan.workEffortTypeEnumId)) {
+                ec.message.addError(ec.resource.expand('Plan item ${workEffortId} not found', '', {workEffortId})); return
+            }
+            const fields = {workEffortId: workEffortId}
+            if (workEffortName != null) {
+                const name = String(workEffortName).trim()
+                if (!name) { ec.message.addError(ec.l10n.localize(plan.workEffortTypeEnumId === 'WetRelease' ? 'A release needs its version' : 'A plan item needs a name')); return }
+                if (plan.workEffortTypeEnumId === 'WetRelease' && name !== plan.workEffortName && ec.entity.find('mantle.work.effort.WorkEffort')
+                        .condition('rootWorkEffortId', plan.rootWorkEffortId).condition('workEffortTypeEnumId', 'WetRelease').condition('workEffortName', name)
+                        .condition('workEffortId', 'not-equals', workEffortId).count() > 0) {
+                    ec.message.addError(ec.resource.expand('The project has a release ${name} already', '', {name})); return
+                }
+                fields.workEffortName = name
+            }
+            if (description != null) fields.description = String(description)
+            if (estimatedStartDate != null) fields.estimatedStartDate = estimatedStartDate
+            if (estimatedCompletionDate != null) fields.estimatedCompletionDate = estimatedCompletionDate
+            const clear = (clearFields == null || clearFields === '' ? [] : typeof clearFields === 'string' ? clearFields.split(',') : Array.from(clearFields))
+                    .map((name) => String(name).trim())
+            for (const name of clear) if (['description', 'estimatedStartDate', 'estimatedCompletionDate'].includes(name)) fields[name] = null
+            const millis = (value) => value == null || value === '' ? null : (/^-?\d+$/.test(String(value)) ? Number(String(value)) : Date.parse(String(value)))
+            const start = millis('estimatedStartDate' in fields ? fields.estimatedStartDate : plan.estimatedStartDate)
+            const end = millis('estimatedCompletionDate' in fields ? fields.estimatedCompletionDate : plan.estimatedCompletionDate)
+            if (start != null && end != null && !Number.isNaN(start) && !Number.isNaN(end) && end < start) { ec.message.addError(ec.l10n.localize('The due date is not before the start')); return }
+            if (statusId && statusId !== plan.statusId) {
+                fields.statusId = statusId
+                if (['WeComplete', 'WeClosed'].includes(statusId) && plan.actualCompletionDate == null) fields.actualCompletionDate = ec.user.nowTimestamp
+                if (['WeInPlanning', 'WeApproved', 'WeInProgress'].includes(statusId) && plan.actualCompletionDate != null) fields.actualCompletionDate = null
+            }
+            if (Object.keys(fields).length > 1) ec.service.sync().name('update#mantle.work.effort.WorkEffort').parameters(fields).call()
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="PlanItemSummary">
+        <description>The progress of plan items (milestones, releases, sprints, components) from their current work items: by
+            plan item id, itemCount (not counting cancelled ones), doneCount (Complete or Closed), inProgressCount, notStartedCount
+            (In Planning or Approved), cancelledCount, percentDone (done of the counted, whole percent), the hours (estimated,
+            remaining and actual: estimatedWorkTime, remainingWorkTime, actualWorkTime), hoursPercent ((estimated − remaining) of
+            estimated), and the points (estimatedPoints, donePoints). An item in the plan item and also its sub-items counts each
+            of them.</description>
+        <in-parameters><parameter name="workEffortIdList" type="List" required="true"/></in-parameters>
+        <out-parameters><parameter name="summaryMap" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            summaryMap = {}
+            const ids = Array.from(new Set(Array.from(workEffortIdList || []).map(String).filter((id) => id)))
+            if (!ids.length) return
+            const number = (value) => value == null || value === '' ? 0 : Number(String(value)) || 0
+            for (const id of ids) summaryMap[id] = {itemCount: 0, doneCount: 0, inProgressCount: 0, notStartedCount: 0, cancelledCount: 0, percentDone: 0,
+                estimatedWorkTime: 0, remainingWorkTime: 0, actualWorkTime: 0, hoursPercent: 0, estimatedPoints: 0, donePoints: 0}
+            const assocs = []
+            for (let i = 0; i < ids.length; i += 500) assocs.push(...Array.from(ec.entity.find('mantle.work.effort.WorkEffortAssoc')
+                    .condition('workEffortId', 'in', ids.slice(i, i + 500)).condition('workEffortAssocTypeEnumId', 'in', ['WeatMilestone', 'WeatRelease', 'WeatSprint', 'WeatComponent'])
+                    .conditionDate('fromDate', 'thruDate', null).selectField('workEffortId,toWorkEffortId').list()))
+            const itemIds = Array.from(new Set(assocs.map((assoc) => assoc.toWorkEffortId)))
+            const items = {}
+            for (let i = 0; i < itemIds.length; i += 500) for (const row of Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'in', itemIds.slice(i, i + 500))
+                    .selectField('workEffortId,statusId,estimatedWorkTime,remainingWorkTime,actualWorkTime,estimatedPoints').list())) items[row.workEffortId] = row
+            const seen = new Set()
+            for (const assoc of assocs) {
+                const key = assoc.workEffortId + '|' + assoc.toWorkEffortId
+                const item = items[assoc.toWorkEffortId]
+                if (seen.has(key) || item == null) continue
+                seen.add(key)
+                const summary = summaryMap[assoc.workEffortId]
+                if (item.statusId === 'WeCancelled') { summary.cancelledCount++; continue }
+                summary.itemCount++
+                const done = ['WeComplete', 'WeClosed'].includes(item.statusId)
+                if (done) summary.doneCount++
+                else if (['WeInPlanning', 'WeApproved'].includes(item.statusId)) summary.notStartedCount++
+                else summary.inProgressCount++
+                summary.estimatedWorkTime += number(item.estimatedWorkTime)
+                summary.remainingWorkTime += number(done ? 0 : item.remainingWorkTime)
+                summary.actualWorkTime += number(item.actualWorkTime)
+                summary.estimatedPoints += number(item.estimatedPoints)
+                if (done) summary.donePoints += number(item.estimatedPoints)
+            }
+            for (const summary of Object.values(summaryMap)) {
+                summary.percentDone = summary.itemCount ? Math.round(summary.doneCount * 100 / summary.itemCount) : 0
+                const est = summary.estimatedWorkTime
+                summary.hoursPercent = est > 0 ? Math.max(0, Math.min(100, Math.round((est - Math.min(est, summary.remainingWorkTime)) * 100 / est))) : 0
+                for (const name of ['estimatedWorkTime', 'remainingWorkTime', 'actualWorkTime', 'estimatedPoints', 'donePoints']) summary[name] = Math.round(summary[name] * 100) / 100
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="generate" noun="ReleaseNotes">
+        <description>A draft of a release's notes, markdown (design-projects.md §15 Release notes): the release's description,
+            then its done items (Complete or Closed) by type, Features (new features and enhancements), Fixes and Other, each
+            with its key and title in key order (openCount: how many are not done yet, which the notes leave out); then its merged
+            merge requests (those linked to its items, WorkEffortGitMergeRequest), of the repositories the user may view. The
+            notes have no title of their own: title is the version and the date (released, else planned).</description>
+        <in-parameters><parameter name="workEffortId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="notesText"/>
+            <parameter name="title"/>
+            <parameter name="version"/>
+            <parameter name="dateText"/>
+            <parameter name="itemCount" type="Integer"/>
+            <parameter name="openCount" type="Integer"/>
+            <parameter name="mergeRequestCount" type="Integer"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            notesText = ''; itemCount = 0; openCount = 0; mergeRequestCount = 0
+            const release = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (release == null || release.workEffortTypeEnumId !== 'WetRelease') { ec.message.addError(ec.resource.expand('Release ${workEffortId} not found', '', {workEffortId})); return }
+            const L = (text) => ec.l10n.localize(text)
+            const toMillis = (value) => value == null || value === '' ? null : (/^-?\d+$/.test(String(value)) ? Number(String(value)) : Date.parse(String(value)))
+            const dayOf = (value) => toMillis(value) == null ? '' : ec.l10n.format(String(toMillis(value)), 'yyyy-MM-dd')
+            // text in markdown: no html, no emphasis or links by accident
+            const md = (text) => String(text == null ? '' : text).replace(/[\\`*_\[\]<>]/g, (ch) => '\\' + ch).replace(/\s+/g, ' ').trim()
+            version = release.workEffortName || workEffortId
+            const released = ['WeComplete', 'WeClosed'].includes(release.statusId)
+            dateText = dayOf(released ? (release.actualCompletionDate || release.estimatedCompletionDate) : release.estimatedCompletionDate)
+            title = dateText ? version + ' (' + dateText + ')' : version
+            const assocs = Array.from(ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', workEffortId)
+                    .condition('workEffortAssocTypeEnumId', 'WeatRelease').conditionDate('fromDate', 'thruDate', null).list())
+            const ids = Array.from(new Set(assocs.map((assoc) => assoc.toWorkEffortId)))
+            const tasks = ids.length ? Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'in', ids).list()) : []
+            const keyOrder = (left, right) => {
+                const split = (id) => { const match = /^(.*?)(\d+)$/.exec(String(id)); return match ? [match[1], Number(match[2])] : [String(id), 0] }
+                const [lp, ln] = split(left.workEffortId); const [rp, rn] = split(right.workEffortId)
+                return lp.localeCompare(rp) || ln - rn
+            }
+            tasks.sort(keyOrder)
+            const done = tasks.filter((task) => ['WeComplete', 'WeClosed'].includes(task.statusId))
+            const open = tasks.filter((task) => !['WeComplete', 'WeClosed', 'WeCancelled'].includes(task.statusId))
+            itemCount = done.length
+            openCount = open.length
+            const groups = [['Features', ['WepNewFeature', 'WepFeatureEnhance']], ['Fixes', ['WepFix']], ['Other', null]]
+            const parts = []
+            if (release.description && String(release.description).trim()) parts.push(String(release.description).trim())
+            const line = (task) => '- **' + task.workEffortId + '** ' + md(task.workEffortName)
+            for (const [label, purposes] of groups) {
+                const rows = done.filter((task) => purposes ? purposes.includes(task.purposeEnumId) : !groups.some(([, others]) => others && others.includes(task.purposeEnumId)))
+                if (rows.length) parts.push('### ' + L(label) + '\n\n' + rows.map(line).join('\n'))
+            }
+            if (!done.length) parts.push('_' + L(open.length ? 'No work items are done yet.' : 'No work items in this release.') + '_')
+            // the merged merge requests of its items, of the repositories the user may view (git hosting may not be in the build)
+            const mergeLines = []
+            ec.message.pushErrors()
+            try {
+                const links = ids.length ? Array.from(ec.entity.find('mantle.work.effort.WorkEffortGitMergeRequest').condition('workEffortId', 'in', ids).disableAuthz().list()) : []
+                const mrIds = Array.from(new Set(links.map((link) => link.mergeRequestId)))
+                const mrs = mrIds.length ? Array.from(ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', 'in', mrIds)
+                        .condition('statusId', 'GmrMerged').disableAuthz().list()) : []
+                const viewable = {}
+                const canView = (repositoryId) => {
+                    if (!(repositoryId in viewable)) {
+                        ec.message.pushErrors()
+                        try { viewable[repositoryId] = !!ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId}).call()?.canView && !ec.message.hasError() }
+                        catch (err) { viewable[repositoryId] = false }
+                        finally { ec.message.clearErrors(); ec.message.popErrors() }
+                    }
+                    return viewable[repositoryId]
+                }
+                mrs.sort((left, right) => String(left.repositoryId).localeCompare(String(right.repositoryId)) || Number(left.mergeRequestNum || 0) - Number(right.mergeRequestNum || 0))
+                for (const mr of mrs) {
+                    if (!canView(mr.repositoryId)) continue
+                    const keys = links.filter((link) => link.mergeRequestId === mr.mergeRequestId).map((link) => link.workEffortId).sort()
+                    mergeLines.push('- ' + md(mr.repositoryId) + ' !' + mr.mergeRequestNum + ' ' + md(mr.title) + (keys.length ? ' (' + keys.join(', ') + ')' : '')
+                        + (mr.mergedDate ? ', ' + L('merged') + ' ' + dayOf(mr.mergedDate) : ''))
+                }
+            } catch (err) {
+                ec.logger.warn(`Release notes of ${workEffortId}: the merge requests were not read: ${err && err.message ? err.message : err}`)
+            } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            mergeRequestCount = mergeLines.length
+            if (mergeLines.length) parts.push('### ' + L('Merge requests') + '\n\n' + mergeLines.join('\n'))
+            notesText = parts.join('\n\n') + '\n'
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="ReleaseNotes">
+        <description>A release's notes as kept (its WorkEffortContent of type WectReleaseNotes; empty when none yet), when they
+            changed, and the page they are published as (WikiPageWorkEffort of the release: wikiPageId, wikiSpaceId, pagePath).</description>
+        <in-parameters><parameter name="workEffortId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="notesText"/>
+            <parameter name="workEffortContentId"/>
+            <parameter name="contentDate" type="Timestamp"/>
+            <parameter name="wikiPageId"/>
+            <parameter name="wikiSpaceId"/>
+            <parameter name="pagePath"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            notesText = ''
+            const content = Array.from(ec.entity.find('mantle.work.effort.WorkEffortContent').condition('workEffortId', workEffortId)
+                    .condition('contentTypeEnumId', 'WectReleaseNotes').orderBy('-contentDate').list())[0] || null
+            if (content != null) {
+                workEffortContentId = content.workEffortContentId
+                contentDate = content.contentDate
+                try {
+                    const ref = content.contentLocation ? ec.resource.getLocationReference(content.contentLocation) : null
+                    notesText = ref && ref.exists ? (ref.getText() || '') : ''
+                } catch (err) {
+                    ec.logger.error(`Release notes of ${workEffortId}: ${content.contentLocation} not read: ${err && err.message ? err.message : err}`)
+                }
+            }
+            for (const link of Array.from(ec.entity.find('mantle.work.effort.WikiPageWorkEffort').condition('workEffortId', workEffortId).list())) {
+                const page = ec.entity.find('moqui.resource.wiki.WikiPage').condition('wikiPageId', link.wikiPageId).disableAuthz().one()
+                if (page == null) continue
+                wikiPageId = page.wikiPageId; wikiSpaceId = page.wikiSpaceId; pagePath = page.pagePath
+                break
+            }
+        ]]></script></actions>
+    </service>
+    <service verb="store" noun="ReleaseNotes">
+        <description>Keeps a release's notes (markdown) as its WorkEffortContent of type WectReleaseNotes, a file under the
+            content root (mantle.content.root) at work/releaseId/release-notes.md.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="notesText" allow-html="any"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortContentId"/></out-parameters>
+        <actions><script><![CDATA[
+            const release = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (release == null || release.workEffortTypeEnumId !== 'WetRelease') { ec.message.addError(ec.resource.expand('Release ${workEffortId} not found', '', {workEffortId})); return }
+            const content = Array.from(ec.entity.find('mantle.work.effort.WorkEffortContent').condition('workEffortId', workEffortId)
+                    .condition('contentTypeEnumId', 'WectReleaseNotes').orderBy('-contentDate').list())[0] || null
+            const root = String(ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content').replace(/\/+$/, '')
+            const location = content?.contentLocation || (root + '/work/' + workEffortId + '/release-notes.md')
+            ec.resource.getLocationReference(location).putText(String(notesText || ''))
+            if (content != null) {
+                workEffortContentId = content.workEffortContentId
+                ec.service.sync().name('update#mantle.work.effort.WorkEffortContent').parameters({workEffortContentId: workEffortContentId,
+                    contentDate: ec.user.nowTimestamp, userId: ec.user.userId || null}).call()
+            } else {
+                workEffortContentId = ec.service.sync().name('create#mantle.work.effort.WorkEffortContent').parameters({workEffortId: workEffortId,
+                    contentTypeEnumId: 'WectReleaseNotes', contentLocation: location, description: ec.resource.expand('Release notes of ${version}', '',
+                    {version: release.workEffortName || workEffortId}), contentDate: ec.user.nowTimestamp, userId: ec.user.userId || null}).call()?.workEffortContentId
+            }
+        ]]></script></actions>
+    </service>
+    <service verb="publish" noun="ReleaseNotes">
+        <description>Publishes a release's notes (notesText, which is kept first; else those kept; else a generated draft), each
+            way on its own (one that fails is a warning naming it, and the others still go): toDocs, a page named as the version
+            under the page Releases of the project's documentation space (WstDocsWikiSpace; Releases is made when missing), its
+            title the project and version and the date, a new version of it when it is there already, linked to the release by
+            WikiPageWorkEffort; toChangelog, the section of the version at the top of CHANGELOG.md (made when missing; a section
+            of the version already there is replaced) in repositoryId, a repository of the project (by default the first the user
+            may update), committed by the user (org.moqui.impl.GitServices.commit#GitFiles, which checks the right to update);
+            notify, the topic ReleasePublished to the followers of the release and of the project (but the user).</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="notesText" allow-html="any"/>
+            <parameter name="toDocs" type="Boolean" default="true"/>
+            <parameter name="toChangelog" type="Boolean" default="false"/>
+            <parameter name="repositoryId"/>
+            <parameter name="notify" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="wikiSpaceId"/>
+            <parameter name="pagePath"/>
+            <parameter name="wikiPageId"/>
+            <parameter name="repositoryId"/>
+            <parameter name="commitId"/>
+            <parameter name="notifiedCount" type="Integer"/>
+            <parameter name="publishedList" type="List"/>
+            <parameter name="failedList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            publishedList = []; failedList = []; notifiedCount = 0
+            const release = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (release == null || release.workEffortTypeEnumId !== 'WetRelease') { ec.message.addError(ec.resource.expand('Release ${workEffortId} not found', '', {workEffortId})); return }
+            const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', release.rootWorkEffortId).one()
+            const L = (text) => ec.l10n.localize(text)
+            const version = release.workEffortName || workEffortId
+            if (notesText != null && String(notesText).trim()) {
+                ec.service.sync().name('mantle.work.ProjectServices.store#ReleaseNotes').parameters({workEffortId: workEffortId, notesText: notesText}).call()
+                if (ec.message.hasError()) return
+            } else {
+                notesText = ec.service.sync().name('mantle.work.ProjectServices.get#ReleaseNotes').parameters({workEffortId: workEffortId}).call()?.notesText || ''
+                if (!String(notesText).trim()) notesText = ec.service.sync().name('mantle.work.ProjectServices.generate#ReleaseNotes').parameters({workEffortId: workEffortId}).call()?.notesText || ''
+                if (ec.message.hasError()) return
+            }
+            const body = String(notesText).replace(/\r\n/g, '\n').trim()
+            const toMillis = (value) => value == null || value === '' ? null : (/^-?\d+$/.test(String(value)) ? Number(String(value)) : Date.parse(String(value)))
+            const released = ['WeComplete', 'WeClosed'].includes(release.statusId)
+            const when = released ? (release.actualCompletionDate || ec.user.nowTimestamp) : release.estimatedCompletionDate
+            const dateText = toMillis(when) == null ? '' : ec.l10n.format(String(toMillis(when)), 'yyyy-MM-dd')
+            // each way on its own: one that fails is a warning, and the others go on
+            const step = (name, run) => {
+                ec.message.pushErrors()
+                try {
+                    run()
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                    publishedList.push(name)
+                } catch (err) {
+                    const reason = err && err.message ? err.message : String(err)
+                    failedList.push(name)
+                    ec.logger.warn(`Release notes of ${workEffortId}: not published to ${name}: ${reason}`)
+                    ec.message.clearErrors(); ec.message.popErrors()
+                    ec.message.addMessage(ec.resource.expand('The notes were not published to ${name}: ${reason}', '', {name: L(name), reason}), 'warning')
+                    return
+                }
+                ec.message.clearErrors(); ec.message.popErrors()
+            }
+            if (toDocs) step('docs', () => {
+                const settings = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectSettings').parameters({workEffortId: release.rootWorkEffortId}).call()?.settings || {}
+                const spaceId = settings.WstDocsWikiSpace
+                if (!spaceId) throw new Error(L('the project has no documentation space'))
+                const space = ec.entity.find('moqui.resource.wiki.WikiSpace').condition('wikiSpaceId', spaceId).disableAuthz().one()
+                if (space == null || !space.rootPageLocation) throw new Error(ec.resource.expand('documentation space ${spaceId} not found', '', {spaceId}))
+                const rootDir = String(space.rootPageLocation).replace(/\.[^/.]*$/, '')
+                if (!ec.resource.getLocationReference(rootDir + '/Releases.md').exists) {
+                    ec.service.sync().name('org.moqui.impl.WikiServices.update#WikiPage').parameters({wikiSpaceId: spaceId, pageName: 'Releases',
+                        pageText: '# ' + L('Releases') + '\n\n' + L('The notes of each release of the project.') + '\n', versionNote: L('Releases')}).call()
+                    if (ec.message.hasError()) return
+                }
+                const pageName = String(version).replace(/[\/\\#?%]+/g, '-').trim() || workEffortId
+                // the page: a title of its own, the groups one level up
+                const pageText = '# ' + (project?.workEffortName || release.rootWorkEffortId) + ' ' + version + '\n\n'
+                    + (dateText ? '_' + (released ? L('Released') : L('Planned for')) + ' ' + dateText + '_\n\n' : '')
+                    + body.replace(/^###(?=\s)/gm, '##') + '\n'
+                const saved = ec.service.sync().name('org.moqui.impl.WikiServices.update#WikiPage').parameters({wikiSpaceId: spaceId, parentPath: 'Releases',
+                    pageName: pageName, pageText: pageText, versionNote: ec.resource.expand('Release notes for ${version}', '', {version})}).call() || {}
+                if (ec.message.hasError()) return
+                wikiSpaceId = spaceId
+                pagePath = saved.pagePath || ('Releases/' + pageName)
+                wikiPageId = saved.wikiPageId || ec.service.sync().name('org.moqui.impl.WikiServices.get#WikiPageId').parameters({wikiSpaceId: spaceId,
+                    pagePath: pagePath, createIfMissing: true}).call()?.wikiPageId
+                if (wikiPageId && ec.entity.find('mantle.work.effort.WikiPageWorkEffort').condition({wikiPageId: wikiPageId, workEffortId: workEffortId}).count() === 0)
+                    ec.service.sync().name('create#mantle.work.effort.WikiPageWorkEffort').parameters({wikiPageId: wikiPageId, workEffortId: workEffortId}).call()
+            })
+            if (toChangelog) step('CHANGELOG.md', () => {
+                const linked = Array.from(ec.entity.find('mantle.work.effort.WorkEffortGitRepository').condition('workEffortId', release.rootWorkEffortId)
+                        .conditionDate('fromDate', 'thruDate', null).orderBy('repositoryId').list()).map((row) => row.repositoryId)
+                const access = (id) => {
+                    ec.message.pushErrors()
+                    try { const out = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: id}).call() || {}; return ec.message.hasError() ? {} : out }
+                    finally { ec.message.clearErrors(); ec.message.popErrors() }
+                }
+                if (repositoryId && !linked.includes(repositoryId)) throw new Error(ec.resource.expand('${repositoryId} is not a repository of the project', '', {repositoryId}))
+                const target = repositoryId || linked.find((id) => access(id).canUpdate)
+                if (!target) throw new Error(L('the project has no repository you may update'))
+                const repoAccess = access(target)
+                if (!repoAccess.canUpdate) throw new Error(ec.resource.expand('you may not update ${target}', '', {target}))
+                const current = ec.service.sync().name('org.moqui.impl.GitServices.get#GitBlob').parameters({repositoryId: target, path: 'CHANGELOG.md'}).call()?.text
+                if (ec.message.hasError()) return
+                const section = '## ' + version + (dateText ? ' - ' + dateText : '') + '\n\n' + body + '\n'
+                let text = current == null || !String(current).trim() ? '# ' + L('Changelog') + '\n\n' + section : String(current).replace(/\r\n/g, '\n')
+                if (current != null && String(current).trim()) {
+                    const lines = text.split('\n')
+                    const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                    const own = new RegExp('^##\\s+\\[?v?' + escaped + '\\]?(\\s|$)')
+                    const start = lines.findIndex((one) => own.test(one))
+                    if (start >= 0) {
+                        let end = lines.findIndex((one, index) => index > start && /^##\s/.test(one))
+                        if (end < 0) end = lines.length
+                        lines.splice(start, end - start, ...section.replace(/\n$/, '').split('\n'), '')
+                    } else {
+                        // after the title and its lead paragraph: before the first section
+                        let at = lines.findIndex((one) => /^##\s/.test(one))
+                        if (at < 0) at = lines.length
+                        lines.splice(at, 0, ...section.replace(/\n$/, '').split('\n'), '')
+                    }
+                    text = lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n*$/, '\n')
+                }
+                repositoryId = target
+                commitId = ec.service.sync().name('org.moqui.impl.GitServices.commit#GitFiles').parameters({repositoryId: target,
+                    message: ec.resource.expand('Release notes for ${version}', '', {version}), fileMap: {'CHANGELOG.md': text}}).call()?.commitId || null
+            })
+            if (notify) step('followers', () => {
+                const followers = Array.from(ec.entity.find('mantle.party.communication.RecordFollower').condition('recordEntityName', 'mantle.work.effort.WorkEffort')
+                        .condition('recordId', 'in', [workEffortId, release.rootWorkEffortId]).disableAuthz().list()).map((row) => row.userId)
+                const userIds = Array.from(new Set(followers)).filter((userId) => userId && userId !== ec.user.userId)
+                if (!userIds.length) return
+                const me = ec.user.userAccount?.partyId ? ec.entity.find('mantle.party.PartyDetail').condition('partyId', ec.user.userAccount.partyId).one() : null
+                const actorName = me ? (me.organizationName || [me.firstName, me.lastName].filter((part) => part).join(' ') || me.partyId) : (ec.user.username || 'System')
+                const nm = ec.makeNotificationMessage().topic('ReleasePublished').userIds(userIds).message({workEffortId: workEffortId, version: version,
+                    rootWorkEffortId: release.rootWorkEffortId, projectName: project?.workEffortName || release.rootWorkEffortId, actorName: actorName,
+                    dateText: dateText, wikiPageId: wikiPageId || null, recordEntityName: 'mantle.work.effort.WorkEffort', recordId: workEffortId})
+                if (typeof nm.record === 'function') nm.record('mantle.work.effort.WorkEffort', workEffortId)
+                nm.send()
+                notifiedCount = userIds.length
+            })
+        ]]></script></actions>
+    </service>
+    <service verb="release" noun="Release">
+        <description>Releases a release that is not complete (design-projects.md §4 ReleaseDetail, Release): its items not done
+            (not Complete, Closed or Cancelled) move to moveUnfinishedTo, next (the default: the next open release of the
+            project by its planned date; none when there is none), none (out of any release) or a release id of the project
+            that is open; then it is Complete with today as its date. Then, each on its own (one that fails is a warning, and the
+            release stands): with createTag, a tag (tagName, by default v and the version when the version starts with a digit,
+            else the version) at revision (the default branch's head when empty) in repositoryId, a repository of the project,
+            linked to the release; with publish (the default), the notes (notesText, else kept, else a draft) to the
+            documentation space when the project has one, CHANGELOG.md with toChangelog, and the followers with notify.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="moveUnfinishedTo" default-value="next"/>
+            <parameter name="createTag" type="Boolean" default="false"/>
+            <parameter name="repositoryId"/>
+            <parameter name="revision"/>
+            <parameter name="tagName"/>
+            <parameter name="publish" type="Boolean" default="true"/>
+            <parameter name="toChangelog" type="Boolean" default="false"/>
+            <parameter name="notify" type="Boolean" default="true"/>
+            <parameter name="notesText" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="movedCount" type="Integer"/>
+            <parameter name="movedToWorkEffortId"/>
+            <parameter name="tagRefName"/>
+            <parameter name="wikiPageId"/>
+            <parameter name="pagePath"/>
+            <parameter name="commitId"/>
+            <parameter name="publishedList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            movedCount = 0; movedToWorkEffortId = null; publishedList = []
+            const release = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (release == null || release.workEffortTypeEnumId !== 'WetRelease') { ec.message.addError(ec.resource.expand('Release ${workEffortId} not found', '', {workEffortId})); return }
+            const version = release.workEffortName || workEffortId
+            const openStatuses = ['WeInPlanning', 'WeApproved', 'WeInProgress', 'WeOnHold']
+            if (!openStatuses.includes(release.statusId)) { ec.message.addError(ec.resource.expand('${version} is released or cancelled already', '', {version})); return }
+            const L = (text) => ec.l10n.localize(text)
+            const toMillis = (value) => value == null || value === '' ? Number.MAX_SAFE_INTEGER : (/^-?\d+$/.test(String(value)) ? Number(String(value)) : Date.parse(String(value)))
+            // where the items not done go
+            const others = Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', release.rootWorkEffortId)
+                    .condition('workEffortTypeEnumId', 'WetRelease').condition('statusId', 'in', openStatuses).condition('workEffortId', 'not-equals', workEffortId).list())
+            if (moveUnfinishedTo === 'next') {
+                const next = others.sort((left, right) => toMillis(left.estimatedCompletionDate) - toMillis(right.estimatedCompletionDate)
+                        || String(left.workEffortId).localeCompare(String(right.workEffortId)))[0]
+                movedToWorkEffortId = next ? next.workEffortId : null
+            } else if (moveUnfinishedTo && moveUnfinishedTo !== 'none') {
+                if (!others.some((other) => other.workEffortId === moveUnfinishedTo)) {
+                    ec.message.addError(ec.resource.expand('${moveUnfinishedTo} is not an open release of the project', '', {moveUnfinishedTo})); return
+                }
+                movedToWorkEffortId = moveUnfinishedTo
+            }
+            const assocs = Array.from(ec.entity.find('mantle.work.effort.WorkEffortAssoc').condition('workEffortId', workEffortId)
+                    .condition('workEffortAssocTypeEnumId', 'WeatRelease').conditionDate('fromDate', 'thruDate', null).list())
+            const ids = Array.from(new Set(assocs.map((assoc) => assoc.toWorkEffortId)))
+            const open = ids.length ? Array.from(ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'in', ids)
+                    .condition('statusId', 'not-in', ['WeComplete', 'WeClosed', 'WeCancelled']).list()) : []
+            for (const item of open) {
+                ec.message.pushErrors()
+                try {
+                    ec.service.sync().name('mantle.work.TaskServices.set#TaskPlanItem').parameters({workEffortId: item.workEffortId, assocTypeEnumId: 'WeatRelease',
+                        planWorkEffortId: movedToWorkEffortId}).call()
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                    movedCount++
+                } catch (err) {
+                    ec.logger.error(`Release ${workEffortId}: ${item.workEffortId} not moved: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            ec.service.sync().name('update#mantle.work.effort.WorkEffort').parameters({workEffortId: workEffortId, statusId: 'WeComplete',
+                actualCompletionDate: ec.user.nowTimestamp}).call()
+            if (ec.message.hasError()) return
+            const warn = (what, err) => {
+                const reason = err && err.message ? err.message : String(err)
+                ec.logger.warn(`Release ${workEffortId}: ${what}: ${reason}`)
+                ec.message.addMessage(ec.resource.expand('${what}: ${reason}', '', {what: L(what), reason}), 'warning')
+            }
+            if (createTag) {
+                let failure = null
+                ec.message.pushErrors()
+                try {
+                    const linked = Array.from(ec.entity.find('mantle.work.effort.WorkEffortGitRepository').condition('workEffortId', release.rootWorkEffortId)
+                            .conditionDate('fromDate', 'thruDate', null).list()).map((row) => row.repositoryId)
+                    if (!repositoryId || !linked.includes(repositoryId)) throw new Error(ec.resource.expand('${repositoryId} is not a repository of the project', '', {repositoryId: repositoryId || '-'}))
+                    const name = String(tagName || '').trim() || (/^\d/.test(version) ? 'v' + version : version)
+                    const out = ec.service.sync().name('org.moqui.impl.GitServices.create#GitRef').parameters({repositoryId: repositoryId, refName: name, refType: 'tag',
+                        revision: revision || null, message: ec.resource.expand('Release ${version}', '', {version})}).call() || {}
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                    tagRefName = out.refName || ('refs/tags/' + name)
+                    if (!String(tagRefName).startsWith('refs/')) tagRefName = 'refs/tags/' + tagRefName
+                    // the link the tag's own rule makes too (link#RefByName), now rather than when the push log runs
+                    ec.service.sync().name('mantle.work.GitServices.store#WorkEffortRef').parameters({workEffortId: workEffortId, repositoryId: repositoryId,
+                        refName: tagRefName, objectId: out.commitId || out.objectId || null, linkSourceEnumId: 'WglsReleaseVersion'}).call()
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                } catch (err) {
+                    failure = err
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+                if (failure) warn('The tag was not made', failure)
+            }
+            if (publish) {
+                const settings = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectSettings').parameters({workEffortId: release.rootWorkEffortId}).call()?.settings || {}
+                const toDocs = !!settings.WstDocsWikiSpace
+                if (toDocs || toChangelog || notify) {
+                    const out = ec.service.sync().name('mantle.work.ProjectServices.publish#ReleaseNotes').parameters({workEffortId: workEffortId, notesText: notesText || null,
+                        toDocs: toDocs, toChangelog: toChangelog, repositoryId: toChangelog ? (repositoryId || null) : null, notify: notify}).call() || {}
+                    if (ec.message.hasError()) { const reason = ec.message.getErrorsString(); ec.message.clearErrors(); warn('The notes were not published', reason) }
+                    wikiPageId = out.wikiPageId || null; pagePath = out.pagePath || null; commitId = out.commitId || null
+                    publishedList = Array.from(out.publishedList || [])
+                }
+            }
+        ]]></script></actions>
+    </service>
+
+    <!-- ========== The documentation of a project (design-projects.md §4 ProjectDocs, §15 Wiki space in a repository) ========== -->
+
+    <service verb="create" noun="ProjectDocsSpace">
+        <description>A project's documentation space, named in its setting WstDocsWikiSpace: storage repository, rooted at
+            git://repositoryId/docs in a repository of the project the user may update (pages are markdown files under docs/
+            beside the code, each save a commit on the default branch; impl-projects.md F7), or db (database files). Its id is
+            wikiSpaceId, else the project's key (P and the key when it starts with a digit), else the key with DOCS, DOC or WIKI,
+            the first that is free (3 to 8 letters, digits or _). Members only (restrictView) unless the project is seen by all
+            users or is General; only members change it (restrictUpdate); its users follow the project's internal members
+            (sync#ProjectDocsSpaceUsers), the user who makes it administers it. A project with a space keeps it.</description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="storage" default-value="db"><description>repository or db</description></parameter>
+            <parameter name="repositoryId"/>
+            <parameter name="wikiSpaceId"/>
+        </in-parameters>
+        <out-parameters><parameter name="wikiSpaceId"/><parameter name="rootPageLocation"/></out-parameters>
+        <actions><script><![CDATA[
+            const L = (text) => ec.l10n.localize(text)
+            const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+            if (project == null || project.workEffortTypeEnumId !== 'WetProject') { ec.message.addError(ec.resource.expand('Project ${workEffortId} not found', '', {workEffortId})); return }
+            const own = ec.entity.find('mantle.work.effort.WorkEffortSetting').condition({workEffortId: workEffortId, settingTypeEnumId: 'WstDocsWikiSpace'}).one()
+            if (own != null && own.settingValue) { ec.message.addError(ec.resource.expand('The project has the documentation space ${space} already', '', {space: own.settingValue})); return }
+            if (!['repository', 'db'].includes(storage)) { ec.message.addError(ec.resource.expand('${storage} is not a storage for documentation: repository or db', '', {storage})); return }
+            let rootPageDirectory = 'dbresource://WikiSpace'
+            if (storage === 'repository') {
+                const linked = Array.from(ec.entity.find('mantle.work.effort.WorkEffortGitRepository').condition('workEffortId', workEffortId)
+                        .conditionDate('fromDate', 'thruDate', null).list()).map((row) => row.repositoryId)
+                if (!repositoryId || !linked.includes(repositoryId)) { ec.message.addError(ec.resource.expand('${repositoryId} is not a repository of the project', '', {repositoryId: repositoryId || '-'})); return }
+                ec.message.pushErrors()
+                let canUpdate = false
+                try { canUpdate = !!ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId}).call()?.canUpdate && !ec.message.hasError() }
+                catch (err) { canUpdate = false }
+                finally { ec.message.clearErrors(); ec.message.popErrors() }
+                if (!canUpdate) { ec.message.addError(ec.resource.expand('You may not update the repository ${repositoryId}', '', {repositoryId})); return }
+                const repo = ec.entity.find('moqui.resource.GitRepository').condition('repositoryId', repositoryId).disableAuthz().one()
+                if (repo == null || repo.repositoryKind === 'remote') { ec.message.addError(ec.resource.expand('The repository ${repositoryId} takes no writes (a mirror)', '', {repositoryId})); return }
+                rootPageDirectory = 'git://' + repositoryId + '/docs'
+            }
+            const free = (id) => /^[A-Za-z]\w{2,7}$/.test(id) && ec.entity.find('moqui.resource.wiki.WikiSpace').condition('wikiSpaceId', id).disableAuthz().count() === 0
+            if (wikiSpaceId) {
+                if (!free(wikiSpaceId)) { ec.message.addError(ec.resource.expand('The space id ${wikiSpaceId} is taken or not 3 to 8 letters, digits or _ from a letter', '', {wikiSpaceId})); return }
+            } else {
+                const key = /^[A-Za-z]/.test(workEffortId) ? String(workEffortId) : 'P' + workEffortId
+                wikiSpaceId = [key, (key + 'DOCS').substring(0, 8), (key.substring(0, 5) + 'DOC').substring(0, 8), (key.substring(0, 4) + 'WIKI')].find(free) || null
+                if (!wikiSpaceId) { ec.message.addError(L('No documentation space id is free for this key')); return }
+            }
+            const name = project.workEffortName || workEffortId
+            rootPageLocation = rootPageDirectory + '/' + wikiSpaceId + '.md'
+            // the home page, unless the repository has one there already
+            const home = ec.resource.getLocationReference(rootPageLocation)
+            if (!home.exists) home.putText('# ' + name + ' ' + L('documentation') + '\n\n' + (storage === 'repository'
+                    ? L('These pages are markdown files in the docs folder of the repository, beside the code: each save is a commit.')
+                    : L('The pages of the project: guides, decisions and release notes.')) + '\n')
+            const restricted = !['WevAllUsers', 'WevGeneral'].includes(project.visibilityEnumId)
+            ec.service.sync().name('org.moqui.impl.WikiServices.create#WikiSpace').parameters({wikiSpaceId: wikiSpaceId, description: name + ' ' + L('documentation'),
+                rootPageDirectory: rootPageDirectory, rootPageLocation: rootPageLocation, restrictView: restricted ? 'Y' : 'N', restrictUpdate: 'Y'}).call()
+            if (ec.message.hasError()) return
+            ec.service.sync().name('mantle.work.ProjectServices.store#ProjectSetting').parameters({workEffortId: workEffortId, settingTypeEnumId: 'WstDocsWikiSpace',
+                settingValue: wikiSpaceId}).call()
+            if (ec.message.hasError()) return
+            ec.service.sync().name('mantle.work.ProjectServices.sync#ProjectDocsSpaceUsers').parameters({workEffortId: workEffortId}).call()
+        ]]></script></actions>
+    </service>
+    <service verb="sync" noun="ProjectDocsSpaceUsers" authenticate="false" allow-remote="false">
+        <description>The users of a project's documentation space (WstDocsWikiSpace, the project's own setting) follow its
+            internal members (WorkEffortParty now, not the client roles; client access is impl-projects.md P10): each member's
+            user views and edits it, and administers it when a ProjectManager or Manager; a user no longer a member loses a row
+            that does not administer the space. Run by the rule on WorkEffortParty (Work.eecas.xml) and when the space is made;
+            nothing for a work effort with no space. One user that fails is logged and the others go on.</description>
+        <in-parameters><parameter name="workEffortId" required="true"/></in-parameters>
+        <actions><script><![CDATA[
+            const setting = ec.entity.find('mantle.work.effort.WorkEffortSetting').condition({workEffortId: workEffortId, settingTypeEnumId: 'WstDocsWikiSpace'}).disableAuthz().one()
+            if (setting == null || !setting.settingValue) return
+            const wikiSpaceId = setting.settingValue
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                if (ec.entity.find('moqui.resource.wiki.WikiSpace').condition('wikiSpaceId', wikiSpaceId).count() === 0) return
+                const clientRoles = ['Customer', 'CustomerBillTo', 'ClientManager', 'ClientBilling', 'Vendor', 'VendorBillFrom']
+                const managerRoles = ['ProjectManager', 'Manager']
+                const parties = Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', workEffortId)
+                        .conditionDate('fromDate', 'thruDate', null).list()).filter((row) => !clientRoles.includes(row.roleTypeId))
+                const partyIds = Array.from(new Set(parties.map((row) => row.partyId)))
+                const accounts = partyIds.length ? Array.from(ec.entity.find('moqui.security.UserAccount').condition('partyId', 'in', partyIds).selectField('userId,partyId').list()) : []
+                const wanted = new Map()
+                for (const account of accounts) {
+                    const admin = parties.some((row) => row.partyId === account.partyId && managerRoles.includes(row.roleTypeId))
+                    wanted.set(account.userId, admin || wanted.get(account.userId) === true)
+                }
+                const existing = Array.from(ec.entity.find('moqui.resource.wiki.WikiSpaceUser').condition('wikiSpaceId', wikiSpaceId).list())
+                for (const [userId, admin] of wanted) {
+                    try {
+                        const row = existing.find((one) => one.userId === userId)
+                        if (row == null) {
+                            ec.service.sync().name('create#moqui.resource.wiki.WikiSpaceUser').parameters({wikiSpaceId: wikiSpaceId, userId: userId, allowView: 'Y',
+                                allowUpdate: 'Y', allowAdmin: admin ? 'Y' : 'N', receiveNotifications: 'N'}).call()
+                        } else if (row.allowView !== 'Y' || row.allowUpdate !== 'Y' || (admin && row.allowAdmin !== 'Y')) {
+                            row.setFields({allowView: 'Y', allowUpdate: 'Y', allowAdmin: admin || row.allowAdmin === 'Y' ? 'Y' : 'N'}, true, null, null)
+                            row.update()
+                        }
+                    } catch (err) {
+                        ec.logger.error(`Documentation space ${wikiSpaceId} of ${workEffortId}: user ${userId} not added: ${err && err.message ? err.message : err}`)
+                    }
+                }
+                for (const row of existing) {
+                    if (wanted.has(row.userId) || row.allowAdmin === 'Y') continue
+                    try { row.delete() }
+                    catch (err) { ec.logger.error(`Documentation space ${wikiSpaceId} of ${workEffortId}: user ${row.userId} not removed: ${err && err.message ? err.message : err}`) }
+                }
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
     </service>
 
     <!-- ========== Sprints of IronStone Projects (design-projects.md §5 Backlog and SprintDetail, §15 Sprints; impl-projects.md P4a) ==========
