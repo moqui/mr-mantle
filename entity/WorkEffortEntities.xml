@@ -657,6 +657,8 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="WectProposal" description="Proposal" enumTypeId="WorkEffortContentType"/>
             <moqui.basic.Enumeration enumId="WectSupportingMedia" description="Supporting Media" enumTypeId="WorkEffortContentType"/>
             <moqui.basic.Enumeration enumId="WectCreatedMedia" description="Created Media" enumTypeId="WorkEffortContentType"/>
+            <!-- the notes of a release (WetRelease) as markdown, mantle.work.ProjectServices store#ReleaseNotes (IronStone Projects) -->
+            <moqui.basic.Enumeration enumId="WectReleaseNotes" description="Release Notes" enumTypeId="WorkEffortContentType"/>
         </seed-data>
     </entity>
     <entity entity-name="WorkEffortDeliverableProd" package="mantle.work.effort" cache="never">
