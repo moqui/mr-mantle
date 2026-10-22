@@ -1425,6 +1425,26 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="CpShipments" description="Shipments" enumTypeId="CommunicationPurpose"/>
         </seed-data>
     </entity>
+    <entity entity-name="CommunicationEventGitAnchor" package="mantle.party.communication" cache="never">
+        <description>The line of a merge request's diff a review comment is on (MR Moqui, no Java counterpart): the comment is a
+            CommunicationEvent of type Comment filed on the merge request (CommunicationEventRecord with recordEntityName
+            moqui.resource.GitMergeRequest), its replies children of it (parentCommEventId, rootCommEventId); the first comment
+            of a thread holds the anchor and its status CeResolved when the thread is resolved
+            (mantle.work.GitServices.store#ReviewAnchor, resolve#ReviewThread). commitId is the source head the line was read
+            at; outdated is Y once a later head changed the line (refresh#ReviewAnchors).</description>
+        <field name="communicationEventId" type="id" is-pk="true"/>
+        <field name="mergeRequestId" type="id"/>
+        <field name="repositoryId" type="id"/>
+        <field name="commitId" type="text-short"/>
+        <field name="path" type="text-medium"/>
+        <field name="oldLine" type="number-integer"><description>The line in the target side; empty for an added line</description></field>
+        <field name="newLine" type="number-integer"><description>The line in the source side; empty for a deleted line</description></field>
+        <field name="lineText" type="text-medium"><description>The line as it was, for an outdated thread</description></field>
+        <field name="outdated" type="text-indicator"/>
+        <relationship type="one" related="mantle.party.communication.CommunicationEvent" short-alias="communicationEvent"/>
+        <relationship type="one" related="moqui.resource.GitMergeRequest" short-alias="mergeRequest"/>
+        <index name="COMMEVT_GIT_ANCHOR_MR" unique="false"><index-field name="mergeRequestId"/></index>
+    </entity>
     <entity entity-name="CommunicationEventRecord" package="mantle.party.communication" cache="never">
         <description>A communication event filed on any record, by the record's full entity name and the value of its single
             primary key field, for a record type without a join of its own. The own joins (OrderCommunicationEvent,

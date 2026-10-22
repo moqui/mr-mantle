@@ -1063,7 +1063,30 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Branch name" enumId="WglsBranchName" enumTypeId="WorkEffortGitLinkSource"/>
             <moqui.basic.Enumeration description="Tag name" enumId="WglsTagName" enumTypeId="WorkEffortGitLinkSource"/>
             <moqui.basic.Enumeration description="Tag message" enumId="WglsTagMessage" enumTypeId="WorkEffortGitLinkSource"/>
+            <moqui.basic.Enumeration description="Release version" enumId="WglsReleaseVersion" enumTypeId="WorkEffortGitLinkSource"/>
+            <moqui.basic.Enumeration description="Merge request branch" enumId="WglsMergeRequestBranch" enumTypeId="WorkEffortGitLinkSource"/>
+            <moqui.basic.Enumeration description="Merge request text" enumId="WglsMergeRequestText" enumTypeId="WorkEffortGitLinkSource"/>
         </seed-data>
+    </entity>
+    <entity entity-name="WorkEffortGitMergeRequest" package="mantle.work.effort" cache="never">
+        <description>A merge request (the framework's moqui.resource.GitMergeRequest) linked to a work item: by its source
+            branch's name, by a key in its title or description, or by hand (mantle.work.GitServices.link#MergeRequestItems,
+            add#MergeRequestItem). completeOnMerge Y: the item is completed when the merge request merges
+            (complete#MergeRequestItems), from a Closes keyword or the project's WstMergeRequestMoves.</description>
+        <field name="workEffortId" type="id" is-pk="true"/>
+        <field name="mergeRequestId" type="id" is-pk="true"/>
+        <field name="repositoryId" type="id"/>
+        <field name="linkSourceEnumId" type="id"/>
+        <field name="completeOnMerge" type="text-indicator"/>
+        <field name="linkedByUserId" type="id"/>
+        <field name="linkedDate" type="date-time"/>
+        <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
+        <relationship type="one" related="moqui.resource.GitMergeRequest" short-alias="mergeRequest"/>
+        <relationship type="one" title="WorkEffortGitLinkSource" related="moqui.basic.Enumeration" short-alias="linkSource">
+            <key-map field-name="linkSourceEnumId"/></relationship>
+        <relationship type="one" title="LinkedBy" related="moqui.security.UserAccount" short-alias="linkedByUser">
+            <key-map field-name="linkedByUserId" related="userId"/></relationship>
+        <index name="WORKEFF_GIT_MR"><index-field name="mergeRequestId"/></index>
     </entity>
     <entity entity-name="WorkEffortGitRef" package="mantle.work.effort" cache="never">
         <description>A branch or tag linked to a work effort: a task, or for a tag also a project or milestone. The
