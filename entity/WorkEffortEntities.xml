@@ -968,6 +968,10 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="WstIntakeToken" description="Public request form token" sequenceNum="12" enumTypeId="WorkEffortSettingType"/>
             <moqui.basic.Enumeration enumId="WstTriageParty" description="Triage assignee (partyId)" sequenceNum="13"
                     optionValue="ProjIntake" enumCode="triagePartyId" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstRequestType" description="Default request type (RequestType enumId)" sequenceNum="14"
+                    optionValue="ProjIntake" enumCode="defaultType" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstRequestTypes" description="Request types offered (RequestType ids, a comma list)" sequenceNum="15"
+                    optionValue="ProjIntake" enumCode="offered" enumTypeId="WorkEffortSettingType"/>
             <!-- code -->
             <moqui.basic.Enumeration enumId="WstBranchPattern" description="Branch name pattern" sequenceNum="20"
                     optionValue="ProjConventions" enumCode="branchPattern" enumTypeId="WorkEffortSettingType"/>
