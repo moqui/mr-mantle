@@ -2782,11 +2782,12 @@ along with this software (see the LICENSE.md file). If not, see
             })
             part('reviewsWaiting', () => {
                 if (!ec.user.userId) { counts.reviewsWaiting = 0; return }
-                // the framework's merge requests; git hosting is a build feature: without it the count stays null, not a failure
+                // the framework's merge requests; git hosting is a build feature: without it the count stays null, not a failure. The
+                // call runs in a transaction of its own, so a service not built into the host leaves this one usable for the other parts
                 ec.message.pushErrors()
                 try {
                     const out = ec.service.sync().name('org.moqui.impl.GitReviewServices.find#MergeRequests').parameters({waitingForUserId: ec.user.userId,
-                        pageSize: 1}).call() || {}
+                        pageSize: 1}).requireNewTransaction(true).call() || {}
                     if (ec.message.hasError()) {
                         const errors = ec.message.getErrorsString()
                         if (/not built into/.test(errors)) return
@@ -3126,7 +3127,9 @@ along with this software (see the LICENSE.md file). If not, see
                         recordName: timer.projectName || null} : null}))
             })
             part('reviews', () => {
-                const out = ec.service.sync().name('org.moqui.impl.GitReviewServices.find#MergeRequests').parameters({waitingForUserId: ec.user.userId, pageSize: 10}).call() || {}
+                // in a transaction of its own: without git hosting the call fails, which would leave this one rollback-only
+                const out = ec.service.sync().name('org.moqui.impl.GitReviewServices.find#MergeRequests').parameters({waitingForUserId: ec.user.userId, pageSize: 10})
+                        .requireNewTransaction(true).call() || {}
                 if (ec.message.hasError()) {
                     // git hosting is a build feature: without it there are no reviews, not a failure
                     if (/not built into/.test(ec.message.getErrorsString())) { ec.message.clearErrors(); return }
