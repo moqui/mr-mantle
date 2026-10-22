@@ -677,6 +677,10 @@ along with this software (see the LICENSE.md file). If not, see
             <description>If Y require WorkEffort Status of Complete, Closed, or Cancelled to consider OrderItem fulfilled</description></field>
         <field name="forStatusId" type="id">
             <description>Task must be Complete or Closed before change to this status (soft rule, depending on code in place)</description></field>
+        <field name="invoicePercent" type="number-decimal"><description>For a milestone (WetMilestone): the share of the order item's
+            total its completion releases to be invoiced (mantle.account.InvoiceServices.create#MilestoneInvoiceItems)</description></field>
+        <field name="invoiceAmount" type="currency-amount"><description>For a milestone: a fixed amount released in place of
+            invoicePercent</description></field>
         <relationship type="one" related="mantle.order.OrderItem"/>
         <relationship type="one" related="mantle.work.effort.WorkEffort"/>
         <relationship type="one" title="OrderHeader" related="moqui.basic.StatusItem" short-alias="forStatus">

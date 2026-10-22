@@ -150,6 +150,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="description" type="text-medium"/>
         <relationship type="one" title="DeliverableType" related="moqui.basic.Enumeration">
             <key-map field-name="deliverableTypeEnumId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Deliverable Type" enumTypeId="DeliverableType"/>
+            <moqui.basic.Enumeration enumId="DlvtDocument" description="Document" sequenceNum="1" enumTypeId="DeliverableType"/>
+            <moqui.basic.Enumeration enumId="DlvtSoftware" description="Software" sequenceNum="2" enumTypeId="DeliverableType"/>
+            <moqui.basic.Enumeration enumId="DlvtDesign" description="Design" sequenceNum="3" enumTypeId="DeliverableType"/>
+            <moqui.basic.Enumeration enumId="DlvtReport" description="Report" sequenceNum="4" enumTypeId="DeliverableType"/>
+            <moqui.basic.Enumeration enumId="DlvtTraining" description="Training" sequenceNum="5" enumTypeId="DeliverableType"/>
+            <moqui.basic.Enumeration enumId="DlvtOther" description="Other" sequenceNum="9" enumTypeId="DeliverableType"/>
+        </seed-data>
     </entity>
     <entity entity-name="WorkEffort" package="mantle.work.effort" short-alias="workEfforts" cache="never" sequence-bank-size="10">
         <field name="workEffortId" type="id" is-pk="true"/>
@@ -659,13 +668,23 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="WectCreatedMedia" description="Created Media" enumTypeId="WorkEffortContentType"/>
             <!-- the notes of a release (WetRelease) as markdown, mantle.work.ProjectServices store#ReleaseNotes (IronStone Projects) -->
             <moqui.basic.Enumeration enumId="WectReleaseNotes" description="Release Notes" enumTypeId="WorkEffortContentType"/>
+            <!-- a project's estimate as sent for approval, a file of its Estimate milestone, mantle.work.ProjectServices
+                send#EstimateForApproval (IronStone Projects) -->
+            <moqui.basic.Enumeration enumId="WectEstimate" description="Estimate" enumTypeId="WorkEffortContentType"/>
         </seed-data>
     </entity>
     <entity entity-name="WorkEffortDeliverableProd" package="mantle.work.effort" cache="never">
+        <description>A deliverable a work effort hands over; for a milestone (IronStone Projects, design-projects.md §4
+            MilestoneDetail) its order and whether the client accepted it.</description>
         <field name="workEffortId" type="id" is-pk="true"/>
         <field name="deliverableId" type="id" is-pk="true"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="acceptedDate" type="date-time"/>
+        <field name="acceptedByUserId" type="id"/>
         <relationship type="one" related="mantle.work.effort.WorkEffort"/>
         <relationship type="one" related="mantle.work.effort.Deliverable"/>
+        <relationship type="one" title="AcceptedBy" related="moqui.security.UserAccount">
+            <key-map field-name="acceptedByUserId" related="userId"/></relationship>
     </entity>
     <entity entity-name="WorkEffortEmplPosition" package="mantle.work.effort" cache="never">
         <field name="workEffortId" type="id" is-pk="true"/>
@@ -993,6 +1012,8 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- a milestone's gate -->
             <moqui.basic.Enumeration enumId="WstApprovalRequired" description="Approval required (Y or N)" sequenceNum="50" enumTypeId="WorkEffortSettingType"/>
             <moqui.basic.Enumeration enumId="WstApproverParty" description="Approver (partyId)" sequenceNum="51" enumTypeId="WorkEffortSettingType"/>
+            <!-- a project's Estimate milestone, whose gate approves the estimate (mantle.work.ProjectServices send#EstimateForApproval) -->
+            <moqui.basic.Enumeration enumId="WstEstimateMilestone" description="Estimate milestone (workEffortId)" sequenceNum="52" enumTypeId="WorkEffortSettingType"/>
         </seed-data>
     </entity>
     <entity entity-name="WorkEffortSkillStandard" package="mantle.work.effort" cache="never">
@@ -1074,6 +1095,50 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WealRequested" toStatusId="WealCancelled" transitionName="Cancel"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WealAllocated" toStatusId="WealCancelled" transitionName="Cancel"/>
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WealRejected" toStatusId="WealRequested" transitionName="Request again"/>
+        </seed-data>
+    </entity>
+
+    <entity entity-name="WorkEffortApproval" package="mantle.work.effort" cache="never">
+        <description>A request for the approval of a work effort's gate (IronStone Projects, design-projects.md §4 MilestoneDetail
+            and §15 Milestone approval): a milestone that requires approval (its WorkEffortSetting WstApprovalRequired, the approver
+            WstApproverParty) is not reached until one is approved. One per request: requested, then approved, refused or cancelled
+            (a new request after a refusal is a new record). The approver is a party (a manager, or a client contact); the decision
+            is made by a user, the approver's own or one who records it for them (recordedFor Y). The estimate sent for approval is
+            the file workEffortContentId of the project's Estimate milestone (mantle.work.ProjectServices).</description>
+        <field name="workEffortApprovalId" type="id" is-pk="true"/>
+        <field name="workEffortId" type="id"/>
+        <field name="approverPartyId" type="id"/>
+        <field name="statusId" type="id" enable-audit-log="true"/>
+        <field name="workEffortContentId" type="id"><description>The file approved, as an estimate</description></field>
+        <field name="requestedByUserId" type="id"/>
+        <field name="requestedDate" type="date-time"/>
+        <field name="requestComments" type="text-medium"/>
+        <field name="decidedByUserId" type="id"/>
+        <field name="decidedDate" type="date-time"/>
+        <field name="decisionComments" type="text-medium"/>
+        <field name="recordedFor" type="text-indicator"><description>Y when the user deciding is not the approver's own: a
+            manager recorded the approver's decision</description></field>
+        <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
+        <relationship type="one" title="Approver" related="mantle.party.Party" short-alias="approver">
+            <key-map field-name="approverPartyId" related="partyId"/></relationship>
+        <relationship type="one" title="WorkEffortApproval" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one" related="mantle.work.effort.WorkEffortContent"/>
+        <relationship type="one" title="RequestedBy" related="moqui.security.UserAccount">
+            <key-map field-name="requestedByUserId" related="userId"/></relationship>
+        <relationship type="one" title="DecidedBy" related="moqui.security.UserAccount">
+            <key-map field-name="decidedByUserId" related="userId"/></relationship>
+        <index name="WORKEFF_APPR_WE" unique="false"><index-field name="workEffortId"/></index>
+        <index name="WORKEFF_APPR_PARTY" unique="false"><index-field name="approverPartyId"/><index-field name="statusId"/></index>
+        <seed-data>
+            <moqui.basic.StatusType description="Work Effort Approval" statusTypeId="WorkEffortApproval"/>
+            <moqui.basic.StatusItem description="Requested" sequenceNum="1" statusId="WeaRequested" statusTypeId="WorkEffortApproval"/>
+            <moqui.basic.StatusItem description="Approved" sequenceNum="2" statusId="WeaApproved" statusTypeId="WorkEffortApproval"/>
+            <moqui.basic.StatusItem description="Refused" sequenceNum="3" statusId="WeaRefused" statusTypeId="WorkEffortApproval"/>
+            <moqui.basic.StatusItem description="Cancelled" sequenceNum="4" statusId="WeaCancelled" statusTypeId="WorkEffortApproval"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WeaRequested" toStatusId="WeaApproved" transitionName="Approve"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WeaRequested" toStatusId="WeaRefused" transitionName="Refuse"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WeaRequested" toStatusId="WeaCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="WeaApproved" toStatusId="WeaCancelled" transitionName="Withdraw"/>
         </seed-data>
     </entity>
 
