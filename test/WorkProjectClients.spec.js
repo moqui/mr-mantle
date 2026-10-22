@@ -301,3 +301,104 @@ feature("the sprint numbers are for those who see the project and are no client 
         cleoBurndown.includes("not found")
     },
 })
+
+// impl-projects.md P10b, F101: the client is told by email (it has no tray): a status update posted for it, and the estimate sent
+// for its approval, each to the client contacts (people with a client role on the project and an email address) on their own
+const emailIds = (templateId) => new Set(Array.from(ec.entity.find("moqui.basic.email.EmailMessage").condition("emailTemplateId", templateId).list())
+        .map((email) => email.emailMessageId))
+const emailsTo = (templateId, before) => Array.from(ec.entity.find("moqui.basic.email.EmailMessage").condition("emailTemplateId", templateId).list())
+        .filter((email) => !before.has(email.emailMessageId)).map((email) => ({ to: String(email.toAddresses || ""), subject: String(email.subject || ""),
+        body: String(email.body || "") }))
+
+feature("a status update posted for the client is emailed to its contacts on a project with client sign-in, and to nobody else", {
+    when() {
+        const past = effectiveTime - dayMillis
+        // Cleo manages CLP1 and CLP3 for her organization, Cole (no address) bills CLP1, Dex manages CLP2
+        for (const [projectId, party, roleTypeId] of [["CLP1", parties.Cleo, "ClientManager"], ["CLP1", parties.Cole, "ClientBilling"],
+                ["CLP2", parties.Dex, "ClientManager"], ["CLP3", parties.Cleo, "ClientManager"]])
+            call("create#mantle.work.effort.WorkEffortParty", { workEffortId: projectId, partyId: party, roleTypeId, fromDate: past })
+        const since = emailIds("MANTLE_PROJECT_UPDATE")
+        const contacts = call(`${PROJECT}.get#ProjectClientContacts`, { workEffortId: "CLP1", senderPartyId: "EX_JOHN_DOE" })
+        call(`${PROJECT}.post#ProjectUpdate`, { workEffortId: "CLP1", healthEnumId: "WehAtRisk", percentComplete: 40, subject: "ZQX for the client",
+            body: "The sign-in waits for your test accounts.", clientVisible: "Y" })
+        const shared = emailsTo("MANTLE_PROJECT_UPDATE", since)
+        const since2 = emailIds("MANTLE_PROJECT_UPDATE")
+        call(`${PROJECT}.post#ProjectUpdate`, { workEffortId: "CLP1", healthEnumId: "WehOnTrack", subject: "Team only update", body: "Margins are thin.", clientVisible: "N" })
+        call(`${PROJECT}.post#ProjectUpdate`, { workEffortId: "CLP3", healthEnumId: "WehOnTrack", subject: "No sign-in update", body: "Nothing to see.", clientVisible: "Y" })
+        const others = emailsTo("MANTLE_PROJECT_UPDATE", since2)
+        return { contacts, shared, others }
+    },
+    then({ contacts, shared, others }) {
+        contacts.clientSignIn == true
+        contacts.contactList.map((contact) => contact.partyId) == [parties.Cleo]
+        contacts.skippedList.map((skip) => skip.partyId).includes(parties.Cole)
+        shared.length == 1
+        shared[0].to == "cl.cleo@example.com"
+        shared[0].subject.includes("ZQX for the client")
+        shared[0].body.includes("The sign-in waits for your test accounts.")
+        others.filter((email) => email.to.includes("cl.dex") || email.to.includes("cl.cleo")) == []
+    },
+})
+
+feature("the estimate sent for approval is emailed to the client approver with the estimate, and not when the approver is an organization", {
+    when() {
+        // CLP4: CL_ORG2's, with no client manager: its estimate goes to the organization, which has no address of a person
+        call(`${PROJECT}.create#Project`, { workEffortId: "CLP4", workEffortName: "Client project CLP4", visibilityEnumId: "WevWorkGroup" })
+        call("create#mantle.work.effort.WorkEffortParty", { workEffortId: "CLP4", partyId: "CL_ORG2", roleTypeId: "Customer", fromDate: effectiveTime - dayMillis })
+        call("create#mantle.work.effort.WorkEffortParty", { workEffortId: "CLP4", partyId: "EX_JOHN_DOE", roleTypeId: "ProjectManager", fromDate: effectiveTime - dayMillis })
+        const since = emailIds("MANTLE_PROJECT_ESTIMATE")
+        const sent = call(`${PROJECT}.send#EstimateForApproval`, { workEffortId: "CLP1", depth: 2, comments: "Our estimate, for your approval" })
+        const toOrg = call(`${PROJECT}.send#EstimateForApproval`, { workEffortId: "CLP4", depth: 2 })
+        const emails = emailsTo("MANTLE_PROJECT_ESTIMATE", since)
+        return { sent, toOrg, emails }
+    },
+    then({ sent, toOrg, emails }) {
+        sent.workEffortApprovalId != null
+        sent.emailedAddressList == ["cl.cleo@example.com"]
+        emails.length == 1
+        emails[0].to == "cl.cleo@example.com"
+        emails[0].subject.includes("Estimate of Client project CLP1")
+        emails[0].body.includes("Our estimate, for your approval")
+        toOrg.workEffortApprovalId != null
+        toOrg.emailedAddressList == []
+    },
+})
+
+feature("review threads: a client who views a shared repository reads no review comment and makes, anchors or resolves none (P10b)", {
+    when() {
+        // a merge request of CL_REPO (CLP1 shares its repositories since the repositories feature) with John's line comment
+        call("create#moqui.resource.GitMergeRequest", { mergeRequestId: "CL_MR", repositoryId: "CL_REPO", mergeRequestNum: 1, title: "Client access MR",
+            sourceRef: "topic", targetRef: "main", statusId: "GmrOpen", authorUserId: "EX_JOHN_DOE", createdDate: ec.user.nowTimestamp,
+            lastUpdatedDate: ec.user.nowTimestamp })
+        const commentId = call("mantle.work.GitServices.create#ReviewComment", { mergeRequestId: "CL_MR", body: "ZQX the margin is thin",
+            path: "a.txt", newLine: 1, lineText: "a" }).communicationEventId
+        const errorsOf = (run) => { run(); const errors = ec.message.getErrorsString(); ec.message.clearErrors(); return errors }
+        // as Cleo with authorization off, so the repository's view check passes and the client check alone refuses
+        const cleo = asOff("cl.cleo", () => ({
+            threads: Array.from(call("mantle.work.GitServices.get#ReviewThreads", { mergeRequestId: "CL_MR" }).threadList || []),
+            comment: errorsOf(() => ec.service.sync().name("mantle.work.GitServices.create#ReviewComment").parameters({ mergeRequestId: "CL_MR", body: "client" }).call()),
+            reply: errorsOf(() => ec.service.sync().name("mantle.work.GitServices.create#ReviewComment").parameters({ mergeRequestId: "CL_MR", body: "client",
+                parentCommEventId: commentId }).call()),
+            anchor: errorsOf(() => ec.service.sync().name("mantle.work.GitServices.store#ReviewAnchor").parameters({ communicationEventId: commentId,
+                mergeRequestId: "CL_MR", path: "b.txt", newLine: 2 }).call()),
+            resolve: errorsOf(() => ec.service.sync().name("mantle.work.GitServices.resolve#ReviewThread").parameters({ communicationEventId: commentId }).call()),
+        }))
+        const john = Array.from(call("mantle.work.GitServices.get#ReviewThreads", { mergeRequestId: "CL_MR" }).threadList || [])
+        const comments = ec.entity.find(EVENT).condition("rootCommEventId", commentId).count() + ec.entity.find(EVENT).condition("communicationEventId", commentId).count()
+        const root = ec.entity.find(EVENT).condition("communicationEventId", commentId).one()
+        const anchor = ec.entity.find("mantle.party.communication.CommunicationEventGitAnchor").condition("communicationEventId", commentId).one()
+        return { cleo, john, comments, status: root.statusId, path: anchor.path }
+    },
+    then({ cleo, john, comments, status, path }) {
+        cleo.threads == []
+        cleo.comment.includes("not found")
+        cleo.reply.includes("not found")
+        cleo.anchor.includes("not found")
+        cleo.resolve.includes("not found")
+        john.length == 1
+        john[0].commentList[0].body.includes("ZQX")
+        comments == 1
+        status == "CeSent"
+        path == "a.txt"
+    },
+})

@@ -2386,8 +2386,9 @@ along with this software (see the LICENSE.md file). If not, see
             message, a CommunicationEvent of type StatusUpdate from the user on the project's Chatter (WorkEffortCommEvent); the
             WorkEffortUpdate row with the health, the percent complete and whether it is posted for the client; and the project's
             healthEnumId, which follows the latest update. The project's internal members with a user, not the one posting,
-            are told on the topic ProjectStatusUpdate (the client contacts are left to client access, impl-projects.md P10);
-            a notification that fails is logged, not the update's.</description>
+            are told on the topic ProjectStatusUpdate; an update posted for the client (clientVisible Y) is also emailed to the
+            project's client contacts (send#ProjectUpdateEmail: on a project with client sign-in only); a notification or an
+            email that fails is logged, not the update's.</description>
         <in-parameters>
             <parameter name="workEffortId" required="true"/>
             <parameter name="healthEnumId" required="true"/>
@@ -2434,6 +2435,150 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             } catch (err) {
                 ec.logger.error(`Status update of ${workEffortId}: notification not sent: ${err && err.message ? err.message : err}`)
+            }
+            // the client is told by email (it has no tray): each contact on its own, a failure logged and skipped
+            if (clientVisible === 'Y') {
+                ec.message.pushErrors()
+                try {
+                    ec.service.sync().name('mantle.work.ProjectServices.send#ProjectUpdateEmail').parameters({workEffortId: workEffortId,
+                        communicationEventId: communicationEventId}).call()
+                } catch (err) {
+                    ec.logger.error(`Status update of ${workEffortId}: client email not sent: ${err && err.message ? err.message : err}`)
+                } finally {
+                    if (ec.message.hasError()) ec.logger.error(`Status update of ${workEffortId}: client email not sent: ${ec.message.getErrorsString()}`)
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="ProjectClientContacts" allow-remote="false">
+        <description>
+            Whom a project's client is told by email (impl-projects.md P10b, F101): the people (PtyPerson) holding a current
+            client role on the project (Customer, CustomerBillTo, ClientManager, ClientBilling), each with its primary email
+            address (get#PrimaryEmailAddress), and not one whose user accounts are all disabled; partyIds narrows to those. A
+            person without an address is in skippedList. clientSignIn: the project lets its client sign in (WstClientSignIn Y).
+            fromAddress and fromName: the project's organization (its owner, else its Vendor) and its primary email address,
+            else senderPartyId's address under that name. Reads with authorization off; the callers decide what is sent.
+        </description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="partyIds" type="List"/>
+            <parameter name="senderPartyId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contactList" type="List"/>
+            <parameter name="skippedList" type="List"/>
+            <parameter name="clientSignIn" type="Boolean"/>
+            <parameter name="fromAddress"/>
+            <parameter name="fromName"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            contactList = []; skippedList = []; clientSignIn = false; fromAddress = ''; fromName = ''
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+                if (!project || project.workEffortTypeEnumId !== 'WetProject') return
+                clientSignIn = ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('workEffortId', workEffortId)
+                        .condition('settingTypeEnumId', 'WstClientSignIn').one()?.settingValue === 'Y'
+                const nameOf = (partyId) => {
+                    const party = partyId ? ec.entity.find('mantle.party.PartyDetail').condition('partyId', partyId).one() : null
+                    return party ? (party.organizationName || [party.firstName, party.lastName].filter((part) => part).join(' ') || partyId) : (partyId || '')
+                }
+                const emailOf = (partyId) => partyId ? (ec.service.sync().name('mantle.party.ContactServices.get#PrimaryEmailAddress').parameters({partyId: partyId}).call()?.emailAddress || '') : ''
+                const roles = Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', workEffortId).conditionDate('fromDate', 'thruDate', null).list())
+                const orgId = project.ownerPartyId || roles.find((row) => row.roleTypeId === 'Vendor')?.partyId || null
+                fromName = nameOf(orgId)
+                fromAddress = emailOf(orgId) || emailOf(senderPartyId)
+                if (!fromName) fromName = nameOf(senderPartyId)
+                const wanted = partyIds != null ? new Set(Array.from(partyIds).map(String)) : null
+                const clientRoles = ['Customer', 'CustomerBillTo', 'ClientManager', 'ClientBilling']
+                const ids = Array.from(new Set(roles.filter((row) => clientRoles.includes(row.roleTypeId)).map((row) => row.partyId)))
+                for (const partyId of ids) {
+                    if (wanted && !wanted.has(String(partyId))) continue
+                    const party = ec.entity.find('mantle.party.Party').condition('partyId', partyId).one()
+                    if (!party || party.partyTypeEnumId !== 'PtyPerson' || party.disabled === 'Y') continue
+                    const accounts = Array.from(ec.entity.find('moqui.security.UserAccount').condition('partyId', partyId).list())
+                    if (accounts.length && accounts.every((account) => account.disabled === 'Y')) { skippedList.push({partyId: partyId, reason: 'user account disabled'}); continue }
+                    const emailAddress = emailOf(partyId)
+                    if (!emailAddress) { skippedList.push({partyId: partyId, reason: 'no email address'}); continue }
+                    contactList.push({partyId: partyId, name: nameOf(partyId), emailAddress: emailAddress})
+                }
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="send" noun="ProjectUpdateEmail" allow-remote="false">
+        <description>
+            Emails a status update posted for the client (its WorkEffortUpdate clientVisible Y) to the project's client
+            contacts (get#ProjectClientContacts), each its own message by template MANTLE_PROJECT_UPDATE: the project, the
+            health, the percent complete, the update's subject and text, nothing else (no internal note, member, money or link
+            to an internal screen). Only on a project that lets its client sign in (WstClientSignIn Y), so the email tells the
+            client no more than it reads signed in. Each email on its own (failure tolerance): one that fails is logged and in
+            skippedList. Called by post#ProjectUpdate.
+        </description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="communicationEventId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="emailedAddressList" type="List"/>
+            <parameter name="emailMessageIdList" type="List"/>
+            <parameter name="skippedList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            emailedAddressList = []; emailMessageIdList = []; skippedList = []
+            const L = (text) => ec.l10n.localize(text)
+            const escape = (text) => String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            let update = null, event = null, project = null, health = null
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                update = ec.entity.find('mantle.work.effort.WorkEffortUpdate').condition('workEffortId', workEffortId).condition('communicationEventId', communicationEventId).one()
+                event = ec.entity.find('mantle.party.communication.CommunicationEvent').condition('communicationEventId', communicationEventId).one()
+                project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
+                health = update?.healthEnumId ? ec.entity.find('moqui.basic.Enumeration').condition('enumId', update.healthEnumId).useCache(true).one() : null
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            // only an update posted for the client, a status update, of this project
+            if (!update || update.clientVisible !== 'Y' || !event || event.communicationEventTypeId !== 'StatusUpdate' || !project) return
+            const contacts = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectClientContacts').parameters({workEffortId: workEffortId,
+                senderPartyId: event.fromPartyId || null}).call() || {}
+            if (ec.message.hasError()) return
+            skippedList = Array.from(contacts.skippedList || [])
+            if (!contacts.clientSignIn) { ec.logger.info(`Status update ${communicationEventId} of ${workEffortId}: not emailed, the client does not sign in to the project`); return }
+            const contactList = Array.from(contacts.contactList || [])
+            if (!contactList.length) return
+            if (!contacts.fromAddress) {
+                ec.logger.error(`Status update ${communicationEventId} of ${workEffortId}: not emailed to the client, no address to send from`)
+                for (const contact of contactList) skippedList.push({partyId: contact.partyId, reason: 'no address to send from'})
+                return
+            }
+            const projectName = project.workEffortName || workEffortId
+            const subject = ec.resource.expand('${projectName}: ${subject}', '', {projectName: projectName, subject: event.subject || L('Status update')})
+            const state = [health ? ec.resource.expand('Health: ${health}', '', {health: health.description}) : '',
+                update.percentComplete != null ? ec.resource.expand('${percent}% complete', '', {percent: update.percentComplete}) : ''].filter((part) => part).join(' · ')
+            const text = String(event.body || '')
+            const bodyText = [ec.resource.expand('Status update of ${projectName}', '', {projectName: projectName}), state, event.subject || '', text].filter((part) => part).join('\n\n')
+            const body = '<html><body><p><strong>' + escape(ec.resource.expand('Status update of ${projectName}', '', {projectName: projectName})) + '</strong></p>'
+                + (state ? '<p>' + escape(state) + '</p>' : '') + (event.subject ? '<h3>' + escape(event.subject) + '</h3>' : '')
+                + text.split(/\n{2,}/).map((para) => '<p>' + escape(para).replace(/\n/g, '<br>') + '</p>').join('') + '</body></html>'
+            for (const contact of contactList) {
+                ec.message.pushErrors()
+                try {
+                    const sent = ec.service.sync().name('org.moqui.impl.EmailServices.send#EmailTemplate').parameters({emailTemplateId: 'MANTLE_PROJECT_UPDATE',
+                        toAddresses: contact.emailAddress, bodyParameters: {subject: subject, fromAddress: contacts.fromAddress, fromName: contacts.fromName},
+                        body: body, bodyText: bodyText}).requireNewTransaction(true).call() || {}
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                    if (sent.emailMessageId) emailMessageIdList.push(sent.emailMessageId)
+                    emailedAddressList.push(contact.emailAddress)
+                } catch (err) {
+                    const reason = String(err && err.message ? err.message : err)
+                    ec.logger.error(`Status update ${communicationEventId} of ${workEffortId}: email to party ${contact.partyId} not sent: ${reason}`)
+                    skippedList.push({partyId: contact.partyId, reason: reason})
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
             }
         ]]></script></actions>
     </service>
@@ -3565,7 +3710,9 @@ along with this software (see the LICENSE.md file). If not, see
             Estimate milestone (its WstEstimateMilestone; made when missing, In Progress, with a gate whose approver is the project's
             ClientManager, else its Customer), any request waiting on it withdrawn, and its gate's approval requested with the file;
             the project's open sales orders become Proposed (a quote). By one who manages money and manages the project
-            (get#MilestoneApprovalAccess canSetGate on the milestone). Refused when the project has no client.</description>
+            (get#MilestoneApprovalAccess canSetGate on the milestone). Refused when the project has no client. When the approver
+            is a client contact (a person with a client role on the project, get#ProjectClientContacts) the estimate is also
+            emailed to it (send#EstimateEmail); an email that fails is logged, and the estimate stays sent.</description>
         <in-parameters>
             <parameter name="workEffortId" required="true"/>
             <parameter name="depth" type="Integer" default="2"/>
@@ -3575,6 +3722,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="milestoneId"/>
             <parameter name="workEffortContentId"/>
             <parameter name="workEffortApprovalId"/>
+            <parameter name="emailedAddressList" type="List"/>
         </out-parameters>
         <actions><script><![CDATA[
             const L = (text) => ec.l10n.localize(text)
@@ -3631,7 +3779,97 @@ along with this software (see the LICENSE.md file). If not, see
                     if (header?.statusId === 'OrderOpen') ec.service.sync().name('mantle.order.OrderServices.update#OrderStatus').parameters({orderId: orderId, statusId: 'OrderProposed'}).call()
                     if (ec.message.hasError()) return
                 }
+                // the client approver is told by email, with the estimate (it has no tray); a failure is logged, the estimate stays sent
+                emailedAddressList = []
+                ec.message.pushErrors()
+                try {
+                    emailedAddressList = Array.from(ec.service.sync().name('mantle.work.ProjectServices.send#EstimateEmail').parameters({workEffortId: workEffortId,
+                        approverPartyId: approver, milestoneId: milestoneId, estimateHtml: out.estimateHtml, comments: comments || null,
+                        totalHoursText: out.estimate.totalHoursText || '', totalAmountText: out.estimate.totalAmountText || ''}).call()?.emailedAddressList || [])
+                } catch (err) {
+                    ec.logger.error(`Estimate of ${workEffortId}: email to the approver not sent: ${err && err.message ? err.message : err}`)
+                } finally {
+                    if (ec.message.hasError()) ec.logger.error(`Estimate of ${workEffortId}: email to the approver not sent: ${ec.message.getErrorsString()}`)
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
             } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        ]]></script></actions>
+    </service>
+
+    <service verb="send" noun="EstimateEmail" allow-remote="false">
+        <description>
+            Emails a project's estimate sent for approval to its approver when the approver is a client contact
+            (get#ProjectClientContacts: a person with a current client role on the project and an email address; an organization
+            or an internal approver is not emailed, the gate's notice tells its users): template MANTLE_PROJECT_ESTIMATE, the
+            sender's comments, the printed estimate (estimateHtml, as get#ProjectEstimate made it and the milestone's file keeps
+            it) in the message and as an attached html file, and that it is approved through the milestone's gate. Nothing else:
+            no internal note, member or money the estimate does not show. One that fails is logged and in skippedList (failure
+            tolerance). Called by send#EstimateForApproval.
+        </description>
+        <in-parameters>
+            <parameter name="workEffortId" required="true"/>
+            <parameter name="approverPartyId" required="true"/>
+            <parameter name="milestoneId"/>
+            <parameter name="estimateHtml" allow-html="any"/>
+            <parameter name="comments"/>
+            <parameter name="totalHoursText"/>
+            <parameter name="totalAmountText"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="emailedAddressList" type="List"/>
+            <parameter name="emailMessageIdList" type="List"/>
+            <parameter name="skippedList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            emailedAddressList = []; emailMessageIdList = []; skippedList = []
+            const L = (text) => ec.l10n.localize(text)
+            const escape = (text) => String(text == null ? '' : text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+            const contacts = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectClientContacts').parameters({workEffortId: workEffortId,
+                partyIds: [approverPartyId], senderPartyId: ec.user.userAccount?.partyId || null}).call() || {}
+            if (ec.message.hasError()) return
+            skippedList = Array.from(contacts.skippedList || [])
+            const contactList = Array.from(contacts.contactList || [])
+            if (!contactList.length) { ec.logger.info(`Estimate of ${workEffortId}: approver ${approverPartyId} is not a client contact with an email address, not emailed`); return }
+            if (!contacts.fromAddress) {
+                ec.logger.error(`Estimate of ${workEffortId}: not emailed to the approver, no address to send from`)
+                for (const contact of contactList) skippedList.push({partyId: contact.partyId, reason: 'no address to send from'})
+                return
+            }
+            let projectName = workEffortId, milestoneName = ''
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                projectName = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()?.workEffortName || workEffortId
+                milestoneName = milestoneId ? (ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', milestoneId).one()?.workEffortName || '') : ''
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+            const subject = ec.resource.expand('Estimate of ${projectName} for your approval', '', {projectName: projectName})
+            const totals = [totalHoursText ? ec.resource.expand('${hours} h', '', {hours: totalHoursText}) : '', totalAmountText || ''].filter((part) => part).join(' · ')
+            const how = milestoneName ? ec.resource.expand('Approve or refuse it on the milestone ${milestoneName} of the project.', '', {milestoneName: milestoneName})
+                : L('Approve or refuse it on the project.')
+            const page = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + escape(subject) + '</title></head><body>' + (estimateHtml || '') + '</body></html>'
+            const body = '<html><body><p>' + escape(subject) + (totals ? ' (' + escape(totals) + ')' : '') + '</p>'
+                + (comments ? '<p>' + escape(comments).replace(/\n/g, '<br>') + '</p>' : '') + '<p>' + escape(how) + '</p><hr>' + (estimateHtml || '') + '</body></html>'
+            const bodyText = [subject + (totals ? ' (' + totals + ')' : ''), comments || '', how].filter((part) => part).join('\n\n')
+            const fileName = 'Estimate-' + String(workEffortId).replace(/[^A-Za-z0-9_-]/g, '_') + '.html'
+            for (const contact of contactList) {
+                ec.message.pushErrors()
+                try {
+                    const sent = ec.service.sync().name('org.moqui.impl.EmailServices.send#EmailTemplate').parameters({emailTemplateId: 'MANTLE_PROJECT_ESTIMATE',
+                        toAddresses: contact.emailAddress, bodyParameters: {subject: subject, fromAddress: contacts.fromAddress, fromName: contacts.fromName},
+                        body: body, bodyText: bodyText, attachments: [{fileName: fileName, contentType: 'text/html; charset=UTF-8', contentText: page}]})
+                        .requireNewTransaction(true).call() || {}
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                    if (sent.emailMessageId) emailMessageIdList.push(sent.emailMessageId)
+                    emailedAddressList.push(contact.emailAddress)
+                } catch (err) {
+                    const reason = String(err && err.message ? err.message : err)
+                    ec.logger.error(`Estimate of ${workEffortId}: email to party ${contact.partyId} not sent: ${reason}`)
+                    skippedList.push({partyId: contact.partyId, reason: reason})
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+            }
         ]]></script></actions>
     </service>
 

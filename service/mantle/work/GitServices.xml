@@ -884,7 +884,9 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
             const access = mr ? ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call() : null
-            if (!mr || !access?.canView || !ec.user.userId) { ec.message.addError(ec.resource.expand('Merge request ${mergeRequestId} not found', '', {mergeRequestId})); return }
+            // a client contact (PROJECT_CLIENT) only views a shared repository: review comments are the team's notes (impl-projects.md P10b)
+            if (!mr || !access?.canView || !ec.user.userId || ec.user.hasPermission('PROJECT_CLIENT')) {
+                ec.message.addError(ec.resource.expand('Merge request ${mergeRequestId} not found', '', {mergeRequestId})); return }
             const text = String(body || '').trim()
             if (!text) { ec.message.addError(ec.l10n.localize('A comment needs some text')); return }
             let parent = null
@@ -935,7 +937,8 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
             const access = mr ? ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call() : null
-            if (!mr || !access?.canView) { ec.message.addError(ec.resource.expand('Merge request ${mergeRequestId} not found', '', {mergeRequestId})); return }
+            if (!mr || !access?.canView || ec.user.hasPermission('PROJECT_CLIENT')) {
+                ec.message.addError(ec.resource.expand('Merge request ${mergeRequestId} not found', '', {mergeRequestId})); return }
             if (oldLine == null && newLine == null) { ec.message.addError(ec.l10n.localize('A review comment is on an old or a new line')); return }
             const filed = ec.entity.find('mantle.party.communication.CommunicationEventRecord').condition({communicationEventId,
                 recordEntityName: 'moqui.resource.GitMergeRequest', recordId: mergeRequestId}).disableAuthz().count()
@@ -965,7 +968,8 @@ along with this software (see the LICENSE.md file). If not, see
             const anchor = rootCommEventId ? ec.entity.find('mantle.party.communication.CommunicationEventGitAnchor').condition('communicationEventId', rootCommEventId).disableAuthz().one() : null
             const mr = anchor ? ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', anchor.mergeRequestId).disableAuthz().one() : null
             const access = mr ? ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call() : null
-            if (!access?.canView || !ec.user.userId) { ec.message.addError(ec.resource.expand('Review thread ${communicationEventId} not found', '', {communicationEventId})); return }
+            if (!access?.canView || !ec.user.userId || ec.user.hasPermission('PROJECT_CLIENT')) {
+                ec.message.addError(ec.resource.expand('Review thread ${communicationEventId} not found', '', {communicationEventId})); return }
             const root = ec.entity.find('mantle.party.communication.CommunicationEvent').condition('communicationEventId', rootCommEventId).disableAuthz().one()
             const statusId = resolved ? 'CeResolved' : 'CeSent'
             if (root.statusId === statusId) return
@@ -987,6 +991,9 @@ along with this software (see the LICENSE.md file). If not, see
             const mr = ec.entity.find('moqui.resource.GitMergeRequest').condition('mergeRequestId', mergeRequestId).disableAuthz().one()
             const access = mr ? ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: mr.repositoryId}).call() : null
             if (!mr || !access?.canView) { ec.message.addError(ec.resource.expand('Merge request ${mergeRequestId} not found', '', {mergeRequestId})); return }
+            // a client contact (PROJECT_CLIENT) who views a shared repository reads its diffs, never the team's review threads
+            // (Comments, as a note; impl-projects.md P10b)
+            if (ec.user.hasPermission('PROJECT_CLIENT')) return
             let find = ec.entity.find('mantle.party.communication.CommunicationEventGitAnchor').condition('mergeRequestId', mergeRequestId).disableAuthz()
             if (path) find = find.condition('path', path)
             const names = {}

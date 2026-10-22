@@ -1919,6 +1919,9 @@ along with this software (see the LICENSE.md file). If not, see
             work efforts, requests, orders and other communication events are seen as found. A wiki page has its own rule
             (below). Any other record type has only its entity filters.
 
+            A client contact (the PROJECT_CLIENT permission) sees only what get#ClientRecordVisibility shows it, with
+            authorization disabled too.
+
             The per-user rules do not apply with authorization disabled (an internal caller), to a user in the ADMIN
             group, or for a record type the user has an explicit entity authorization for: an ArtifactAuthz of one of the
             user's groups over an ArtifactGroupMember of type AT_ENTITY naming the record entity (by name, or by a pattern
@@ -2233,7 +2236,9 @@ along with this software (see the LICENSE.md file). If not, see
             }
             // a client contact who signs in (the PROJECT_CLIENT permission; impl-projects.md P10) sees only its client projects'
             // shared work efforts, its requests and the messages for it (get#ClientRecordVisibility), no other record type,
-            // whatever its other groups or entity authorizations
+            // whatever its other groups or entity authorizations, and with authorization disabled too: a framework path that
+            // runs for the client with authorization off (the webroot chat transitions, a record room's check) must not
+            // fall through to the internal caller's "everything" (impl-projects.md F121)
             let clientUser = null
             const isClientUser = () => {
                 if (clientUser == null) clientUser = !!ec.user.userId && ec.user.hasPermission('PROJECT_CLIENT')
@@ -2252,7 +2257,7 @@ along with this software (see the LICENSE.md file). If not, see
                 // under the user's entity filters
                 const value = ec.entity.find(entityName).condition(keyField, id).one()
                 if (value == null) return false
-                if (authzOn && isClientUser()) return clientVisible(entityName, id)
+                if (isClientUser()) return clientVisible(entityName, id)
                 if (entityName === PARTY) return !value.privateOwnerUserId || value.privateOwnerUserId === ec.user.userId
                 if (!authzOn) return true
                 if (entityName === COMM_EVENT) return commEventVisible(value, depth)
@@ -3175,7 +3180,9 @@ along with this software (see the LICENSE.md file). If not, see
 
             // chat: the messages of the room bound to the record, newest first back to the cursor, a page of the room's
             // timeline at a time (get#Timeline pages by eventSeq, oldest first in each page)
-            if (wants('chat')) runSource('chatRoom', () => {
+            // a client contact never gets a record room's messages, with authorization disabled too (the framework's chat keeps
+            // an EXTERNAL_USER out of record rooms as well)
+            if (wants('chat') && !(ec.user.userId && ec.user.hasPermission('PROJECT_CLIENT'))) runSource('chatRoom', () => {
                 let beforeSeq = null
                 let found = 0
                 for (let pages = 0; pages < 20; pages++) {

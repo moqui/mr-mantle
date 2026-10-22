@@ -59,7 +59,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- a client contact who signs in (an app's client group holds it, IronStone's BOSS_PROJECT_CLIENT): the project services see
         for such a user only the shared part of the client projects of its organizations (mantle.work.ProjectServices
         get#ClientProjectInfo, get#VisibleProjectInfo; mantle.party.CommunicationServices get#RecordLinkInfo, get#RecordTimeline),
-        whatever other group it is in. Not granted to ADMIN, nor to any group by default. -->
+        whatever other group it is in. Not granted to ADMIN, nor to any group by default. The group that holds it should hold
+        the framework's EXTERNAL_USER too (no record rooms, records drive, others' presence or agents), as IronStone's does. -->
     <userPermissions userPermissionId="PROJECT_CLIENT" description="Project Client (sees only the shared part of its organizations' projects)"/>
     <!-- the time logged on a work effort in its record timeline (Chatter; mantle.party.CommunicationServices.get#RecordTimeline) -->
     <moqui.service.ServiceRegister serviceRegisterId="TimeEntryTimeline" serviceTypeEnumId="RecordTimelineSource"
@@ -366,6 +367,13 @@ along with this software (see the LICENSE.md file). If not, see
         verifyEmailFrom, with the link of the page. -->
     <moqui.basic.email.EmailTemplate emailTemplateId="MANTLE_UNSUBSCRIBE_VERIFY" description="Unsubscribe Confirmation" emailServerId="SYSTEM"
             fromAddress="${fromAddress}" fromName="${fromName}" ccAddresses="" bccAddresses="" subject="${subject}"/>
+    <!-- Email to a project's client contacts (mantle.work.ProjectServices): a status update posted for the client
+        (send#ProjectUpdateEmail) and the estimate sent for the client's approval (send#EstimateEmail). From the project's
+        organization's address; the services pass subject, fromAddress and fromName in bodyParameters, and the body. -->
+    <moqui.basic.email.EmailTemplate emailTemplateId="MANTLE_PROJECT_UPDATE" description="Project Status Update to the Client" emailServerId="SYSTEM"
+            fromAddress="${fromAddress}" fromName="${fromName}" ccAddresses="" bccAddresses="" subject="${subject}" sendPartial="Y"/>
+    <moqui.basic.email.EmailTemplate emailTemplateId="MANTLE_PROJECT_ESTIMATE" description="Project Estimate for the Client's Approval" emailServerId="SYSTEM"
+            fromAddress="${fromAddress}" fromName="${fromName}" ccAddresses="" bccAddresses="" subject="${subject}" sendPartial="Y"/>
 
     <!-- ========== Registered Services ========== -->
 
