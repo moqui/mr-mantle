@@ -222,6 +222,27 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="ProjectStatusUpdate" inboxEnumId="NinUpdates" description="Project Status Update" typeString="info"
             showAlert="N" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
             titleTemplate="${workEffortName} is ${healthLabel}: ${subject} (${authorName})"/>
+    <!-- a new request to triage (mantle.request.RequestServices.notify#RequestTriage, from the Request rule of
+        entity/Request.eecas.xml: a request submitted, or given a project): requestId, requestName, typeLabel, rootWorkEffortId,
+        projectName and projectSuffix (" (name)", both empty for one with no project), channelLabel (app, email, form), fromName,
+        the request as the record; to the
+        project's triage assignee, else its managers (for one with no project the organization's triage assignee); in the
+        Notifications inbox. The app that triages requests sets the link (IronStone Projects: BossSetupData.xml). -->
+    <moqui.security.user.NotificationTopic topic="RequestTriage" inboxEnumId="NinNotifications" description="New Request to Triage" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="New request ${requestId}: ${requestName}${projectSuffix}"/>
+    <!-- a request's status moved by its work (mantle.request.RequestServices.complete#RequestFromWork): requestId, requestName,
+        statusId, statusLabel, workEffortId (the item that moved it), the request as the record; to its followers and its
+        reporter's and assignee's users; in the Updates inbox -->
+    <moqui.security.user.NotificationTopic topic="RequestUpdate" inboxEnumId="NinUpdates" description="Request Update" typeString="info"
+            showAlert="N" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="Request ${requestId} ${statusLabel}: ${requestName}"/>
+    <!-- the actions of the mail client's rules that make requests and work items (org.moqui.impl.EmailClientServices
+        run#EmailRules runs the service in optionValue for the action in enumCode; impl-projects.md F6) -->
+    <moqui.basic.Enumeration enumId="ErActCreateRequest" enumTypeId="EmailRuleAction" enumCode="createRequest" sequenceNum="1"
+            description="Make a request" optionValue="mantle.request.RequestServices.create#RequestFromEmail"/>
+    <moqui.basic.Enumeration enumId="ErActCreateWorkItem" enumTypeId="EmailRuleAction" enumCode="createWorkItem" sequenceNum="2"
+            description="Make a work item (a request for outside senders)" optionValue="mantle.request.RequestServices.create#WorkItemFromEmail"/>
     <!-- a release's notes published (mantle.work.ProjectServices.publish#ReleaseNotes) to the followers of the release and of its
         project: workEffortId, version, rootWorkEffortId, projectName, actorName, dateText, wikiPageId (the published page), the
         release as the record; in the Updates inbox. The app that shows releases sets the link (IronStone Projects:

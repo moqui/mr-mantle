@@ -35,4 +35,9 @@ along with this software (see the LICENSE.md file). If not, see
         <condition><expression>workEffortId</expression></condition>
         <actions><service-call name="mantle.work.ProjectServices.sync#ProjectDocsSpaceUsers" in-map="{workEffortId:workEffortId}"/></actions>
     </eeca>
+    <!-- IronStone Projects (impl-projects.md P5): a request follows its work items' status (complete#RequestFromWork) -->
+    <eeca id="WorkEffortRequestFromWork" entity="mantle.work.effort.WorkEffort" on-update="true" get-entire-entity="true" get-original-value="true">
+        <condition><expression>workEffortTypeEnumId == 'WetTask' &amp;&amp; originalValue != null &amp;&amp; originalValue.statusId != statusId</expression></condition>
+        <actions><service-call name="mantle.request.RequestServices.complete#RequestFromWork" in-map="{workEffortId:workEffortId}"/></actions>
+    </eeca>
 </eecas>

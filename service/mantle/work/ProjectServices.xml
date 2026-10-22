@@ -64,10 +64,10 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script>
             <service-call name="mantle.work.ProjectServices.init#ProjectSequence" in-map="{workEffortId:workEffortId, lastTaskNum:lastTaskNum}"/>
             <service-call name="mantle.work.WorkEffortServices.clone#WorkEffort" in-map="context" out-map="context"/>
-            <!-- the base's own settings come along (not its public form token or its docs space, which stay the base's); a
+            <!-- the base's own settings come along (not its public form token, mail plus tag or docs space, which stay the base's); a
                 project made from a template is Based on it (WeatBasedOn), which the Projects templates count as uses -->
             <script><![CDATA[
-                const skipped = ['WstIntakeToken', 'WstDocsWikiSpace']
+                const skipped = ['WstIntakeToken', 'WstIntakePlusTag', 'WstDocsWikiSpace']
                 for (const row of ec.entity.find('mantle.work.effort.WorkEffortSetting').condition('workEffortId', baseWorkEffortId).list()) {
                     if (skipped.includes(row.settingTypeEnumId) || row.settingValue == null || row.settingValue === '') continue
                     ec.service.sync().name('store#mantle.work.effort.WorkEffortSetting').parameters({workEffortId: workEffortId,
