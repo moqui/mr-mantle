@@ -222,6 +222,20 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="ProjectStatusUpdate" inboxEnumId="NinUpdates" description="Project Status Update" typeString="info"
             showAlert="N" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
             titleTemplate="${workEffortName} is ${healthLabel}: ${subject} (${authorName})"/>
+    <!-- merge requests and commit checks (mantle.work.GitServices.notify#MergeRequest and notify#CommitStatusFailed, by the
+        rules of service/WorkGit.secas.xml): mergeRequestId, mergeRequestNum, title, repositoryId, sourceRef, targetRef,
+        actorName and change, the merge request as the record; a check: repositoryId, commitId, shortId, summary, checkContext,
+        state, stateLabel, description, targetUrl. Review requests and failed checks in the Notifications inbox, the other
+        changes in Updates. The app that shows code sets the links (IronStone Projects: BossSetupData.xml). -->
+    <moqui.security.user.NotificationTopic topic="MergeRequestReview" inboxEnumId="NinNotifications" description="Merge Request Review Requested" typeString="info"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="${actorName} asks for your review of !${mergeRequestNum} ${title} (${repositoryId})"/>
+    <moqui.security.user.NotificationTopic topic="MergeRequestUpdate" inboxEnumId="NinUpdates" description="Merge Request Update" typeString="info"
+            showAlert="N" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="!${mergeRequestNum} ${title}: ${actorName} ${change} (${repositoryId})"/>
+    <moqui.security.user.NotificationTopic topic="CommitStatusFailed" inboxEnumId="NinNotifications" description="Commit Check Failed" typeString="warning"
+            showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="${checkContext} ${stateLabel} on ${shortId} of ${repositoryId}: ${summary}"/>
     <!-- a page to review and the decision on it: the framework seeds both topics (moqui.resource.wiki.WikiPageReview in
         framework/entity/ResourceEntities.xml), with the approval services of WikiPageReview (approveServiceName,
         refuseServiceName, refuseReasonRequired) and the message fields (wikiPageReviewId, wikiPageId, wikiSpaceId, pagePath,

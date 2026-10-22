@@ -1809,6 +1809,10 @@ along with this software (see the LICENSE.md file). If not, see
             restrictView Y needs a WikiSpaceUser row of the user with allowView or allowAdmin Y, and a page with
             restrictView Y a WikiPageUser row of the user with allowView Y; the ADMIN group sees every page; a page whose
             space is not found is not seen.
+
+            A merge request or a git repository (moqui.resource.GitMergeRequest, GitRepository, framework entities no entity
+            filter covers) is seen by whoever may view the repository (org.moqui.impl.GitServices.get#GitRepositoryAccess,
+            canView), whenever authorization is on, as a wiki page is; so are the review comments filed on a merge request.
         </description>
         <in-parameters>
             <parameter name="recordEntityName" required="true"/>
@@ -1878,6 +1882,8 @@ along with this software (see the LICENSE.md file). If not, see
             const COMM_EVENT = 'mantle.party.communication.CommunicationEvent'
             const ORDER = 'mantle.order.OrderHeader'
             const WIKI_PAGE = 'moqui.resource.wiki.WikiPage'
+            const GIT_MERGE_REQUEST = 'moqui.resource.GitMergeRequest'
+            const GIT_REPOSITORY = 'moqui.resource.GitRepository'
             recordVisible = null
             notVisibleReason = null
             // a refusal: an error, or with checkOnly the answer false
@@ -2090,6 +2096,9 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!authzOn) return true
                 if (entityName === COMM_EVENT) return commEventVisible(value, depth)
                 if (entityName === WIKI_PAGE) return wikiPageVisible(value)
+                // a merge request or a repository: whoever may view the repository (org.moqui.impl.GitServices)
+                if (entityName === GIT_MERGE_REQUEST || entityName === GIT_REPOSITORY) return !!ec.service.sync()
+                        .name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameter('repositoryId', value.repositoryId).call()?.canView
                 if (entityName !== WORK_EFFORT && entityName !== REQUEST && entityName !== ORDER) return true
                 const s = userScope()
                 if (s.orgIds == null || staffSees(entityName)) return true
