@@ -2369,8 +2369,10 @@ along with this software (see the LICENSE.md file). If not, see
               list toApprove).
             - with managers, allocationRequests: the requested allocations of the projects the user sees, for one who approves
               allocations (ADMIN or ALLOCATION_APPROVE; ResourceServices.find#Allocations list requested), else null.
-            The counter that needs records of a later phase (unbilledAmount) is null until that phase. Each counter is computed on its own: one that fails is logged, named
-            in failedParts and left null.
+            - with managers, unbilledAmount: the amount of the billable time not invoiced in the projects the user sees
+              (get#UnbilledSummary totals amount, a BigDecimal, with unbilledCurrencyUomId; null in more than one currency), for
+              one who manages money (ADMIN or TIME_ENTRY_RATE), else null.
+            Each counter is computed on its own: one that fails is logged, named in failedParts and left null.
         </description>
         <in-parameters><parameter name="managers" type="Boolean" default="false"/></in-parameters>
         <out-parameters>
@@ -2380,7 +2382,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             counts = {myOpen: null, dueWeek: null, overdue: null, reviewsWaiting: null, hoursWeek: null, expectedWeek: null, timesheetStatusId: null,
-                projectsAtRisk: null, milestonesSoon: null, timesheetsToApprove: null, allocationRequests: null, unbilledAmount: null}
+                projectsAtRisk: null, milestonesSoon: null, timesheetsToApprove: null, allocationRequests: null, unbilledAmount: null, unbilledCurrencyUomId: null}
             atRiskProjectIds = []
             failedParts = []
             const part = (name, run) => {
@@ -2482,7 +2484,210 @@ along with this software (see the LICENSE.md file). If not, see
                     counts.allocationRequests = Number(ec.service.sync().name('mantle.work.ResourceServices.find#Allocations').parameters({list: 'requested',
                         withCounts: true, limit: 1}).call()?.counts?.requested ?? 0)
                 })
+                // impl-projects.md P8a: the amount of the billable time not invoiced (get#UnbilledSummary), for those who manage money
+                part('unbilledAmount', () => {
+                    if (!ec.user.isInGroup('ADMIN') && !ec.user.hasPermission('TIME_ENTRY_RATE')) return
+                    ec.message.pushErrors()
+                    try {
+                        const out = ec.service.sync().name('mantle.work.ProjectServices.get#UnbilledSummary').call() || {}
+                        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                        counts.unbilledAmount = out.totals?.mixedCurrency ? null : (out.totals?.amount ?? toDecimal(0))
+                        counts.unbilledCurrencyUomId = out.totals?.currencyUomId || null
+                    } finally { ec.message.clearErrors(); ec.message.popErrors() }
+                })
             }
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="UnbilledSummary">
+        <description>
+            What waits to be billed to clients (design-projects.md §10 Unbilled, §4 ProjectMoney UnbilledBox, §3 Home's Unbilled;
+            impl-projects.md P8a), for those who manage money (ADMIN and holders of TIME_ENTRY_RATE; anyone else gets an error),
+            over the projects they see (get#VisibleProjectInfo; every project for ADMIN; templates left out), or one project
+            (workEffortId) or one client's (clientPartyId).
+
+            Unbilled time is a billable entry (rate type not RatpNoCharge) with no client invoice (invoiceId) that has ended
+            (thruDate) by thruDate (default now), on the project or one of its items. Its amount is hours times its client hour
+            rate (clientHourRate, else the rate of its rateAmountId), rounded to the cent per entry as an invoice of an item per
+            entry totals it; an entry with neither is counted in missingRateCount and has no amount (invoicing it fails until a
+            rate is found). Ready time is on an approved timesheet (TmshApproved): what create#ProjectInvoiceItems with
+            approvedOnly bills.
+
+            projectList, by client then project, each: workEffortId, workEffortName, clientPartyId and clientName (the current
+            Customer or CustomerBillTo), vendorPartyId (Vendor or VendorBillFrom), currencyUomId (the entries' rates', else the
+            organization's base, else USD), entryCount, hours, amount, readyCount, readyHours, readyAmount, waitingHours (on a
+            submitted timesheet), openHours (on an open one), missingRateCount, readyMissingRateCount, firstDate and lastDate
+            (millis of the entries' fromDate), expenseCount and expenseAmount (the project's expense invoices paid and not
+            billed through, which a client invoice adds), lastInvoiceId and lastInvoiceDate (the project's latest client invoice
+            not cancelled), draftInvoiceList (its In-Process invoices to the client: invoiceId, invoiceDate, invoiceTotal), and
+            canInvoice with cannotReason (no client, no vendor, nothing ready, a ready entry without a rate). With withEntries
+            also entryList (each entry: timeEntryId, partyId, personName, workEffortId, workEffortName, fromDate, thruDate,
+            hours, rate, amount, ready, sheetStatusId, comments, missingRate), for one project's invoice dialog.
+
+            totals: projectCount, entryCount, hours, amount, readyHours, readyAmount, missingRateCount, currencyUomId (null when
+            the projects bill in more than one currency, mixedCurrency then true and amount and readyAmount null) and byClient (clientPartyId, clientName,
+            hours, amount), largest first. Amounts are BigDecimal. Reads only: no rate is looked up or stored here.
+        </description>
+        <in-parameters>
+            <parameter name="workEffortId"/>
+            <parameter name="clientPartyId"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="withEntries" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="projectList" type="List"/>
+            <parameter name="totals" type="Map"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            projectList = []
+            totals = {projectCount: 0, entryCount: 0, hours: toDecimal(0), amount: toDecimal(0), readyHours: toDecimal(0), readyAmount: toDecimal(0),
+                missingRateCount: 0, currencyUomId: null, mixedCurrency: false, byClient: []}
+            if (!(ec.user.userId && (ec.user.isInGroup('ADMIN') || ec.user.hasPermission('TIME_ENTRY_RATE')))) {
+                ec.message.addError(ec.l10n.localize('Only those who manage money see what is unbilled')); return }
+            const cf = ec.entity.conditionFactory
+            const zero = toDecimal(0)
+            const thru = thruDate != null ? thruDate : ec.user.nowTimestamp
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+                const all = !!vis.allProjects
+                const visible = Array.from(vis.visibleProjectIds || [])
+                if (workEffortId && !all && !visible.includes(workEffortId)) {
+                    ec.message.addError(ec.resource.expand('Project ${workEffortId} is not available', '', {workEffortId})); return }
+                if (!all && !visible.length) return
+                const scope = workEffortId ? [workEffortId] : (all ? null : visible)
+                const conds = [cf.makeCondition('invoiceId', 'is-null', null), cf.makeCondition('rateTypeEnumId', 'not-equals', 'RatpNoCharge', true),
+                    cf.makeCondition('thruDate', 'is-not-null', null), cf.makeCondition('thruDate', 'less-equals', thru), cf.makeCondition('workEffortId', 'is-not-null', null)]
+                if (scope) conds.push(cf.makeCondition([cf.makeCondition('rootWorkEffortId', 'in', scope), cf.makeCondition('workEffortId', 'in', scope)], 'or'))
+                const entries = Array.from(ec.entity.find('mantle.work.time.TimeEntryAndWorkEffort').condition(cf.makeCondition(conds, 'and'))
+                        .selectField('timeEntryId').selectField('partyId').selectField('workEffortId').selectField('workEffortName').selectField('workEffortTypeEnumId')
+                        .selectField('rootWorkEffortId').selectField('fromDate').selectField('thruDate').selectField('hours').selectField('clientHourRate')
+                        .selectField('rateAmountId').selectField('timesheetId').selectField('comments')
+                        .orderBy('fromDate').orderBy('timeEntryId').limit(50000).list())
+                // the projects of the entries
+                const byProject = {}
+                for (const entry of entries) {
+                    const root = entry.workEffortTypeEnumId === 'WetProject' ? entry.workEffortId : entry.rootWorkEffortId
+                    if (!root) continue
+                    if (scope && !scope.includes(root)) continue
+                    ;(byProject[root] || (byProject[root] = [])).push(entry)
+                }
+                const projectIds = Object.keys(byProject)
+                if (!projectIds.length) return
+                const projects = {}
+                for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'in', projectIds).list()) projects[row.workEffortId] = row
+                // the parties of each project: the client and the vendor
+                const roleOf = {}
+                for (const row of ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', 'in', projectIds)
+                        .condition('roleTypeId', 'in', ['Customer', 'CustomerBillTo', 'Vendor', 'VendorBillFrom']).conditionDate('fromDate', 'thruDate', null).orderBy('fromDate').list()) {
+                    const parties = roleOf[row.workEffortId] || (roleOf[row.workEffortId] = {})
+                    const kind = row.roleTypeId.startsWith('Customer') ? 'client' : 'vendor'
+                    if (!parties[kind]) parties[kind] = row.partyId
+                }
+                const names = {}
+                const nameOf = (id) => {
+                    if (!id) return ''
+                    if (!(id in names)) {
+                        const party = ec.entity.find('mantle.party.PartyDetail').condition('partyId', id).one()
+                        names[id] = party ? (party.organizationName || [party.firstName, party.lastName].filter((part) => part).join(' ') || party.pseudoId || id) : id
+                    }
+                    return names[id]
+                }
+                // the timesheets' statuses
+                const sheetIds = Array.from(new Set(entries.map((entry) => entry.timesheetId).filter((id) => id)))
+                const sheetStatus = {}
+                for (let i = 0; i < sheetIds.length; i += 1000) for (const row of ec.entity.find('mantle.work.time.Timesheet')
+                        .condition('timesheetId', 'in', sheetIds.slice(i, i + 1000)).selectField('timesheetId').selectField('statusId').list()) sheetStatus[row.timesheetId] = row.statusId
+                // the rates of the entries with no hour rate of their own
+                const rates = {}
+                const rateOf = (id) => {
+                    if (!id) return null
+                    if (!(id in rates)) rates[id] = ec.entity.find('mantle.humanres.rate.RateAmount').condition('rateAmountId', id).useCache(true).one()
+                    return rates[id]
+                }
+                const orgCurrency = {}
+                const currencyOfOrg = (orgId) => {
+                    if (!orgId) return null
+                    if (!(orgId in orgCurrency)) orgCurrency[orgId] = ec.entity.find('mantle.ledger.config.PartyAcctgPreference').condition('organizationPartyId', orgId).one()?.baseCurrencyUomId || null
+                    return orgCurrency[orgId]
+                }
+                const clientTotals = {}
+                const currencies = new Set()
+                for (const projectId of projectIds) {
+                    const project = projects[projectId]
+                    if (!project || project.isTemplate === 'Y') continue
+                    const parties = roleOf[projectId] || {}
+                    if (clientPartyId && parties.client !== clientPartyId) continue
+                    const row = {workEffortId: projectId, workEffortName: project.workEffortName || projectId, clientPartyId: parties.client || null,
+                        clientName: nameOf(parties.client), vendorPartyId: parties.vendor || null, currencyUomId: null, entryCount: 0, hours: zero, amount: zero,
+                        readyCount: 0, readyHours: zero, readyAmount: zero, waitingHours: zero, openHours: zero, missingRateCount: 0, readyMissingRateCount: 0,
+                        firstDate: null, lastDate: null, expenseCount: 0, expenseAmount: zero, lastInvoiceId: null, lastInvoiceDate: null, draftInvoiceList: [],
+                        canInvoice: false, cannotReason: null}
+                    if (withEntries) row.entryList = []
+                    for (const entry of byProject[projectId]) {
+                        const hours = toDecimal(entry.hours ?? 0)
+                        const rateAmount = entry.clientHourRate == null ? rateOf(entry.rateAmountId) : null
+                        const rate = entry.clientHourRate != null ? toDecimal(entry.clientHourRate) : (rateAmount?.rateAmount != null ? toDecimal(rateAmount.rateAmount) : null)
+                        if (rateAmount?.rateCurrencyUomId && !row.currencyUomId) row.currencyUomId = rateAmount.rateCurrencyUomId
+                        const amount = rate == null ? null : hours.multiply(rate).setScale(2, 'HALF_UP')
+                        const status = entry.timesheetId ? (sheetStatus[entry.timesheetId] || 'TmshInProcess') : 'TmshInProcess'
+                        const ready = status === 'TmshApproved'
+                        row.entryCount++
+                        row.hours = row.hours.add(hours)
+                        if (amount != null) row.amount = row.amount.add(amount); else row.missingRateCount++
+                        if (ready) {
+                            row.readyCount++
+                            row.readyHours = row.readyHours.add(hours)
+                            if (amount != null) row.readyAmount = row.readyAmount.add(amount); else row.readyMissingRateCount++
+                        } else if (status === 'TmshCompleted') row.waitingHours = row.waitingHours.add(hours)
+                        else row.openHours = row.openHours.add(hours)
+                        const from = entry.fromDate == null ? null : Number(String(entry.fromDate))
+                        if (from != null && (row.firstDate == null || from < row.firstDate)) row.firstDate = from
+                        if (from != null && (row.lastDate == null || from > row.lastDate)) row.lastDate = from
+                        if (withEntries) row.entryList.push({timeEntryId: entry.timeEntryId, partyId: entry.partyId, personName: nameOf(entry.partyId),
+                            workEffortId: entry.workEffortId, workEffortName: entry.workEffortName || '', fromDate: from,
+                            thruDate: entry.thruDate == null ? null : Number(String(entry.thruDate)), hours: hours, rate: rate, amount: amount, ready: ready,
+                            sheetStatusId: status, comments: entry.comments || '', missingRate: rate == null})
+                    }
+                    if (!row.currencyUomId) row.currencyUomId = project.costUomId || currencyOfOrg(parties.vendor) || 'USD'
+                    // the project's invoices: the latest client invoice, its drafts, and its expenses not billed through
+                    for (const inv of ec.entity.find('mantle.work.effort.WorkEffortInvoiceDetail').condition('workEffortId', projectId)
+                            .condition('statusId', 'not-equals', 'InvoiceCancelled').orderBy('-invoiceDate').list()) {
+                        if (parties.client && inv.toPartyId === parties.client) {
+                            if (!row.lastInvoiceId) { row.lastInvoiceId = inv.invoiceId; row.lastInvoiceDate = inv.invoiceDate == null ? null : Number(String(inv.invoiceDate)) }
+                            if (inv.statusId === 'InvoiceInProcess') row.draftInvoiceList.push({invoiceId: inv.invoiceId,
+                                invoiceDate: inv.invoiceDate == null ? null : Number(String(inv.invoiceDate)), invoiceTotal: toDecimal(inv.invoiceTotal ?? 0)})
+                        } else if (inv.statusId === 'InvoicePmtSent' && inv.toPartyId !== parties.client && inv.fromPartyId !== parties.vendor) {
+                            row.expenseCount++
+                            row.expenseAmount = row.expenseAmount.add(toDecimal(inv.invoiceTotal ?? 0))
+                        }
+                    }
+                    row.cannotReason = !row.clientPartyId ? ec.l10n.localize('The project has no client')
+                        : !row.vendorPartyId ? ec.l10n.localize('The project has no vendor to bill from')
+                        : !row.readyCount ? ec.l10n.localize('No approved time yet')
+                        : row.readyMissingRateCount ? ec.resource.expand('${count} approved entries have no client rate', '', {count: row.readyMissingRateCount}) : null
+                    row.canInvoice = row.cannotReason == null
+                    currencies.add(row.currencyUomId)
+                    projectList.push(row)
+                    totals.projectCount++
+                    totals.entryCount += row.entryCount
+                    totals.hours = totals.hours.add(row.hours)
+                    totals.amount = totals.amount.add(row.amount)
+                    totals.readyHours = totals.readyHours.add(row.readyHours)
+                    totals.readyAmount = totals.readyAmount.add(row.readyAmount)
+                    totals.missingRateCount += row.missingRateCount
+                    const clientKey = row.clientPartyId || ''
+                    const client = clientTotals[clientKey] || (clientTotals[clientKey] = {clientPartyId: row.clientPartyId, clientName: row.clientName, hours: zero, amount: zero})
+                    client.hours = client.hours.add(row.hours)
+                    client.amount = client.amount.add(row.amount)
+                }
+                projectList.sort((a, b) => (a.clientName || '￿').localeCompare(b.clientName || '￿') || a.workEffortName.localeCompare(b.workEffortName))
+                totals.mixedCurrency = currencies.size > 1
+                totals.currencyUomId = currencies.size === 1 ? Array.from(currencies)[0] : null
+                // amounts in more than one currency have no one total
+                if (totals.mixedCurrency) { totals.amount = null; totals.readyAmount = null }
+                totals.byClient = Object.values(clientTotals).sort((a, b) => b.amount.compare(a.amount))
+            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
         ]]></script></actions>
     </service>
 

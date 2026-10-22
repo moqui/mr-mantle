@@ -915,6 +915,20 @@ along with this software (see the LICENSE.md file). If not, see
                 </iterate>
             </if>
 
+            <!-- the time billed on the item is unbilled again (as cancel#Invoice frees an invoice's time) -->
+            <entity-find entity-name="mantle.work.time.TimeEntry" list="itemTimeEntryList" for-update="true">
+                <econdition field-name="invoiceId"/><econdition field-name="invoiceItemSeqId"/></entity-find>
+            <iterate list="itemTimeEntryList" entry="timeEntry">
+                <set field="timeEntry.invoiceId" from="null"/><set field="timeEntry.invoiceItemSeqId" from="null"/>
+                <entity-update value-field="timeEntry"/>
+            </iterate>
+            <entity-find entity-name="mantle.work.time.TimeEntry" list="itemTimeEntryList" for-update="true">
+                <econdition field-name="vendorInvoiceId" from="invoiceId"/><econdition field-name="vendorInvoiceItemSeqId" from="invoiceItemSeqId"/></entity-find>
+            <iterate list="itemTimeEntryList" entry="timeEntry">
+                <set field="timeEntry.vendorInvoiceId" from="null"/><set field="timeEntry.vendorInvoiceItemSeqId" from="null"/>
+                <entity-update value-field="timeEntry"/>
+            </iterate>
+
             <service-call name="delete#mantle.account.invoice.InvoiceItem" in-map="context" out-map="context"/>
         </actions>
     </service>
@@ -1572,6 +1586,16 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="workerPartyId"><description>If specified only include time entries and expenses from this Party.</description></parameter>
 
             <parameter name="entryGrouping" default-value="entry"><description>Can be per 'entry', per 'worker', or 'all'</description></parameter>
+            <parameter name="timeEntryIdList" type="List"><description>If specified only these time entries (and still only those
+                the other parameters select); an empty list selects none.</description></parameter>
+            <parameter name="approvedOnly" type="Boolean" default="false"><description>Only time entries on an approved timesheet
+                (TmshApproved).</description></parameter>
+            <parameter name="billableOnly" type="Boolean" default="false"><description>Leave out the time entries of rate type No
+                Charge (RatpNoCharge), which are not billable.</description></parameter>
+            <parameter name="includeExpenses" type="Boolean" default="true"><description>For a client invoice, add the project's
+                expense invoices not yet billed through.</description></parameter>
+            <parameter name="settlementTermId"><description>The payment terms of an invoice created here (its due date follows,
+                InvoiceSetDueDate); else the agreement's or the organization's.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="invoiceId"/>
@@ -1627,15 +1651,15 @@ along with this software (see the LICENSE.md file). If not, see
                     </entity-find-one>
                     <set field="currencyUomId" from="partyAcctgPreference?.baseCurrencyUomId || 'USD'"/>
                 </if>
-                <set field="description" value="Invoice for${workEffort ? ' project ' + ec.resource.expand('WorkEffortNameTemplate','') : ''}${workerParty ? ' worker ' + ec.resource.expand('PartyNameTemplate','',workerParty) : ''}"/>
+                <set field="description" value="Invoice for${workEffort ? ' project ' + ec.resource.expand('WorkEffortNameTemplate','',workEffort) : ''}${workerParty ? ' worker ' + ec.resource.expand('PartyNameTemplate','',workerParty) : ''}"/>
                 <if condition="ratePurposeEnumId == 'RaprClient'"><then>
                     <service-call name="mantle.account.InvoiceServices.create#Invoice" out-map="context"
                             in-map="{invoiceTypeEnumId:invoiceTypeEnumId, fromPartyId:vendorPartyId, toPartyId:billToWep?.partyId,
-                                invoiceDate:invoiceDate, currencyUomId:currencyUomId, description:description}"/>
+                                invoiceDate:invoiceDate, currencyUomId:currencyUomId, description:description, settlementTermId:settlementTermId}"/>
                 </then><else>
                     <service-call name="mantle.account.InvoiceServices.create#Invoice" out-map="context"
                             in-map="{invoiceTypeEnumId:invoiceTypeEnumId, fromPartyId:workerPartyId, toPartyId:vendorPartyId,
-                                invoiceDate:invoiceDate, currencyUomId:currencyUomId, description:description}"/>
+                                invoiceDate:invoiceDate, currencyUomId:currencyUomId, description:description, settlementTermId:settlementTermId}"/>
                 </else></if>
             </if>
 
@@ -1643,11 +1667,20 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{invoiceId:invoiceId, workEffortId:workEffortId, thruDate:thruDate,
                         currencyUomId:currencyUomId, ratePurposeEnumId:ratePurposeEnumId, itemTypeEnumId:itemTypeEnumId,
                         workerPartyId:workerPartyId, vendorPartyId:vendorPartyId,
-                        createSingleItem:createSingleItem, createItemPerWorker:createItemPerWorker}"/>
+                        createSingleItem:createSingleItem, createItemPerWorker:createItemPerWorker,
+                        timeEntryIdList:timeEntryIdList, approvedOnly:approvedOnly, billableOnly:billableOnly}"/>
             <set field="invoiceItemCreatedCount" from="createResult.invoiceItemCreatedCount"/>
 
+            <!-- the project's invoices are found by WorkEffortInvoice (as create#ProjectExpenseInvoice links an expense invoice) -->
+            <if condition="invoiceItemCreatedCount &gt; 0">
+                <entity-find-one entity-name="mantle.work.effort.WorkEffortInvoice" value-field="projectInvoiceLink">
+                    <field-map field-name="invoiceId"/><field-map field-name="workEffortId"/></entity-find-one>
+                <if condition="projectInvoiceLink == null">
+                    <service-call name="create#mantle.work.effort.WorkEffortInvoice" in-map="{invoiceId:invoiceId, workEffortId:workEffortId}"/></if>
+            </if>
+
             <!-- add items for all expense invoice items for project that are not yet billed through -->
-            <if condition="ratePurposeEnumId == 'RaprClient'">
+            <if condition="ratePurposeEnumId == 'RaprClient' &amp;&amp; includeExpenses">
                 <entity-find entity-name="mantle.work.effort.WorkEffortInvoiceDetail" list="weidList">
                     <econdition field-name="workEffortId" ignore-if-empty="true"/>
                     <econdition field-name="statusId" value="InvoicePmtSent"/>
@@ -1753,6 +1786,12 @@ along with this software (see the LICENSE.md file). If not, see
                 populated and time entries with it populated are excluded, otherwise with default of RaprClient TimeEntry.invoiceId is used.</description></parameter>
             <parameter name="workerPartyId"><description>If specified only include time entries from this Party (matches TimeEntry.partyId)</description></parameter>
             <parameter name="vendorPartyId"><description>Matches TimeEntry.vendorPartyId, a Project Vendor or Employer</description></parameter>
+            <parameter name="timeEntryIdList" type="List"><description>If specified only these time entries (and still only those
+                the other parameters select); an empty list selects none.</description></parameter>
+            <parameter name="approvedOnly" type="Boolean" default="false"><description>Only time entries on an approved timesheet
+                (TmshApproved).</description></parameter>
+            <parameter name="billableOnly" type="Boolean" default="false"><description>Leave out the time entries of rate type No
+                Charge (RatpNoCharge).</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="invoiceItemCreatedCount" type="Long"/>
@@ -1781,10 +1820,17 @@ along with this software (see the LICENSE.md file). If not, see
 
             <if condition="ratePurposeEnumId == 'RaprVendor'"><then><set field="timeEntryInvoiceCondition" from="{vendorInvoiceId:null}"/></then>
                 <else><set field="timeEntryInvoiceCondition" from="{invoiceId:null}"/></else></if>
-            <entity-find entity-name="mantle.work.time.TimeEntry" list="timeEntryList">
+            <set field="timeEntryIdsGiven" from="timeEntryIdList != null"/>
+            <set field="timeEntryIdList" from="timeEntryIdsGiven ? Array.from(timeEntryIdList).map((id) => String(id)).filter((id) => id) : null"/>
+            <set field="invoiceItemCreatedCount" from="0" type="Long"/>
+            <if condition="timeEntryIdsGiven &amp;&amp; !timeEntryIdList.length"><return/></if>
+            <!-- locked for update, so two invoices made at once never bill the same entry -->
+            <entity-find entity-name="mantle.work.time.TimeEntry" list="timeEntryList" for-update="true">
                 <econdition-object field="timeEntryInvoiceCondition"/>
                 <econdition field-name="workEffortId" operator="in" from="workEffortIdSet" ignore-if-empty="true"/>
                 <econdition field-name="timesheetId" ignore-if-empty="true"/>
+                <econdition field-name="timeEntryId" operator="in" from="timeEntryIdList" ignore="!timeEntryIdsGiven"/>
+                <econdition field-name="rateTypeEnumId" operator="not-equals" value="RatpNoCharge" or-null="true" ignore="!billableOnly"/>
                 <econditions combine="or">
                     <econdition field-name="thruDate" operator="less-equals" from="thruDate"/>
                     <econdition field-name="thruDate" from="null"/>
@@ -1794,8 +1840,21 @@ along with this software (see the LICENSE.md file). If not, see
                 <econdition field-name="vendorPartyId" ignore-if-empty="true" or-null="true"/>
                 <order-by field-name="fromDate"/>
             </entity-find>
+            <!-- approvedOnly: the entries whose timesheet is approved -->
+            <if condition="approvedOnly">
+                <set field="candidateSheetIds" from="Array.from(new Set(Array.from(timeEntryList).map((te) => te.timesheetId).filter((id) => id)))"/>
+                <set field="approvedSheetIds" from="[]"/>
+                <if condition="candidateSheetIds.length">
+                    <entity-find entity-name="mantle.work.time.Timesheet" list="approvedSheetList">
+                        <econdition field-name="timesheetId" operator="in" from="candidateSheetIds"/>
+                        <econdition field-name="statusId" value="TmshApproved"/>
+                        <select-field field-name="timesheetId"/>
+                    </entity-find>
+                    <set field="approvedSheetIds" from="Array.from(approvedSheetList).map((sheet) => sheet.timesheetId)"/>
+                </if>
+                <set field="timeEntryList" from="Array.from(timeEntryList).filter((te) => te.timesheetId &amp;&amp; approvedSheetIds.includes(te.timesheetId))"/>
+            </if>
 
-            <set field="invoiceItemCreatedCount" from="0" type="Long"/>
             <if condition="createSingleItem"><then>
                 <set field="amountTotal" from="toDecimal(0)"/>
                 <iterate list="timeEntryList" entry="timeEntry">
@@ -1883,6 +1942,70 @@ along with this software (see the LICENSE.md file). If not, see
                 </iterate>
             </else></if>
         </actions>
+    </service>
+
+    <service verb="get" noun="InvoiceTimeDetail">
+        <description>
+            The time behind an invoice's items (design-projects.md §10 InvoiceDetail's Time, §14 the client invoice with its time
+            detail; impl-projects.md P8a): the time entries billed on it, by TimeEntry.invoiceId (a client invoice) or
+            vendorInvoiceId (a worker's), each with its item, person, work item and project, day, hours, the hour rate it was
+            billed at (the entry's own rate, else its RateAmount's, as get#TimeEntryAmount reads it) and the amount (hours times
+            the rate, to the cent), and its comment; the items' totals (hours, amount, entryCount by invoiceItemSeqId); the work
+            items and the projects the time is on. No access check: the caller decides who sees an invoice's time.
+        </description>
+        <in-parameters><parameter name="invoiceId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="entryList" type="List"/>
+            <parameter name="itemTotals" type="Map"/>
+            <parameter name="hours" type="BigDecimal"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="workerInvoice" type="Boolean"/>
+            <parameter name="projectIdList" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            entryList = []
+            itemTotals = {}
+            hours = toDecimal(0)
+            amount = toDecimal(0)
+            projectIdList = []
+            const clientRows = Array.from(ec.entity.find('mantle.work.time.TimeEntryAndWorkEffort').condition('invoiceId', invoiceId).orderBy('fromDate').orderBy('timeEntryId').list())
+            workerInvoice = !clientRows.length
+            const rows = workerInvoice ? Array.from(ec.entity.find('mantle.work.time.TimeEntryAndWorkEffort').condition('vendorInvoiceId', invoiceId)
+                    .orderBy('fromDate').orderBy('timeEntryId').list()) : clientRows
+            if (!rows.length) { workerInvoice = false; return }
+            const names = {}
+            const nameOf = (id) => {
+                if (!id) return ''
+                if (!(id in names)) {
+                    const party = ec.entity.find('mantle.party.PartyDetail').condition('partyId', id).one()
+                    names[id] = party ? (party.organizationName || [party.firstName, party.lastName].filter((part) => part).join(' ') || party.pseudoId || id) : id
+                }
+                return names[id]
+            }
+            const projects = new Set()
+            for (const row of rows) {
+                const entryHours = toDecimal(row.hours ?? 0)
+                const ownRate = workerInvoice ? row.vendorHourRate : row.clientHourRate
+                const rateAmountId = workerInvoice ? row.vendorRateAmountId : row.rateAmountId
+                const rateAmount = ownRate == null && rateAmountId ? ec.entity.find('mantle.humanres.rate.RateAmount').condition('rateAmountId', rateAmountId).useCache(true).one() : null
+                const rate = ownRate != null ? toDecimal(ownRate) : (rateAmount?.rateAmount != null ? toDecimal(rateAmount.rateAmount) : null)
+                const entryAmount = rate == null ? null : entryHours.multiply(rate).setScale(2, 'HALF_UP')
+                const seqId = (workerInvoice ? row.vendorInvoiceItemSeqId : row.invoiceItemSeqId) || ''
+                const project = row.workEffortTypeEnumId === 'WetProject' ? row.workEffortId : (row.rootWorkEffortId || null)
+                if (project) projects.add(project)
+                entryList.push({timeEntryId: row.timeEntryId, invoiceItemSeqId: seqId || null, partyId: row.partyId, personName: nameOf(row.partyId),
+                    workEffortId: row.workEffortId || null, workEffortName: row.workEffortName || '', rootWorkEffortId: project,
+                    fromDate: row.fromDate == null ? null : Number(String(row.fromDate)), thruDate: row.thruDate == null ? null : Number(String(row.thruDate)),
+                    hours: entryHours, rate: rate, amount: entryAmount, workTypeEnumId: row.workTypeEnumId || null, comments: row.comments || ''})
+                const total = itemTotals[seqId] || (itemTotals[seqId] = {hours: toDecimal(0), amount: toDecimal(0), entryCount: 0})
+                total.hours = total.hours.add(entryHours)
+                if (entryAmount != null) total.amount = total.amount.add(entryAmount)
+                total.entryCount++
+                hours = hours.add(entryHours)
+                if (entryAmount != null) amount = amount.add(entryAmount)
+            }
+            projectIdList = Array.from(projects).sort()
+        ]]></script></actions>
     </service>
 
     <service verb="create" noun="InvoiceBillThroughItems">
