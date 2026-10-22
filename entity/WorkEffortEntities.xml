@@ -984,6 +984,8 @@ along with this software (see the LICENSE.md file). If not, see
                     optionValue="ProjBillingDefaults" enumCode="invoiceGrouping" enumTypeId="WorkEffortSettingType"/>
             <moqui.basic.Enumeration enumId="WstShareHours" description="Hours shared with the client (Y or N)" sequenceNum="32"
                     optionValue="ProjBillingDefaults" enumCode="shareHours" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstTimeDetail" description="Time detail on invoices (Y or N)" sequenceNum="33"
+                    optionValue="ProjBillingDefaults" enumCode="timeDetail" enumTypeId="WorkEffortSettingType"/>
             <!-- client access and docs -->
             <moqui.basic.Enumeration enumId="WstClientSignIn" description="Client sign-in (Y or N)" sequenceNum="40" enumTypeId="WorkEffortSettingType"/>
             <moqui.basic.Enumeration enumId="WstShareRepositories" description="Repositories shared with the client read only (Y or N)" sequenceNum="41" enumTypeId="WorkEffortSettingType"/>
