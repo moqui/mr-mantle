@@ -247,26 +247,58 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="get" noun="WeekDays">
-        <description>The days of a week with what a person should work on each: the policy's working days at its day hours,
-            less the holidays of the policy's organization (WorkEffort purpose WepHoliday, allDayStart the day, owned by the
-            organization), each {day, isoDay, isWorkday, expected, holiday (its name or null)}; and expectedTotal.</description>
+        <description>The days of a week with what a person should work on each: with partyId the person's capacity
+            (mantle.work.ResourceServices.get#PartyCapacity: their working hours, else the policy's, less holidays and leave;
+            impl-projects.md P7), else the policy's working days at its day hours less the holidays of the policy's organization
+            (WorkEffort purpose WepHoliday, allDayStart the day, owned by the organization); each {day, isoDay, isWorkday,
+            expected, holiday (its name or null), leave (hours)}; and expectedTotal. A capacity that does not read is logged and
+            the policy's days apply.</description>
         <in-parameters>
             <parameter name="dayList" type="List" required="true"/>
             <parameter name="policy" type="Map" required="true"/>
             <parameter name="organizationPartyId"/>
+            <parameter name="partyId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="weekDayList" type="List"/>
             <parameter name="expectedTotal" type="BigDecimal"/>
         </out-parameters>
         <actions><script><![CDATA[
-            const days = Array.from(dayList || []).map(String)
+            const dayOf = (value) => { if (value == null || value === '') return ''; const text = String(value); return /^-?\d+$/.test(text) ? new Date(Number(text)).toISOString().slice(0, 10) : text.slice(0, 10) }
+const days = Array.from(dayList || []).map(String)
+            if (partyId && days.length) {
+                ec.message.pushErrors()
+                try {
+                    const sorted = days.slice().sort()
+                    const entry = Array.from(ec.service.sync().name('mantle.work.ResourceServices.get#PartyCapacity').parameters({partyId: partyId,
+                        fromDate: sorted[0], thruDate: sorted[sorted.length - 1], policy: policy, organizationPartyId: organizationPartyId || null})
+                        .call()?.capacityList || [])[0]
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                    if (entry) {
+                        const byDay = {}
+                        for (const day of Array.from(entry.dayList || [])) byDay[day.day] = day
+                        let sum = 0
+                        weekDayList = days.map((day) => {
+                            const one = byDay[day] || {}
+                            const js = new Date(day + 'T12:00:00Z').getUTCDay()
+                            const expected = Number(one.capacity || 0)
+                            sum += expected
+                            return {day: day, isoDay: js === 0 ? 7 : js, isWorkday: Number(one.base || 0) > 0 && !one.holiday, expected: expected,
+                                holiday: one.holiday || null, leave: Number(one.leave || 0)}
+                        })
+                        expectedTotal = Math.round(sum * 100) / 100
+                        return
+                    }
+                } catch (err) {
+                    ec.logger.error(`Week days: the capacity of ${partyId} was not read, the policy's days apply: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
             const holidays = {}
             if (organizationPartyId && days.length) {
                 try {
                     for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition('purposeEnumId', 'WepHoliday')
                             .condition('ownerPartyId', organizationPartyId).condition('allDayStart', 'in', days).disableAuthz().list())
-                        holidays[String(row.allDayStart).substring(0, 10)] = row.workEffortName || ec.l10n.localize('Holiday')
+                        holidays[dayOf(row.allDayStart)] = row.workEffortName || ec.l10n.localize('Holiday')
                 } catch (err) { ec.logger.error(`Week days: the holidays of ${organizationPartyId} were not read, none marked: ${err}`) }
             }
             const workDays = Array.from(policy.workDays || [1, 2, 3, 4, 5]).map(Number)
@@ -279,7 +311,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const isWorkday = workDays.includes(isoDay) && !holiday
                 const expected = isWorkday ? dayHours : 0
                 total += expected
-                return {day: day, isoDay: isoDay, isWorkday: isWorkday, expected: expected, holiday: holiday}
+                return {day: day, isoDay: isoDay, isWorkday: isWorkday, expected: expected, holiday: holiday, leave: 0}
             })
             expectedTotal = total
         ]]></script></actions>
@@ -810,7 +842,7 @@ along with this software (see the LICENSE.md file). If not, see
                         || String(a.workEffortId).localeCompare(String(b.workEffortId), undefined, {numeric: true}))
 
                 const weekDays = ec.service.sync().name('mantle.work.TimesheetServices.get#WeekDays').parameters({dayList: days, policy: policy,
-                    organizationPartyId: policyOut.organizationPartyId || null}).call() || {}
+                    organizationPartyId: policyOut.organizationPartyId || null, partyId: person}).call() || {}
                 let total = 0, billableTotal = 0
                 for (const entry of entryList) { total += entry.hours; if (entry.billable) billableTotal += entry.hours }
                 const dayList = Array.from(weekDays.weekDayList || []).map((info) => {
@@ -1030,7 +1062,7 @@ along with this software (see the LICENSE.md file). If not, see
                         const pOut = ec.service.sync().name('mantle.work.TimesheetServices.get#TimesheetPolicy').parameters({partyId: personId}).call() || {}
                         const w = ec.service.sync().name('mantle.work.TimesheetServices.get#WeekRange').parameters({date: weekStart, weekStart: pOut.policy?.weekStart || 1}).call()
                         expectedCache[key] = Number(String(ec.service.sync().name('mantle.work.TimesheetServices.get#WeekDays').parameters({dayList: w.dayList,
-                            policy: pOut.policy || {}, organizationPartyId: pOut.organizationPartyId || null}).call()?.expectedTotal ?? 0))
+                            policy: pOut.policy || {}, organizationPartyId: pOut.organizationPartyId || null, partyId: personId}).call()?.expectedTotal ?? 0))
                     }
                     return expectedCache[key]
                 }
@@ -1165,7 +1197,7 @@ along with this software (see the LICENSE.md file). If not, see
                         if (sheet.timesheetId) for (const entry of ec.entity.find('mantle.work.time.TimeEntry').condition('timesheetId', sheet.timesheetId).selectField('hours').list())
                             hours += Number(String(entry.hours ?? 0))
                         const expected = Number(String(ec.service.sync().name('mantle.work.TimesheetServices.get#WeekDays').parameters({dayList: w.dayList, policy: policy,
-                            organizationPartyId: pOut.organizationPartyId || null}).call()?.expectedTotal ?? 0))
+                            organizationPartyId: pOut.organizationPartyId || null, partyId: person}).call()?.expectedTotal ?? 0))
                         const fromMs = Number(String(w.fromDate))
                         const nm = ec.makeNotificationMessage().topic('TimesheetMissing').subTopic(subTopic).userIds(userIds).message({partyId: person,
                             timesheetId: sheet.timesheetId || null, weekStart: w.weekStartDay,

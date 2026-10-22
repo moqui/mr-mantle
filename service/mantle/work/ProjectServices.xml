@@ -2367,7 +2367,9 @@ along with this software (see the LICENSE.md file). If not, see
               milestones due in fourteen days.
             - with managers, timesheetsToApprove: the submitted timesheets the user approves (TimesheetServices.find#Timesheets
               list toApprove).
-            The counters that need records of later phases (allocationRequests, unbilledAmount) are null until those phases. Each counter is computed on its own: one that fails is logged, named
+            - with managers, allocationRequests: the requested allocations of the projects the user sees, for one who approves
+              allocations (ADMIN or ALLOCATION_APPROVE; ResourceServices.find#Allocations list requested), else null.
+            The counter that needs records of a later phase (unbilledAmount) is null until that phase. Each counter is computed on its own: one that fails is logged, named
             in failedParts and left null.
         </description>
         <in-parameters><parameter name="managers" type="Boolean" default="false"/></in-parameters>
@@ -2442,7 +2444,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const sheet = ec.service.sync().name('mantle.work.TimesheetServices.get#PartyTimesheet').parameters({partyId: me, date: week.weekStartDay, make: false}).call() || {}
                 counts.timesheetStatusId = sheet.timesheet?.statusId || 'TmshInProcess'
                 counts.expectedWeek = Number(String(ec.service.sync().name('mantle.work.TimesheetServices.get#WeekDays').parameters({dayList: week.dayList, policy: policy,
-                    organizationPartyId: policyOut.organizationPartyId || null}).call()?.expectedTotal ?? 0))
+                    organizationPartyId: policyOut.organizationPartyId || null, partyId: me}).call()?.expectedTotal ?? 0))
             })
             if (managers) {
                 const managed = all ? null : Array.from(vis.managedProjectIds || [])
@@ -2473,6 +2475,12 @@ along with this software (see the LICENSE.md file). If not, see
                             .condition('rootWorkEffortId', 'in', ids).condition(cf.makeCondition('statusId', 'not-in', open, true))
                             .condition('estimatedCompletionDate', 'greater-equals', new Date(todayStart))
                             .condition('estimatedCompletionDate', 'less-than', new Date(todayStart + 14 * 86400000)).count()
+                })
+                // impl-projects.md P7: the requested allocations, for those who decide them (null for a manager who does not)
+                part('allocationRequests', () => {
+                    if (!ec.user.isInGroup('ADMIN') && !ec.user.hasPermission('ALLOCATION_APPROVE')) return
+                    counts.allocationRequests = Number(ec.service.sync().name('mantle.work.ResourceServices.find#Allocations').parameters({list: 'requested',
+                        withCounts: true, limit: 1}).call()?.counts?.requested ?? 0)
                 })
             }
         ]]></script></actions>
