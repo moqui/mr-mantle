@@ -1753,6 +1753,128 @@ along with this software (see the LICENSE.md file). If not, see
         mantle.account.invoice.Invoice, ...). These services back the Chatter of a record: its messages and notes, its
         activities, its changes and files, and who follows it. -->
 
+    <service verb="get" noun="ClientRecordVisibility">
+        <description>
+            Which records a client contact who signs in sees (design-projects.md §1.1, §15 Client access and Chatter for client
+            users; impl-projects.md P10), for userId (the current user when empty), by mantle.work.ProjectServices
+            get#ClientProjectInfo; isClient false (and nothing visible) for a user who is not one:
+            - a work effort: a client project; a work item (WetTask) of one shared with the client (visibility All users or
+              General); a milestone or release of one. No other kind (sprints, events, activities).
+            - a request: one the user filed; or of a client project, filed by one of the user's organization's contacts
+              (clientContactPartyIds) or with one of those or the organization as a current RequestParty.
+            - a communication event: never a Comment (a note is internal); a status update posted for the client
+              (statusUpdateIds); a message the user's party is from, to or a party to; a message one of the organization's
+              contacts or the organization is from, to or a party to that is filed (the event, or the root of its thread, by
+              its own join or a CommunicationEventRecord) on a work effort or request the user sees by the rules above.
+            Strict: a failure is an error, so a caller deciding access refuses. Every read is with authorization disabled, so
+            the answer does not depend on the caller's filters.
+        </description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="workEffortIds" type="List"/>
+            <parameter name="requestIds" type="List"/>
+            <parameter name="communicationEventIds" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="isClient" type="Boolean"/>
+            <parameter name="visibleWorkEffortIds" type="List"/>
+            <parameter name="visibleRequestIds" type="List"/>
+            <parameter name="visibleCommunicationEventIds" type="List"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            isClient = false
+            visibleWorkEffortIds = []; visibleRequestIds = []; visibleCommunicationEventIds = []
+            const client = ec.service.sync().name('mantle.work.ProjectServices.get#ClientProjectInfo').parameter('userId', userId || null).call()
+            if (ec.message.hasError()) return
+            isClient = !!client?.isClient
+            if (!isClient || !client.userPartyId) return
+            const listOf = (value) => value == null ? [] : (typeof value === 'string' ? value.split(',') : Array.from(value))
+                    .map((id) => String(id).trim()).filter((id) => id)
+            const projects = new Set(Array.from(client.clientProjectIds || []))
+            const me = client.userPartyId
+            const orgSide = new Set(Array.from(client.clientContactPartyIds || []).concat(Array.from(client.clientOrgIds || [])))
+            const updates = new Set(Array.from(client.statusUpdateIds || []))
+            const shared = ['WevAllUsers', 'WevGeneral']
+            const cf = ec.entity.conditionFactory
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const workEffortSeen = new Map()
+                const workEffortVisible = (ids) => {
+                    const wanted = ids.filter((id) => !workEffortSeen.has(id))
+                    if (wanted.length) {
+                        for (const id of wanted) workEffortSeen.set(id, false)
+                        for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'in', wanted)
+                                .selectField('workEffortId').selectField('workEffortTypeEnumId').selectField('rootWorkEffortId')
+                                .selectField('visibilityEnumId').list()) {
+                            let seen = false
+                            if (row.workEffortTypeEnumId === 'WetProject') seen = projects.has(row.workEffortId)
+                            else if (row.workEffortTypeEnumId === 'WetTask') seen = projects.has(row.rootWorkEffortId) && shared.includes(row.visibilityEnumId)
+                            else if (['WetMilestone', 'WetRelease'].includes(row.workEffortTypeEnumId)) seen = projects.has(row.rootWorkEffortId)
+                            workEffortSeen.set(row.workEffortId, seen)
+                        }
+                    }
+                    return ids.filter((id) => workEffortSeen.get(id))
+                }
+                const requestSeen = new Map()
+                const requestVisible = (ids) => {
+                    const wanted = ids.filter((id) => !requestSeen.has(id))
+                    if (wanted.length) {
+                        for (const id of wanted) requestSeen.set(id, false)
+                        const rows = Array.from(ec.entity.find('mantle.request.Request').condition('requestId', 'in', wanted)
+                                .selectField('requestId').selectField('filedByPartyId').selectField('rootWorkEffortId').list())
+                        const inProject = rows.filter((row) => row.filedByPartyId !== me && projects.has(row.rootWorkEffortId)).map((row) => row.requestId)
+                        const byParty = new Set(inProject.length && orgSide.size ? Array.from(ec.entity.find('mantle.request.RequestParty')
+                                .condition('requestId', 'in', inProject).condition('partyId', 'in', Array.from(orgSide))
+                                .condition(cf.makeConditionDate('fromDate', 'thruDate', null)).selectField('requestId').list()).map((row) => row.requestId) : [])
+                        for (const row of rows) requestSeen.set(row.requestId, row.filedByPartyId === me
+                                || (projects.has(row.rootWorkEffortId) && (orgSide.has(row.filedByPartyId) || byParty.has(row.requestId))))
+                    }
+                    return ids.filter((id) => requestSeen.get(id))
+                }
+                visibleWorkEffortIds = workEffortVisible(listOf(workEffortIds))
+                visibleRequestIds = requestVisible(listOf(requestIds))
+
+                const eventIds = listOf(communicationEventIds)
+                if (!eventIds.length) return
+                const events = Array.from(ec.entity.find('mantle.party.communication.CommunicationEvent').condition('communicationEventId', 'in', eventIds).list())
+                const partiesOf = new Map()
+                for (const row of ec.entity.find('mantle.party.communication.CommunicationEventParty').condition('communicationEventId', 'in', eventIds)
+                        .selectField('communicationEventId').selectField('partyId').list()) {
+                    if (!partiesOf.has(row.communicationEventId)) partiesOf.set(row.communicationEventId, new Set())
+                    partiesOf.get(row.communicationEventId).add(row.partyId)
+                }
+                // whether an event (or the root of its thread) is filed on a work effort or request the client sees
+                const onClientRecord = (event) => {
+                    const ids = [event.communicationEventId]
+                    if (event.rootCommEventId && event.rootCommEventId !== event.communicationEventId) ids.push(event.rootCommEventId)
+                    const workIds = Array.from(ec.entity.find('mantle.work.effort.WorkEffortCommEvent').condition('communicationEventId', 'in', ids)
+                            .selectField('workEffortId').list()).map((row) => row.workEffortId)
+                    const requestIdList = Array.from(ec.entity.find('mantle.request.RequestCommEvent').condition('communicationEventId', 'in', ids)
+                            .selectField('requestId').list()).map((row) => row.requestId)
+                    for (const row of ec.entity.find('mantle.party.communication.CommunicationEventRecord').condition('communicationEventId', 'in', ids)
+                            .condition('recordEntityName', 'in', ['mantle.work.effort.WorkEffort', 'mantle.request.Request']).list()) {
+                        if (row.recordEntityName === 'mantle.work.effort.WorkEffort') workIds.push(row.recordId)
+                        else requestIdList.push(row.recordId)
+                    }
+                    return workEffortVisible(workIds).length > 0 || requestVisible(requestIdList).length > 0
+                }
+                for (const event of events) {
+                    const id = event.communicationEventId
+                    if (event.statusId === 'CeCancelled') continue
+                    if (event.communicationEventTypeId === 'StatusUpdate') { if (updates.has(id)) visibleCommunicationEventIds.push(id); continue }
+                    if (!event.communicationEventTypeId || event.communicationEventTypeId === 'Comment') continue
+                    const parties = new Set(partiesOf.get(id) || [])
+                    if (event.fromPartyId) parties.add(event.fromPartyId)
+                    if (event.toPartyId) parties.add(event.toPartyId)
+                    if (parties.has(me)) { visibleCommunicationEventIds.push(id); continue }
+                    if (Array.from(parties).some((partyId) => orgSide.has(partyId)) && onClientRecord(event)) visibleCommunicationEventIds.push(id)
+                }
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="RecordLinkInfo">
         <description>
             What the record link and timeline services know about a record type: the full entity name and its single
@@ -2109,10 +2231,28 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 return false
             }
+            // a client contact who signs in (the PROJECT_CLIENT permission; impl-projects.md P10) sees only its client projects'
+            // shared work efforts, its requests and the messages for it (get#ClientRecordVisibility), no other record type,
+            // whatever its other groups or entity authorizations
+            let clientUser = null
+            const isClientUser = () => {
+                if (clientUser == null) clientUser = !!ec.user.userId && ec.user.hasPermission('PROJECT_CLIENT')
+                return clientUser
+            }
+            const clientVisible = (entityName, id) => {
+                const parameters = entityName === WORK_EFFORT ? {workEffortIds: [id]} : entityName === REQUEST ? {requestIds: [id]}
+                        : entityName === COMM_EVENT ? {communicationEventIds: [id]} : null
+                if (parameters == null) return false
+                const out = ec.service.sync().name('mantle.party.CommunicationServices.get#ClientRecordVisibility').parameters(parameters).call()
+                if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                return Array.from(out?.visibleWorkEffortIds || []).concat(Array.from(out?.visibleRequestIds || []),
+                        Array.from(out?.visibleCommunicationEventIds || [])).includes(id)
+            }
             visible = (entityName, keyField, id, depth) => {
                 // under the user's entity filters
                 const value = ec.entity.find(entityName).condition(keyField, id).one()
                 if (value == null) return false
+                if (authzOn && isClientUser()) return clientVisible(entityName, id)
                 if (entityName === PARTY) return !value.privateOwnerUserId || value.privateOwnerUserId === ec.user.userId
                 if (!authzOn) return true
                 if (entityName === COMM_EVENT) return commEventVisible(value, depth)
@@ -2846,7 +2986,11 @@ along with this software (see the LICENSE.md file). If not, see
             const kindValues = kinds == null ? [] : (typeof kinds === 'string' ? kinds.split(',') : Array.from(kinds))
             const wanted = new Set(kindValues.map((kind) => kindNames[String(kind).trim()]).filter((kind) => kind))
             // the chat messages are messages too
-            const wants = (kind) => wanted.size === 0 || wanted.has(kind) || (kind === 'chat' && wanted.has('message'))
+            const wantsAny = (kind) => wanted.size === 0 || wanted.has(kind) || (kind === 'chat' && wanted.has('message'))
+            // a client contact (the PROJECT_CLIENT permission; design-projects.md §15 Chatter for client users, impl-projects.md
+            // P10): the messages for it (get#ClientRecordVisibility) and the record's status changes, nothing else
+            const clientMode = !ec.artifactExecution.authzDisabled() && !!ec.user.userId && ec.user.hasPermission('PROJECT_CLIENT')
+            const wants = (kind) => wantsAny(kind) && (!clientMode || kind === 'message' || kind === 'change')
             const start = pageIndex * pageSize
             const need = start + pageSize + 1
             const beforeMillis = toMillis(beforeDate)
@@ -2899,9 +3043,22 @@ along with this software (see the LICENSE.md file). If not, see
                 const idCondition = info.isParty ? cf.makeCondition('communicationEventId', 'in', idList) : cf.makeCondition([
                     cf.makeCondition('communicationEventId', 'in', idList), cf.makeCondition('rootCommEventId', 'in', idList)], 'or')
                 let find = ec.entity.find('mantle.party.communication.CommunicationEvent').condition(idCondition)
-                        .condition(cf.makeCondition('statusId', 'not-equals', 'CeCancelled', true)).orderBy('-entryDate').limit(fetch)
+                        .condition(cf.makeCondition('statusId', 'not-equals', 'CeCancelled', true)).orderBy('-entryDate')
                 if (before) find = find.condition(cf.makeCondition('entryDate', 'less', before))
-                for (const value of find.list()) {
+                let found
+                if (clientMode) {
+                    // the record's events read whole (the client filters leave out a message it is only a party to), then only those
+                    // for the client
+                    const candidates = Array.from(find.disableAuthz().list())
+                    const out = ec.service.sync().name('mantle.party.CommunicationServices.get#ClientRecordVisibility')
+                            .parameter('communicationEventIds', candidates.map((value) => value.communicationEventId)).call()
+                    if (ec.message.hasError()) return
+                    const forClient = new Set(Array.from(out?.visibleCommunicationEventIds || []))
+                    found = candidates.filter((value) => forClient.has(value.communicationEventId)).slice(0, fetch)
+                } else {
+                    found = find.limit(fetch).list()
+                }
+                for (const value of found) {
                     const commEvent = value.getMap()
                     const kind = commEvent.communicationEventTypeId === 'Comment' ? 'note' : 'message'
                     if (!wants(kind)) continue
@@ -2986,6 +3143,7 @@ along with this software (see the LICENSE.md file). If not, see
                 for (const value of find.list()) {
                     const change = value.getMap()
                     const isStatus = /statusId$/i.test(change.changedFieldName || '')
+                    if (clientMode && change.changedFieldName !== 'statusId') continue
                     const oldDescription = isStatus ? statusDescription(change.oldValueText) : null
                     const newDescription = isStatus ? statusDescription(change.newValueText) : null
                     entries.push({kind: 'change', date: change.changedDate, entryKey: `audit:${change.auditHistorySeqId}`, authorPartyId: null,
@@ -3049,7 +3207,7 @@ along with this software (see the LICENSE.md file). If not, see
             // registered sources
             const registered = ec.entity.find('moqui.service.ServiceRegister').condition('serviceTypeEnumId', 'RecordTimelineSource')
                     .useCache(true).list()
-            for (const register of registered) runSource(register.serviceRegisterId, () => {
+            for (const register of (clientMode ? [] : registered)) runSource(register.serviceRegisterId, () => {
                 const out = callSource(register.serviceName, {recordEntityName: recordEntityName, recordId: recordId,
                     kinds: Array.from(wanted), beforeDate: before, limit: fetch})
                 if (ec.message.hasError()) return
@@ -3387,6 +3545,51 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="filter" noun="ClientAudience">
+        <description>
+            The users of userIds who may be told of a record's entry (impl-projects.md P10): every user who is not a client
+            contact (the PROJECT_CLIENT permission), and a client contact only for a communication event that is for it
+            (get#ClientRecordVisibility); without a communicationEventId (a note's activity, a change) no client contact. Strict:
+            a client whose check fails is left out, and logged.
+        </description>
+        <in-parameters>
+            <parameter name="userIds" type="List"/>
+            <parameter name="communicationEventId"/>
+        </in-parameters>
+        <out-parameters><parameter name="userIds" type="List"/></out-parameters>
+        <actions><script><![CDATA[
+            const ids = Array.from(new Set(Array.from(userIds || []).filter((id) => id)))
+            userIds = ids
+            if (!ids.length) return
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const cf = ec.entity.conditionFactory
+                const clients = new Set(Array.from(ec.entity.find('moqui.security.UserPermissionCheck').condition('userId', 'in', ids)
+                        .condition('userPermissionId', 'PROJECT_CLIENT').condition(cf.makeConditionDate('groupFromDate', 'groupThruDate', null))
+                        .condition(cf.makeConditionDate('permissionFromDate', 'permissionThruDate', null)).list()).map((row) => row.userId))
+                if (!clients.size) return
+                userIds = ids.filter((id) => {
+                    if (!clients.has(id)) return true
+                    if (!communicationEventId) return false
+                    ec.message.pushErrors()
+                    try {
+                        const out = ec.service.sync().name('mantle.party.CommunicationServices.get#ClientRecordVisibility')
+                                .parameters({userId: id, communicationEventIds: [communicationEventId]}).call()
+                        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                        return Array.from(out?.visibleCommunicationEventIds || []).includes(communicationEventId)
+                    } catch (err) {
+                        ec.logger.error(`Client user ${id} left out of the notice of communication event ${communicationEventId}: ${err}`)
+                        return false
+                    } finally {
+                        ec.message.clearErrors()
+                        ec.message.popErrors()
+                    }
+                })
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
     <service verb="notify" noun="RecordMention">
         <description>
             Notifies the users mentioned in a note or message on a record, on topic ChatterMention: mentionUserIds and the
@@ -3415,6 +3618,12 @@ along with this software (see the LICENSE.md file). If not, see
             if (mentionPartyIds?.length) for (const account of ec.entity.find('moqui.security.UserAccount')
                     .condition('partyId', 'in', Array.from(mentionPartyIds)).disableAuthz().list()) userIds.add(account.userId)
             userIds.delete(authorUserId)
+            if (userIds.size === 0) return
+            // a client contact is told only of a message for it (impl-projects.md P10)
+            const audience = ec.service.sync().name('mantle.party.CommunicationServices.filter#ClientAudience')
+                    .parameters({userIds: Array.from(userIds), communicationEventId: communicationEventId || null}).call()?.userIds || []
+            userIds.clear()
+            for (const id of audience) userIds.add(id)
             if (userIds.size === 0) return
             const message = ec.service.sync().name('mantle.party.CommunicationServices.make#RecordNotificationMessage').parameters({
                 recordEntityName: recordEntityName, recordId: recordId, communicationEventId: communicationEventId, subject: subject,
@@ -3459,9 +3668,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (!flagField) { ec.message.addError(`Follower kind ${kind} is not one of messages, notes, activities, changes`); return }
             const excluded = new Set(excludeUserIds ? Array.from(excludeUserIds) : [])
             excluded.add(authorUserId)
-            const userIds = ec.entity.find('mantle.party.communication.RecordFollower').condition('recordEntityName', recordEntityName)
+            const followers = ec.entity.find('mantle.party.communication.RecordFollower').condition('recordEntityName', recordEntityName)
                     .condition('recordId', recordId).condition(flagField, 'Y').list()
                     .map((follower) => follower.userId).filter((userId) => !excluded.has(userId))
+            // a client contact is told only of a message for it, never of a note, activity or change (impl-projects.md P10)
+            const userIds = followers.length ? Array.from(ec.service.sync().name('mantle.party.CommunicationServices.filter#ClientAudience')
+                    .parameters({userIds: followers, communicationEventId: kind === 'messages' ? (communicationEventId || null) : null})
+                    .call()?.userIds || []) : []
             if (userIds.length === 0) return
             const message = ec.service.sync().name('mantle.party.CommunicationServices.make#RecordNotificationMessage').parameters({
                 recordEntityName: recordEntityName, recordId: recordId, communicationEventId: communicationEventId, subject: subject,

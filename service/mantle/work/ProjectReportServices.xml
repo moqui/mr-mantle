@@ -61,6 +61,14 @@ along with this software (see the LICENSE.md file). If not, see
             committed = 0; added = 0; removed = 0; completed = 0; remaining = 0; carriedOver = 0; itemCount = 0; doneCount = 0; daysLeft = 0; workDays = 0
             const row = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
             if (row == null || row.workEffortTypeEnumId !== 'WetSprint') { ec.message.addError(ec.resource.expand('Sprint ${workEffortId} not found', '', {workEffortId})); return }
+            // only for one who sees its project and is no client contact, sprints being the team's (impl-projects.md F111); an
+            // internal caller (authorization disabled) is not checked
+            if (!ec.artifactExecution.authzDisabled()) {
+                const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+                if (vis.isClient || !(vis.allProjects || Array.from(vis.visibleProjectIds || []).includes(row.rootWorkEffortId))) {
+                    ec.message.addError(ec.resource.expand('Sprint ${workEffortId} not found', '', {workEffortId})); return
+                }
+            }
             const toMillis = (value) => {
                 if (value == null || value === '') return null
                 if (typeof value === 'number') return value
@@ -226,7 +234,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The velocity of a project's last sprints (sprintCount, the latest first; the sprint report, SprintDetail):
             each completed sprint's committed, added, removed, completed and carried-over size in the project's estimate unit
             (get#SprintBurndown), with the active ones too when includeActive; averageCompleted over the completed ones. A
-            sprint whose numbers fail is logged and left out.</description>
+            sprint whose numbers fail is logged and left out. Nothing for a user who does not see the project or is a client
+            contact (impl-projects.md F111).</description>
         <in-parameters>
             <parameter name="rootWorkEffortId" required="true"/>
             <parameter name="sprintCount" type="Integer" default="6"/>
@@ -239,6 +248,12 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             sprintList = []; averageCompleted = null
+            // only for one who sees the project and is no client contact (impl-projects.md F111); an internal caller (authorization
+            // disabled) is not checked
+            if (!ec.artifactExecution.authzDisabled()) {
+                const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+                if (vis.isClient || !(vis.allProjects || Array.from(vis.visibleProjectIds || []).includes(rootWorkEffortId))) return
+            }
             const settings = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectSettings').parameters({workEffortId: rootWorkEffortId}).call()?.settings || {}
             estimateUnit = settings.WstEstimateUnit === 'points' ? 'points' : 'hours'
             const statuses = ['WeComplete', 'WeClosed'].concat(includeActive ? ['WeInProgress'] : [])

@@ -1156,8 +1156,10 @@ along with this software (see the LICENSE.md file). If not, see
             AUTHZA_CREATE, AUTHZA_UPDATE); a lead of such a project (ProjectManager, Manager, ProgrammerLead, SysArchitect)
             also force-pushes and deletes refs and changes the settings (AUTHZA_DELETE); a client contact (Customer,
             CustomerBillTo, ClientManager, ClientBilling) only views it, and only when that project shares its repositories
-            with the client (WorkEffortSetting WstShareRepositories Y; client sign-in itself is impl-projects.md P10). For
-            anyone else nothing (AUTHZT_NONE), so other grants decide.</description>
+            with the client (WorkEffortSetting WstShareRepositories Y). A client contact who signs in (the PROJECT_CLIENT
+            permission, ProjectServices.get#ClientProjectInfo: its party's or its organization's client role on a project that
+            allows client sign-in) only views the repositories of its client projects that share them, whatever other role its
+            party holds (impl-projects.md P10). For anyone else nothing (AUTHZT_NONE), so other grants decide.</description>
         <in-parameters>
             <parameter name="userId"/>
             <parameter name="authzActionEnumId"/>
@@ -1174,6 +1176,16 @@ along with this software (see the LICENSE.md file). If not, see
             const projectIds = Array.from(ec.entity.find('mantle.work.effort.WorkEffortGitRepository').condition('repositoryId', artifactName)
                     .conditionDate('fromDate', 'thruDate', null).disableAuthz().list()).map((link) => link.workEffortId)
             if (!projectIds.length) return
+            // a client contact who signs in (PROJECT_CLIENT; impl-projects.md P10): only views, and only a repository of one of its
+            // client projects that shares its repositories (its own party's or its organization's client role), whatever other
+            // role its party holds; a failed check gives nothing
+            const client = ec.service.sync().name('mantle.work.ProjectServices.get#ClientProjectInfo').parameter('userId', userId).call()
+            if (ec.message.hasError() || client == null) return
+            if (client.isClient) {
+                if (action === 'AUTHZA_VIEW' && projectIds.some((id) => Array.from(client.shareRepositoryProjectIds || []).includes(id)))
+                    authzTypeEnumId = 'AUTHZT_ALLOW'
+                return
+            }
             const roles = Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', 'in', projectIds)
                     .condition('partyId', account.partyId).conditionDate('fromDate', 'thruDate', null).disableAuthz().list())
             if (!roles.length) return

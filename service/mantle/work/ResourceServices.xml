@@ -674,9 +674,33 @@ userIdList = []
                     userIds = groupIds.length ? Array.from(new Set(Array.from(ec.entity.find('moqui.security.UserGroupMember').condition('userGroupId', 'in', groupIds)
                             .conditionDate('fromDate', 'thruDate', null).list()).map((one) => one.userId))) : []
                     // only users with an account that is not disabled, and never the requester
-                    userIds = userIds.length ? Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds).limit(200).list())
-                            .filter((account) => account.disabled !== 'Y' && account.userId !== ec.user.userId && account.userId !== row.requestedByUserId)
-                            .map((account) => account.userId) : []
+                    // and only those who see the project (impl-projects.md F85): ADMIN, a current party of it, or a user of one of the
+                    // organizations whose All users or General project it is (get#VisibleProjectInfo's rule); never a client contact
+                    const accounts = userIds.length ? Array.from(ec.entity.find('moqui.security.UserAccount').condition('userId', 'in', userIds).limit(200).list())
+                            .filter((account) => account.disabled !== 'Y' && account.userId !== ec.user.userId && account.userId !== row.requestedByUserId) : []
+                    const adminIds = accounts.length ? new Set(Array.from(ec.entity.find('moqui.security.UserGroupMember').condition('userGroupId', 'ADMIN')
+                            .condition('userId', 'in', accounts.map((account) => account.userId)).conditionDate('fromDate', 'thruDate', null).list())
+                            .map((one) => one.userId)) : new Set()
+                    const clientIds = accounts.length ? new Set(Array.from(ec.entity.find('moqui.security.UserPermissionCheck')
+                            .condition('userId', 'in', accounts.map((account) => account.userId)).condition('userPermissionId', 'PROJECT_CLIENT')
+                            .conditionDate('groupFromDate', 'groupThruDate', null).conditionDate('permissionFromDate', 'permissionThruDate', null).list())
+                            .map((one) => one.userId)) : new Set()
+                    const sharedProject = ['WevAllUsers', 'WevGeneral'].includes(project?.visibilityEnumId)
+                    const projectOrgIds = project ? new Set([project.ownerPartyId].concat(Array.from(ec.entity.find('mantle.work.effort.WorkEffortParty')
+                            .condition('workEffortId', project.workEffortId).conditionDate('fromDate', 'thruDate', null).list()).map((one) => one.partyId))
+                            .filter((id) => id)) : new Set()
+                    const seesProject = (account) => {
+                        if (clientIds.has(account.userId)) return false
+                        if (adminIds.has(account.userId)) return true
+                        if (!project || !account.partyId) return false
+                        if (ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', project.workEffortId)
+                                .condition('partyId', account.partyId).conditionDate('fromDate', 'thruDate', null).count() > 0) return true
+                        if (!sharedProject) return false
+                        const orgIds = Array.from(ec.service.sync().name('mantle.party.PartyServices.get#PartyOrganizationInfo')
+                                .parameter('partyId', account.partyId).call()?.filterOrgIds || [])
+                        return orgIds.some((orgId) => projectOrgIds.has(orgId))
+                    }
+                    userIds = accounts.filter(seesProject).map((account) => account.userId)
                 } else {
                     topic = 'AllocationDecision'
                     const ids = new Set()

@@ -236,6 +236,156 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="get" noun="ClientProjectInfo">
+        <description>
+            What a client contact who signs in sees (design-projects.md §1.1; impl-projects.md P10), for userId (the current user
+            when empty). isClient: the user holds the PROJECT_CLIENT permission (an app's client group grants it); every other
+            output is empty when not. A client's projects are the projects (not templates) that allow client sign-in (their
+            WorkEffortSetting WstClientSignIn Y; there is no organization default) on which the user's party, or an organization
+            the person is a current contact, employee or representative of (PartyRelationship PrtContact, PrtEmployee or
+            PrtRepresentative from the person), holds a current client role (Customer, CustomerBillTo, ClientManager,
+            ClientBilling):
+            - clientProjectIds: those projects; clientOrgIds: those of the organizations that are a client of one of them;
+              clientPartyIds: the user's party and clientOrgIds; clientContactPartyIds: the user's party and the current contacts,
+              employees and representatives of clientOrgIds (whose requests are their organization's);
+            - shareHoursProjectIds and shareRepositoryProjectIds: those that share their hours (WstShareHours, the project's or
+              its organization's billing default) or their repositories (WstShareRepositories) with the client;
+            - statusUpdateIds: the communication events of the status updates posted for the client on them
+              (WorkEffortUpdate clientVisible Y);
+            - scopePartyIds: the parties a client may know of: clientContactPartyIds, clientOrgIds, the owners of its projects
+              and the current parties of them and of their items shared with the client, and the parties of their requests.
+            Strict: anything that fails is an error, so a caller deciding access refuses.
+        </description>
+        <in-parameters><parameter name="userId"/></in-parameters>
+        <out-parameters>
+            <parameter name="isClient" type="Boolean"/>
+            <parameter name="userPartyId"/>
+            <parameter name="clientProjectIds" type="List"><parameter name="workEffortId"/></parameter>
+            <parameter name="clientOrgIds" type="List"><parameter name="partyId"/></parameter>
+            <parameter name="clientPartyIds" type="List"><parameter name="partyId"/></parameter>
+            <parameter name="clientContactPartyIds" type="List"><parameter name="partyId"/></parameter>
+            <parameter name="shareHoursProjectIds" type="List"><parameter name="workEffortId"/></parameter>
+            <parameter name="shareRepositoryProjectIds" type="List"><parameter name="workEffortId"/></parameter>
+            <parameter name="statusUpdateIds" type="List"><parameter name="communicationEventId"/></parameter>
+            <parameter name="scopePartyIds" type="List"><parameter name="partyId"/></parameter>
+        </out-parameters>
+        <actions><script><![CDATA[
+            isClient = false; userPartyId = null
+            clientProjectIds = []; clientOrgIds = []; clientPartyIds = []; clientContactPartyIds = []
+            shareHoursProjectIds = []; shareRepositoryProjectIds = []; statusUpdateIds = []; scopePartyIds = []
+            const forUserId = userId || ec.user.userId
+            if (!forUserId) return
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            try {
+                const now = ec.user.nowTimestamp
+                const cf = ec.entity.conditionFactory
+                const current = (from, thru) => cf.makeConditionDate(from || 'fromDate', thru || 'thruDate', null)
+                if (forUserId === ec.user.userId) {
+                    isClient = ec.user.hasPermission('PROJECT_CLIENT')
+                } else {
+                    const groupIds = Array.from(ec.entity.find('moqui.security.UserPermissionCheck').condition('userId', forUserId)
+                            .condition('userPermissionId', 'PROJECT_CLIENT').condition(current('groupFromDate', 'groupThruDate'))
+                            .condition(current('permissionFromDate', 'permissionThruDate')).list()).map((row) => row.userGroupId)
+                    isClient = groupIds.length > 0
+                }
+                if (!isClient) return
+                const account = forUserId === ec.user.userId ? ec.user.userAccount
+                        : ec.entity.find('moqui.security.UserAccount').condition('userId', forUserId).one()
+                userPartyId = account?.partyId || null
+                if (!userPartyId) return
+                const contactTypes = ['PrtContact', 'PrtEmployee', 'PrtRepresentative']
+                const clientRoles = ['Customer', 'CustomerBillTo', 'ClientManager', 'ClientBilling']
+                const relatedOrgIds = Array.from(new Set(Array.from(ec.entity.find('mantle.party.PartyRelationship')
+                        .condition('fromPartyId', userPartyId).condition('relationshipTypeEnumId', 'in', contactTypes)
+                        .condition(current()).list()).map((row) => row.toPartyId).filter((id) => id && id !== userPartyId)))
+                const candidates = [userPartyId].concat(relatedOrgIds)
+                const projects = new Set()
+                const orgs = new Set()
+                const roleRows = Array.from(ec.entity.find('mantle.work.effort.WorkEffortAndParty').condition('partyId', 'in', candidates)
+                        .condition('roleTypeId', 'in', clientRoles).condition('workEffortTypeEnumId', 'WetProject')
+                        .condition(cf.makeCondition('isTemplate', 'not-equals', 'Y', true)).condition(current())
+                        .selectField('workEffortId').selectField('partyId').list())
+                const roleProjectIds = Array.from(new Set(roleRows.map((row) => row.workEffortId)))
+                const signIn = roleProjectIds.length ? new Set(Array.from(ec.entity.find('mantle.work.effort.WorkEffortSetting')
+                        .condition('workEffortId', 'in', roleProjectIds).condition('settingTypeEnumId', 'WstClientSignIn')
+                        .condition('settingValue', 'Y').list()).map((row) => row.workEffortId)) : new Set()
+                for (const row of roleRows) {
+                    if (!signIn.has(row.workEffortId)) continue
+                    projects.add(row.workEffortId)
+                    if (row.partyId !== userPartyId) orgs.add(row.partyId)
+                }
+                clientProjectIds = Array.from(projects).sort()
+                clientOrgIds = Array.from(orgs).sort()
+                clientPartyIds = [userPartyId].concat(clientOrgIds)
+                const contacts = new Set([userPartyId])
+                if (clientOrgIds.length) for (const row of ec.entity.find('mantle.party.PartyRelationship').condition('toPartyId', 'in', clientOrgIds)
+                        .condition('relationshipTypeEnumId', 'in', contactTypes).condition(current()).selectField('fromPartyId').list())
+                    contacts.add(row.fromPartyId)
+                clientContactPartyIds = Array.from(contacts).sort()
+                const scope = new Set(clientContactPartyIds.concat(clientOrgIds))
+                scopePartyIds = Array.from(scope).sort()
+                if (!clientProjectIds.length) return
+                for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', 'in', clientProjectIds)
+                        .selectField('ownerPartyId').list()) if (row.ownerPartyId) scope.add(row.ownerPartyId)
+                for (const row of ec.entity.find('mantle.work.effort.WorkEffortAndParty').condition('workEffortId', 'in', clientProjectIds)
+                        .condition(current()).selectField('partyId').list()) scope.add(row.partyId)
+                for (const row of ec.entity.find('mantle.work.effort.WorkEffortAndParty').condition('rootWorkEffortId', 'in', clientProjectIds)
+                        .condition('workEffortTypeEnumId', 'WetTask').condition('visibilityEnumId', 'in', ['WevAllUsers', 'WevGeneral'])
+                        .condition(current()).selectField('partyId').limit(5000).list()) scope.add(row.partyId)
+                const requestIds = Array.from(ec.entity.find('mantle.request.Request').condition('rootWorkEffortId', 'in', clientProjectIds)
+                        .selectField('requestId').limit(5000).list()).map((row) => row.requestId)
+                if (requestIds.length) for (const row of ec.entity.find('mantle.request.RequestParty').condition('requestId', 'in', requestIds)
+                        .selectField('partyId').list()) scope.add(row.partyId)
+                scopePartyIds = Array.from(scope).sort()
+                for (const projectId of clientProjectIds) {
+                    const settings = ec.service.sync().name('mantle.work.ProjectServices.get#ProjectSettings')
+                            .parameter('workEffortId', projectId).call()?.settings || {}
+                    if (settings.WstShareHours === 'Y') shareHoursProjectIds.push(projectId)
+                    if (settings.WstShareRepositories === 'Y') shareRepositoryProjectIds.push(projectId)
+                }
+                statusUpdateIds = Array.from(new Set(Array.from(ec.entity.find('mantle.work.effort.WorkEffortUpdate')
+                        .condition('workEffortId', 'in', clientProjectIds).condition('clientVisible', 'Y')
+                        .selectField('communicationEventId').list()).map((row) => row.communicationEventId))).sort()
+            } finally {
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+            }
+        ]]></script></actions>
+    </service>
+    <service verb="setup" noun="ClientProjectInfo" authenticate="anonymous-view">
+        <description>
+            Puts what a client contact sees (get#ClientProjectInfo) in the user context for the entity filters of an app's client
+            group (IronStone's BOSS_PROJECT_CLIENT filter set; impl-projects.md F2), as setup#UserOrganizationInfo does for the
+            organization filters; called per render from an app root's always-actions. clientUser is true for a client; each
+            list holds _NA_ when empty, so a filter on it matches nothing. A failure leaves the user a client with empty lists.
+        </description>
+        <out-parameters><parameter name="clientUser" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            const none = ['_NA_']
+            const list = (ids) => ids && ids.length ? Array.from(ids) : none
+            let info = null
+            ec.message.pushErrors()
+            try {
+                info = ec.service.sync().name('mantle.work.ProjectServices.get#ClientProjectInfo').call()
+                if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+            } catch (err) {
+                ec.logger.error(`Client project info of user ${ec.user.userId} not read, the client filters see nothing: ${err}`)
+                info = {isClient: true}
+            } finally {
+                ec.message.clearErrors()
+                ec.message.popErrors()
+            }
+            clientUser = !!info.isClient
+            ec.user.context.clientUser = clientUser
+            ec.user.context.clientProjectIds = list(info.clientProjectIds)
+            ec.user.context.clientOrgIds = list(info.clientOrgIds)
+            ec.user.context.clientPartyIds = list(info.clientPartyIds)
+            ec.user.context.clientContactPartyIds = list(info.clientContactPartyIds)
+            ec.user.context.clientShareHoursProjectIds = list(info.shareHoursProjectIds)
+            ec.user.context.clientStatusUpdateIds = list(info.statusUpdateIds)
+            ec.user.context.clientScopePartyIds = list(info.scopePartyIds)
+        ]]></script></actions>
+    </service>
+
     <service verb="get" noun="VisibleProjectInfo">
         <description>
             The projects the current user may see, as what a find of projects, tasks, requests or time applies as a condition
@@ -253,9 +403,16 @@ along with this software (see the LICENSE.md file). If not, see
             visibleProjectIds and (visibilityEnumId not in WevRestricted, WevConfidential, or rootWorkEffortId in
             managedProjectIds, or workEffortId in restrictedItemIds); each unless allProjects. Four small finds, so a screen
             may call it on each render.
+            - A client contact who signs in (the PROJECT_CLIENT permission, get#ClientProjectInfo; impl-projects.md P10) sees only
+              its client projects (visibleProjectIds), is a member or manager of none and sees no Restricted item, whatever its
+              groups (ADMIN too): isClient is true and itemVisibilityIds holds the visibilities of the items it sees (WevAllUsers,
+              WevGeneral: shared with the client), which a find of tasks applies as well (visibilityEnumId in itemVisibilityIds).
+              itemVisibilityIds is null for everyone else.
         </description>
         <out-parameters>
             <parameter name="allProjects" type="Boolean"/>
+            <parameter name="isClient" type="Boolean"/>
+            <parameter name="itemVisibilityIds" type="List"><parameter name="visibilityEnumId"/></parameter>
             <parameter name="userPartyId"/>
             <parameter name="orgIds" type="List"><parameter name="orgId"/></parameter>
             <parameter name="visibleProjectIds" type="List"><parameter name="workEffortId"/></parameter>
@@ -264,13 +421,34 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="restrictedItemIds" type="List"><parameter name="workEffortId"/></parameter>
         </out-parameters>
         <actions><script><![CDATA[
-            allProjects = !!ec.user.userId && ec.user.isInGroup('ADMIN')
+            allProjects = false
+            isClient = false
+            itemVisibilityIds = null
             userPartyId = ec.user.userAccount?.partyId || null
             orgIds = []
             visibleProjectIds = []
             memberProjectIds = []
             managedProjectIds = []
             restrictedItemIds = []
+            // a client contact first: its client projects and their shared items only (strict: a failure sees nothing)
+            if (ec.user.userId && ec.user.hasPermission('PROJECT_CLIENT')) {
+                isClient = true
+                itemVisibilityIds = ['WevAllUsers', 'WevGeneral']
+                ec.message.pushErrors()
+                try {
+                    const client = ec.service.sync().name('mantle.work.ProjectServices.get#ClientProjectInfo').call() || {}
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                    visibleProjectIds = Array.from(client.clientProjectIds || [])
+                } catch (err) {
+                    ec.logger.error(`Visible projects of client user ${ec.user.userId} not read, none seen: ${err}`)
+                    visibleProjectIds = []
+                } finally {
+                    ec.message.clearErrors()
+                    ec.message.popErrors()
+                }
+                return
+            }
+            allProjects = !!ec.user.userId && ec.user.isInGroup('ADMIN')
             if (!userPartyId) return
             const shared = ['WevAllUsers', 'WevGeneral']
             const wasDisabled = ec.artifactExecution.disableAuthz()
@@ -478,13 +656,21 @@ along with this software (see the LICENSE.md file). If not, see
                 <econdition field-name="rootWorkEffortId" from="workEffort.workEffortId"/>
                 <econdition field-name="workEffortTypeEnumId" value="WetTask"/>
             </entity-find-count>
-            <entity-find entity-name="mantle.work.effort.ProjectTaskCounts" list="taskStatusCountList">
-                <econdition field-name="rootWorkEffortId" from="workEffort.workEffortId"/>
-                <select-field field-name="statusId"/><select-field field-name="taskCount"/>
-            </entity-find>
             <set field="taskCountByStatusMap" from="{}"/>
-            <iterate list="taskStatusCountList" entry="taskStatusCount">
-                <script>taskCountByStatusMap[taskStatusCount.statusId] = taskStatusCount.taskCount</script></iterate>
+            <!-- a client contact (impl-projects.md P10): its filters need a task's visibility, which the counts view has not, so its
+                shared items are counted one by one -->
+            <if condition="ec.user.userId &amp;&amp; ec.user.hasPermission('PROJECT_CLIENT')"><then><script><![CDATA[
+                for (const task of ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', workEffort.workEffortId)
+                        .condition('workEffortTypeEnumId', 'WetTask').selectField('statusId').limit(10000).list())
+                    taskCountByStatusMap[task.statusId] = (taskCountByStatusMap[task.statusId] || 0) + 1
+            ]]></script></then><else>
+                <entity-find entity-name="mantle.work.effort.ProjectTaskCounts" list="taskStatusCountList">
+                    <econdition field-name="rootWorkEffortId" from="workEffort.workEffortId"/>
+                    <select-field field-name="statusId"/><select-field field-name="taskCount"/>
+                </entity-find>
+                <iterate list="taskStatusCountList" entry="taskStatusCount">
+                    <script>taskCountByStatusMap[taskStatusCount.statusId] = taskStatusCount.taskCount</script></iterate>
+            </else></if>
         </actions>
     </service>
 
@@ -636,6 +822,8 @@ along with this software (see the LICENSE.md file). If not, see
                 if (all) return true
                 if (!row.rootWorkEffortId) return (!!me && row.ownerPartyId === me) || myLooseIds.has(row.workEffortId)
                 if (!visible.has(row.rootWorkEffortId)) return false
+                // a client sees the items shared with it only (impl-projects.md P10)
+                if (vis.itemVisibilityIds && !Array.from(vis.itemVisibilityIds).includes(row.visibilityEnumId)) return false
                 if (['WevRestricted', 'WevConfidential'].includes(row.visibilityEnumId))
                     return managed.has(row.rootWorkEffortId) || restricted.has(row.workEffortId)
                 return true
@@ -2277,16 +2465,25 @@ along with this software (see the LICENSE.md file). If not, see
             const size = Math.max(1, Math.min(Number(pageSize) || 20, 100))
             const page = Math.max(0, Number(pageIndex) || 0)
             const wanted = (page + 1) * size + 1
-            const want = kinds ? String(kinds).split(',').map((kind) => kind.trim()).filter((kind) => kind) : ['status', 'comment', 'update', 'commit']
+            let want = kinds ? String(kinds).split(',').map((kind) => kind.trim()).filter((kind) => kind) : ['status', 'comment', 'update', 'commit']
             const project = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
             if (project == null) return
             const vis = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').call() || {}
+            // a client (impl-projects.md P10): of a project it sees, the status changes of its shared items and the status updates
+            // posted for it; never notes, messages or commits
+            const clientShared = vis.isClient ? new Set(Array.from(vis.itemVisibilityIds || [])) : null
+            if (clientShared) {
+                if (!Array.from(vis.visibleProjectIds || []).includes(workEffortId)) return
+                want = want.filter((kind) => kind === 'status' || kind === 'update')
+            }
             const manages = !!vis.allProjects || Array.from(vis.managedProjectIds || []).includes(workEffortId)
             const restrictedOk = new Set(Array.from(vis.restrictedItemIds || []))
             // the project and its items, by id (an item it may not see is left out)
             const items = new Map([[workEffortId, project.workEffortName || workEffortId]])
             for (const row of ec.entity.find('mantle.work.effort.WorkEffort').condition('rootWorkEffortId', workEffortId).selectField('workEffortId')
-                    .selectField('workEffortName').selectField('visibilityEnumId').limit(5000).list()) {
+                    .selectField('workEffortName').selectField('visibilityEnumId').selectField('workEffortTypeEnumId').limit(5000).list()) {
+                if (clientShared && row.workEffortTypeEnumId === 'WetTask' && !clientShared.has(row.visibilityEnumId)) continue
+                if (clientShared && !['WetTask', 'WetMilestone', 'WetRelease'].includes(row.workEffortTypeEnumId)) continue
                 if (!manages && ['WevRestricted', 'WevConfidential'].includes(row.visibilityEnumId) && !restrictedOk.has(row.workEffortId)) continue
                 items.set(row.workEffortId, row.workEffortName || row.workEffortId)
             }
@@ -2329,6 +2526,10 @@ along with this software (see the LICENSE.md file). If not, see
                         text: '', userId: row.changedByUserId || null, authorName: userName(row.changedByUserId), key: 'audit-' + row.auditHistorySeqId})
                 }
             })
+            // a client's status updates: those posted for the client (WorkEffortUpdate clientVisible Y)
+            const clientUpdateIds = new Set()
+            if (clientShared) for (const row of ec.entity.find('mantle.work.effort.WorkEffortUpdate').condition('workEffortId', workEffortId)
+                    .condition('clientVisible', 'Y').disableAuthz().list()) clientUpdateIds.add(row.communicationEventId)
             if (want.includes('comment') || want.includes('update')) source('comment', () => {
                 const byEvent = new Map()
                 for (const part of chunks(ids, 1000)) for (const row of ec.entity.find('mantle.work.effort.WorkEffortCommEvent').condition('workEffortId', 'in', part)
@@ -2338,6 +2539,7 @@ along with this software (see the LICENSE.md file). If not, see
                         .condition(ec.entity.conditionFactory.makeCondition('statusId', 'not-equals', 'CeCancelled', true)).orderBy('-entryDate').limit(wanted).list()) {
                     const isUpdate = event.communicationEventTypeId === 'StatusUpdate'
                     if (!want.includes(isUpdate ? 'update' : 'comment')) continue
+                    if (clientShared && !clientUpdateIds.has(event.communicationEventId)) continue
                     const plain = String(event.body || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
                     const itemId = byEvent.get(event.communicationEventId)
                     entries.push({kind: isUpdate ? 'update' : 'comment', date: millis(event.entryDate), workEffortId: itemId, workEffortName: items.get(itemId),
@@ -2956,7 +3158,9 @@ along with this software (see the LICENSE.md file). If not, see
                     const approverPartyId = settings.WstApproverParty || null
                     const userPartyId = vis.userPartyId || null
                     isApprover = !!userPartyId && userPartyId === approverPartyId
-                    canView = all || Array.from(vis.visibleProjectIds || []).includes(projectId) || isApprover
+                    // the approver sees the gate of a project it does not otherwise see, but a client contact only of its client projects
+                    // (impl-projects.md P10)
+                    canView = all || Array.from(vis.visibleProjectIds || []).includes(projectId) || (isApprover && !vis.isClient)
                     if (canView) {
                         const manages = all || Array.from(vis.managedProjectIds || []).includes(projectId)
                                 || (Array.from(vis.visibleProjectIds || []).includes(projectId) && ec.user.hasPermission('MILESTONE_APPROVE'))
