@@ -528,6 +528,89 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
+    <!-- the labels themselves (design-projects.md §12 Labels): WorkEffortCategory rows of type WcatLabel, an organization's
+        (ownerPartyId), with a color name of the theme's set -->
+    <service verb="create" noun="Label">
+        <description>A work item label: a WorkEffortCategory of type WcatLabel with its name (description), its color name and
+            its organization (ownerPartyId); a name the organization's labels have already is refused.</description>
+        <in-parameters>
+            <parameter name="description" required="true"/>
+            <parameter name="colorName" default-value="grey"/>
+            <parameter name="ownerPartyId"/>
+        </in-parameters>
+        <out-parameters><parameter name="workEffortCategoryId"/></out-parameters>
+        <actions><script><![CDATA[
+            const colors = ['grey', 'blue', 'indigo', 'purple', 'pink', 'red', 'orange', 'amber', 'green', 'teal', 'cyan', 'brown']
+            const name = String(description).trim()
+            if (!name) { ec.message.addError(ec.l10n.localize('A label needs a name')); return }
+            if (!colors.includes(colorName)) { ec.message.addError(ec.resource.expand('${colorName} is not a label color', '', {colorName})); return }
+            const same = ec.entity.find('mantle.work.effort.WorkEffortCategory').condition('categoryTypeEnumId', 'WcatLabel')
+                    .condition(ownerPartyId ? ec.entity.conditionFactory.makeCondition('ownerPartyId', 'equals', ownerPartyId) : ec.entity.conditionFactory.makeCondition('ownerPartyId', 'is-null', null))
+                    .condition(ec.entity.conditionFactory.makeCondition('description', 'equals', name, false, true)).count()
+            if (same) { ec.message.addError(ec.resource.expand('There is a label ${name} already', '', {name})); return }
+            workEffortCategoryId = ec.service.sync().name('create#mantle.work.effort.WorkEffortCategory').parameters({categoryTypeEnumId: 'WcatLabel',
+                description: name, colorName: colorName, ownerPartyId: ownerPartyId || null}).call()?.workEffortCategoryId
+        ]]></script></actions>
+    </service>
+    <service verb="update" noun="Label">
+        <description>A label's name or color.</description>
+        <in-parameters>
+            <parameter name="workEffortCategoryId" required="true"/>
+            <parameter name="description"/>
+            <parameter name="colorName"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const label = ec.entity.find('mantle.work.effort.WorkEffortCategory').condition('workEffortCategoryId', workEffortCategoryId).one()
+            if (label == null || label.categoryTypeEnumId !== 'WcatLabel') { ec.message.addError(ec.resource.expand('${workEffortCategoryId} is not a label', '', {workEffortCategoryId})); return }
+            const colors = ['grey', 'blue', 'indigo', 'purple', 'pink', 'red', 'orange', 'amber', 'green', 'teal', 'cyan', 'brown']
+            if (colorName && !colors.includes(colorName)) { ec.message.addError(ec.resource.expand('${colorName} is not a label color', '', {colorName})); return }
+            const name = description == null ? null : String(description).trim()
+            if (name === '') { ec.message.addError(ec.l10n.localize('A label needs a name')); return }
+            const fields = {workEffortCategoryId: workEffortCategoryId}
+            if (name) fields.description = name
+            if (colorName) fields.colorName = colorName
+            ec.service.sync().name('update#mantle.work.effort.WorkEffortCategory').parameters(fields).call()
+        ]]></script></actions>
+    </service>
+    <service verb="delete" noun="Label">
+        <description>Deletes a label and takes it off the work items that have it.</description>
+        <in-parameters><parameter name="workEffortCategoryId" required="true"/></in-parameters>
+        <out-parameters><parameter name="itemCount" type="Integer"><description>The items it was taken off</description></parameter></out-parameters>
+        <actions><script><![CDATA[
+            const label = ec.entity.find('mantle.work.effort.WorkEffortCategory').condition('workEffortCategoryId', workEffortCategoryId).one()
+            if (label == null || label.categoryTypeEnumId !== 'WcatLabel') { ec.message.addError(ec.resource.expand('${workEffortCategoryId} is not a label', '', {workEffortCategoryId})); return }
+            itemCount = ec.entity.find('mantle.work.effort.WorkEffortCategoryAppl').condition('workEffortCategoryId', workEffortCategoryId).deleteAll()
+            label.delete()
+        ]]></script></actions>
+    </service>
+    <service verb="merge" noun="Labels">
+        <description>Merges a label into another (design-projects.md §12 Labels MergeLabels): the items of fromCategoryId get
+            intoCategoryId (those that have it already keep one), and fromCategoryId is deleted.</description>
+        <in-parameters>
+            <parameter name="fromCategoryId" required="true"/>
+            <parameter name="intoCategoryId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="itemCount" type="Integer"><description>The items moved to the other label</description></parameter></out-parameters>
+        <actions><script><![CDATA[
+            itemCount = 0
+            if (fromCategoryId === intoCategoryId) { ec.message.addError(ec.l10n.localize('Choose two different labels')); return }
+            for (const id of [fromCategoryId, intoCategoryId]) {
+                const label = ec.entity.find('mantle.work.effort.WorkEffortCategory').condition('workEffortCategoryId', id).one()
+                if (label == null || label.categoryTypeEnumId !== 'WcatLabel') { ec.message.addError(ec.resource.expand('${id} is not a label', '', {id})); return }
+            }
+            const has = new Set(Array.from(ec.entity.find('mantle.work.effort.WorkEffortCategoryAppl').condition('workEffortCategoryId', intoCategoryId)
+                    .selectField('workEffortId').list()).map((row) => row.workEffortId))
+            for (const row of ec.entity.find('mantle.work.effort.WorkEffortCategoryAppl').condition('workEffortCategoryId', fromCategoryId).list()) {
+                if (!has.has(row.workEffortId)) {
+                    ec.service.sync().name('create#mantle.work.effort.WorkEffortCategoryAppl').parameters({workEffortId: row.workEffortId, workEffortCategoryId: intoCategoryId}).call()
+                    itemCount++
+                }
+                row.delete()
+            }
+            ec.entity.find('mantle.work.effort.WorkEffortCategory').condition('workEffortCategoryId', fromCategoryId).one()?.delete()
+        ]]></script></actions>
+    </service>
+
     <service verb="set" noun="TaskRecurrence">
         <description>The repeat rule of a task (design-projects.md §5 "Recurring work items"): rrule an RFC 5545 RRULE value
             (FREQ=MONTHLY;BYMONTHDAY=1), on the task's WorkEffortRecurrence, which makes it the series; recurFromCompletion Y

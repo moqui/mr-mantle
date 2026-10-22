@@ -216,6 +216,12 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.user.NotificationTopic topic="WorkItemAssigned" inboxEnumId="NinNotifications" description="Work Item Assigned to You" typeString="info"
             showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
             titleTemplate="${assignedByName} assigned you ${workEffortId}: ${workEffortName} (${projectName})"/>
+    <!-- a status update posted on a project the user is on (mantle.work.ProjectServices.post#ProjectUpdate): workEffortId,
+        workEffortName, healthEnumId, healthLabel, percentComplete, subject, authorName, communicationEventId, the project as
+        the record; in the Updates inbox. The app that shows projects sets the link (IronStone Projects: BossSetupData.xml). -->
+    <moqui.security.user.NotificationTopic topic="ProjectStatusUpdate" inboxEnumId="NinUpdates" description="Project Status Update" typeString="info"
+            showAlert="N" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="${workEffortName} is ${healthLabel}: ${subject} (${authorName})"/>
     <!-- a page to review and the decision on it: the framework seeds both topics (moqui.resource.wiki.WikiPageReview in
         framework/entity/ResourceEntities.xml), with the approval services of WikiPageReview (approveServiceName,
         refuseServiceName, refuseReasonRequired) and the message fields (wikiPageReviewId, wikiPageId, wikiSpaceId, pagePath,
