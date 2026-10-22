@@ -79,6 +79,10 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldSeqId="31" fieldPath="assocs:type:description" fieldNameAlias="assocType"/>
         <fields fieldSeqId="32" fieldPath="toAssocs:workEffortId" fieldNameAlias="assocFromId"/>
         <fields fieldSeqId="33" fieldPath="toAssocs:type:description" fieldNameAlias="assocTypeTo"/>
+        <!-- the plan items the task is in (milestone, release, sprint, component: assocs from them) by name, and its labels -->
+        <fields fieldSeqId="34" fieldPath="toAssocs:workEffort:workEffortName" fieldNameAlias="assocFromName"/>
+        <fields fieldSeqId="35" fieldPath="categories:workEffortCategoryId" fieldNameAlias="categoryId"/>
+        <fields fieldSeqId="36" fieldPath="categories:category:description" fieldNameAlias="category"/>
 
         <fields fieldSeqId="40" fieldPath="facility:pseudoId" fieldNameAlias="facilityPseudoId"/>
         <fields fieldSeqId="41" fieldPath="facility:facilityName" fieldNameAlias="facilityName"/>

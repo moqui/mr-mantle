@@ -155,7 +155,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="workEffortId" type="id" is-pk="true"/>
         <field name="universalId" type="text-medium"/>
         <field name="sourceReferenceId" type="text-short"/>
-        <field name="parentWorkEffortId" type="id"><description>For task/etc breakdown</description></field>
+        <field name="parentWorkEffortId" type="id" enable-audit-log="update"><description>For task/etc breakdown; a move in the
+            work item tree (TaskServices.move#Task) is in the audit log</description></field>
         <field name="rootWorkEffortId" type="id"><description>The root of the tree this is part of (if applicable), like a project</description></field>
 
         <field name="workEffortTypeEnumId" type="id"/>
@@ -608,6 +609,8 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="WorkEffortCategoryAppl" package="mantle.work.effort">
         <field name="workEffortId" type="id" is-pk="true"/>
         <field name="workEffortCategoryId" type="id" is-pk="true"/>
+        <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
+        <relationship type="one" related="mantle.work.effort.WorkEffortCategory" short-alias="category"/>
     </entity>
 
     <entity entity-name="WorkEffortCommEvent" package="mantle.work.effort" cache="never">
