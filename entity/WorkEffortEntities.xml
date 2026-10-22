@@ -173,6 +173,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sendNotificationEmail" type="text-indicator"/>
         <field name="percentComplete" type="number-integer"/>
         <field name="revisionNumber" type="number-integer"/>
+        <field name="sequenceNum" type="number-integer"><description>The rank of a task among the tasks of its parent (or of its
+            project at the top), lowest first, in gaps of 1000 so a move renumbers only when a gap closes</description></field>
+        <field name="estimatedPoints" type="number-decimal" enable-audit-log="true"><description>Story points, in the
+            project's estimate unit, beside the hours of estimatedWorkTime</description></field>
+        <field name="healthEnumId" type="id"><description>For a project: on track, at risk or off track, from its latest
+            status update (WorkEffortUpdate)</description></field>
+        <field name="isTemplate" type="text-indicator"><description>Y for a project kept as a template to copy
+            (ProjectServices.clone#Project), left out of the lists of projects and work</description></field>
 
         <field name="workEffortName" type="text-medium"/>
         <field name="description" type="text-long"/>
@@ -235,6 +243,8 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="resolutionEnumId"/></relationship>
         <relationship type="one" title="WorkType" related="moqui.basic.Enumeration" short-alias="workType">
             <key-map field-name="workTypeEnumId"/></relationship>
+        <relationship type="one" title="WorkEffortHealth" related="moqui.basic.Enumeration" short-alias="health">
+            <key-map field-name="healthEnumId"/></relationship>
         <relationship type="one" title="Owner" related="mantle.party.Party" short-alias="owner">
             <key-map field-name="ownerPartyId"/></relationship>
         <relationship type="one" related="mantle.product.store.ProductStore" short-alias="productStore"/>
@@ -290,6 +300,8 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Task" enumId="WetTask" enumTypeId="WorkEffortType"/>
             <moqui.basic.Enumeration description="Release" enumId="WetRelease" enumTypeId="WorkEffortType"/>
             <moqui.basic.Enumeration description="Component" enumId="WetComponent" enumTypeId="WorkEffortType"/>
+            <!-- a time box of a project's tasks, joined to them by WorkEffortAssoc WeatSprint -->
+            <moqui.basic.Enumeration description="Sprint" enumId="WetSprint" enumTypeId="WorkEffortType"/>
 
             <moqui.basic.Enumeration description="Event" enumId="WetEvent" enumTypeId="WorkEffortType"/>
             <moqui.basic.Enumeration description="Available" enumId="WetAvailable" enumTypeId="WorkEffortType"/>
@@ -316,6 +328,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Marketing" enumId="WepPrMarketing" parentEnumId="WetProject" enumTypeId="WorkEffortPurpose"/>
             <moqui.basic.Enumeration description="Product Development" enumId="WepPrProdDev" parentEnumId="WetProject" enumTypeId="WorkEffortPurpose"/>
             <moqui.basic.Enumeration description="Product Fulfillment" enumId="WepPrProdFulfill" parentEnumId="WetProject" enumTypeId="WorkEffortPurpose"/>
+            <moqui.basic.Enumeration description="Client Project" enumId="WepPrClient" parentEnumId="WetProject" enumTypeId="WorkEffortPurpose"/>
 
             <moqui.basic.Enumeration description="Manufacturing" enumId="WepManufacturing" enumTypeId="WorkEffortPurpose"/>
             <moqui.basic.Enumeration description="Assembling" enumId="WepAssembling" parentEnumId="WepManufacturing" enumTypeId="WorkEffortPurpose"/>
@@ -362,6 +375,9 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.StatusItem description="Approved" sequenceNum="2" statusId="WeApproved" statusTypeId="WorkEffort"/>
             <moqui.basic.StatusItem description="In Progress" sequenceNum="3" statusId="WeInProgress" statusTypeId="WorkEffort"/>
             <moqui.basic.StatusItem description="On Hold" sequenceNum="5" statusId="WeOnHold" statusTypeId="WorkEffort"/>
+            <!-- the statuses of the WorkEffortDevelopment flow (below) -->
+            <moqui.basic.StatusItem description="In Review" sequenceNum="6" statusId="WeInReview" statusTypeId="WorkEffort"/>
+            <moqui.basic.StatusItem description="In Testing" sequenceNum="7" statusId="WeInTesting" statusTypeId="WorkEffort"/>
             <moqui.basic.StatusItem description="Complete" sequenceNum="9" statusId="WeComplete" statusTypeId="WorkEffort"/>
             <moqui.basic.StatusItem description="Closed" sequenceNum="10" statusId="WeClosed" statusTypeId="WorkEffort"/>
             <moqui.basic.StatusItem description="Cancelled" sequenceNum="99" statusId="WeCancelled" statusTypeId="WorkEffort"/>
@@ -395,6 +411,41 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortOther" statusId="WeCancelled" toStatusId="WeComplete" transitionName="Complete"/>
             <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortOther" statusId="WeCancelled" toStatusId="WeClosed" transitionName="Close"/>
 
+            <!-- for the tasks of a software project (WorkEffort.statusFlowId of the project): work in progress goes to review and
+                testing before it is complete, with the moves back when a review or a test sends it back -->
+            <moqui.basic.StatusFlow statusFlowId="WorkEffortDevelopment" statusTypeId="WorkEffort"
+                    description="Development: In Progress, In Review, In Testing, Complete"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInPlanning" toStatusId="WeApproved" transitionName="Approve"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInPlanning" toStatusId="WeInProgress" transitionName="Begin"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInPlanning" toStatusId="WeCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeApproved" toStatusId="WeInProgress" transitionName="Begin"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeApproved" toStatusId="WeCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInProgress" toStatusId="WeInReview" transitionName="Review"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInProgress" toStatusId="WeComplete" transitionName="Complete"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInProgress" toStatusId="WeOnHold" transitionName="Hold"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInProgress" toStatusId="WeCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInReview" toStatusId="WeInTesting" transitionName="Test"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInReview" toStatusId="WeComplete" transitionName="Complete"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInReview" toStatusId="WeInProgress" transitionName="Return"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInReview" toStatusId="WeCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInTesting" toStatusId="WeComplete" transitionName="Complete"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInTesting" toStatusId="WeInReview" transitionName="Back to Review"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInTesting" toStatusId="WeInProgress" transitionName="Return"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeInTesting" toStatusId="WeCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeOnHold" toStatusId="WeInProgress" transitionName="Resume"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeOnHold" toStatusId="WeCancelled" transitionName="Cancel"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeComplete" toStatusId="WeClosed" transitionName="Close"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeComplete" toStatusId="WeInTesting" transitionName="Back to Testing"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeComplete" toStatusId="WeInProgress" transitionName="Resume"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeClosed" toStatusId="WeInProgress" transitionName="Re-open"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="WorkEffortDevelopment" statusId="WeCancelled" toStatusId="WeInPlanning" transitionName="Re-open"/>
+
+            <!-- Work Effort Health: how a project is going, set by its status updates (WorkEffortUpdate) -->
+            <moqui.basic.EnumerationType description="Work Effort Health" enumTypeId="WorkEffortHealth"/>
+            <moqui.basic.Enumeration description="On Track" enumId="WehOnTrack" sequenceNum="1" enumTypeId="WorkEffortHealth"/>
+            <moqui.basic.Enumeration description="At Risk" enumId="WehAtRisk" sequenceNum="2" enumTypeId="WorkEffortHealth"/>
+            <moqui.basic.Enumeration description="Off Track" enumId="WehOffTrack" sequenceNum="3" enumTypeId="WorkEffortHealth"/>
+
             <!-- Work Effort Visibility -->
             <moqui.basic.EnumerationType description="Work Effort Visibility" enumTypeId="WorkEffortVisibility"/>
             <!-- if set to all users then may show in calendars/etc for all users -->
@@ -409,7 +460,7 @@ along with this software (see the LICENSE.md file). If not, see
             <detail relationship="parent"/><detail relationship="root"/>
             <detail relationship="type"/><detail relationship="purpose"/>
             <detail relationship="visibility"/><detail relationship="resolution"/>
-            <detail relationship="workType"/>
+            <detail relationship="workType"/><detail relationship="health"/>
             <detail relationship="owner" use-master="basic"/>
             <detail relationship="status"/><detail relationship="facility"/>
             <detail relationship="timeUom"/><detail relationship="costUom"/>
@@ -487,6 +538,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="fromDate" type="date-time" is-pk="true"/>
         <field name="thruDate" type="date-time"/>
         <field name="sequenceNum" type="number-integer"/>
+        <field name="lagDays" type="number-decimal"><description>For WeatDependsOn (workEffortId depends on toWorkEffortId,
+            finish to start): the working days between the end of toWorkEffortId and the start of workEffortId</description></field>
         <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
         <relationship type="one" title="To" related="mantle.work.effort.WorkEffort" short-alias="toWorkEffort">
             <key-map field-name="toWorkEffortId"/></relationship>
@@ -508,6 +561,8 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Milestone" enumId="WeatMilestone" enumTypeId="WorkEffortAssocType"/>
             <moqui.basic.Enumeration description="Release" enumId="WeatRelease" enumTypeId="WorkEffortAssocType"/>
             <moqui.basic.Enumeration description="Component" enumId="WeatComponent" enumTypeId="WorkEffortAssocType"/>
+            <!-- workEffortId the sprint (WetSprint), toWorkEffortId the task; a carry-over sets thruDate on the one and starts the next -->
+            <moqui.basic.Enumeration description="Sprint" enumId="WeatSprint" enumTypeId="WorkEffortAssocType"/>
             <!-- an instance of a recurring event (WorkEffortRecurrence) changed on its own: workEffortId the series, toWorkEffortId
                 the instance's own WorkEffort, which replaces the generated instance, and fromDate the start of the instance it
                 replaces (the iCalendar RECURRENCE-ID), so these rows are not date-filtered; a cancelled instance (WeCancelled)
@@ -533,12 +588,22 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="WorkEffortCategory" package="mantle.work.effort">
-        <description>Categories for WorkEffort, especially events like iCal/VCALENDAR categories</description>
+        <description>Categories for WorkEffort, especially events like iCal/VCALENDAR categories, and the labels of tasks</description>
         <field name="workEffortCategoryId" type="id" is-pk="true"/>
+        <field name="categoryTypeEnumId" type="id"/>
         <field name="description" type="text-medium"/>
         <field name="ownerPartyId" type="id"/>
+        <field name="colorName" type="text-short"><description>A color name of the theme's set (blue, teal, amber, ...)
+            for a label's chip</description></field>
+        <relationship type="one" title="WorkEffortCategoryType" related="moqui.basic.Enumeration" short-alias="type">
+            <key-map field-name="categoryTypeEnumId"/></relationship>
         <relationship type="one" title="Owner" related="mantle.party.Party" short-alias="owner">
             <key-map field-name="ownerPartyId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Work Effort Category Type" enumTypeId="WorkEffortCategoryType"/>
+            <moqui.basic.Enumeration description="Label" enumId="WcatLabel" enumTypeId="WorkEffortCategoryType"/>
+            <moqui.basic.Enumeration description="Holiday" enumId="WcatHoliday" enumTypeId="WorkEffortCategoryType"/>
+        </seed-data>
     </entity>
     <entity entity-name="WorkEffortCategoryAppl" package="mantle.work.effort">
         <field name="workEffortId" type="id" is-pk="true"/>
@@ -842,6 +907,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="exdates" type="text-very-long"/>
         <field name="rdates" type="text-very-long"/>
         <field name="timeZone" type="text-short"/>
+        <field name="recurFromCompletion" type="text-indicator"><description>Y for a recurring task whose next dates count
+            from the day the last one was completed rather than from its due date</description></field>
         <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
     </entity>
     <entity entity-name="WorkEffortReminder" package="mantle.work.effort" cache="never">
@@ -868,6 +935,55 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="WermEmail" description="Email" sequenceNum="2" enumTypeId="WorkEffortReminderMethod"/>
         </seed-data>
     </entity>
+    <entity entity-name="WorkEffortSetting" package="mantle.work.effort" cache="never">
+        <description>A project's own choice of a setting (ProjectServices.store#ProjectSetting); without a row the
+            organization's applies (ProjectServices.get#ProjectSettings): the PartySetting the setting type's optionValue
+            names, a JSON object whose enumCode key holds it.</description>
+        <field name="workEffortId" type="id" is-pk="true"/>
+        <field name="settingTypeEnumId" type="id" is-pk="true"/>
+        <field name="settingValue" type="text-long"/>
+        <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
+        <relationship type="one" title="WorkEffortSettingType" related="moqui.basic.Enumeration" short-alias="type">
+            <key-map field-name="settingTypeEnumId"/></relationship>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Work Effort Setting Type" enumTypeId="WorkEffortSettingType"/>
+            <!-- a project's modules and work items -->
+            <moqui.basic.Enumeration enumId="WstModules" description="Modules (the project's tabs on, a comma list)" sequenceNum="1" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstEstimateUnit" description="Estimate unit (hours or points)" sequenceNum="2" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstWorkItemTypes" description="Work item types offered (WorkEffortPurpose ids, a comma list)" sequenceNum="3"
+                    optionValue="ProjWorkItemTypes" enumCode="offered" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstSeveralSprints" description="Several active sprints (Y or N)" sequenceNum="4" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstShareNewItems" description="New work items shared with the client (Y or N)" sequenceNum="5" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstKeywordComplete" description="Fixes keywords in commits complete work items (Y or N)" sequenceNum="6"
+                    optionValue="ProjConventions" enumCode="keywordComplete" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstRequestFromWork" description="A request completes when its work does (Y or N)" sequenceNum="7" enumTypeId="WorkEffortSettingType"/>
+            <!-- intake -->
+            <moqui.basic.Enumeration enumId="WstIntakeAccount" description="Intake mail account (emailAccountId)" sequenceNum="10" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstIntakePlusTag" description="Intake plus tag" sequenceNum="11" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstIntakeToken" description="Public request form token" sequenceNum="12" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstTriageParty" description="Triage assignee (partyId)" sequenceNum="13"
+                    optionValue="ProjIntake" enumCode="triagePartyId" enumTypeId="WorkEffortSettingType"/>
+            <!-- code -->
+            <moqui.basic.Enumeration enumId="WstBranchPattern" description="Branch name pattern" sequenceNum="20"
+                    optionValue="ProjConventions" enumCode="branchPattern" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstMergeRequestMoves" description="Merge requests move work items (Y or N)" sequenceNum="21"
+                    optionValue="ProjConventions" enumCode="mergeRequestMoves" enumTypeId="WorkEffortSettingType"/>
+            <!-- billing -->
+            <moqui.basic.Enumeration enumId="WstBillingBasis" description="Billing basis" sequenceNum="30"
+                    optionValue="ProjBillingDefaults" enumCode="billingBasis" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstInvoiceGrouping" description="Invoice grouping" sequenceNum="31"
+                    optionValue="ProjBillingDefaults" enumCode="invoiceGrouping" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstShareHours" description="Hours shared with the client (Y or N)" sequenceNum="32"
+                    optionValue="ProjBillingDefaults" enumCode="shareHours" enumTypeId="WorkEffortSettingType"/>
+            <!-- client access and docs -->
+            <moqui.basic.Enumeration enumId="WstClientSignIn" description="Client sign-in (Y or N)" sequenceNum="40" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstShareRepositories" description="Repositories shared with the client read only (Y or N)" sequenceNum="41" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstDocsWikiSpace" description="Documentation space (wikiSpaceId)" sequenceNum="42" enumTypeId="WorkEffortSettingType"/>
+            <!-- a milestone's gate -->
+            <moqui.basic.Enumeration enumId="WstApprovalRequired" description="Approval required (Y or N)" sequenceNum="50" enumTypeId="WorkEffortSettingType"/>
+            <moqui.basic.Enumeration enumId="WstApproverParty" description="Approver (partyId)" sequenceNum="51" enumTypeId="WorkEffortSettingType"/>
+        </seed-data>
+    </entity>
     <entity entity-name="WorkEffortSkillStandard" package="mantle.work.effort" cache="never">
         <field name="workEffortId" type="id" is-pk="true"/>
         <field name="skillTypeEnumId" type="id" is-pk="true"/>
@@ -877,6 +993,21 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="mantle.work.effort.WorkEffort"/>
         <relationship type="one" title="SkillType" related="moqui.basic.Enumeration">
             <key-map field-name="skillTypeEnumId"/></relationship>
+    </entity>
+    <entity entity-name="WorkEffortUpdate" package="mantle.work.effort" cache="never">
+        <description>A status update posted on a project: its text is the CommunicationEvent (type StatusUpdate), and the
+            project's healthEnumId follows the latest one.</description>
+        <field name="workEffortId" type="id" is-pk="true"/>
+        <field name="communicationEventId" type="id" is-pk="true"/>
+        <field name="updateDate" type="date-time"/>
+        <field name="healthEnumId" type="id"/>
+        <field name="percentComplete" type="number-integer"/>
+        <field name="clientVisible" type="text-indicator"><description>Y when posted for the project's client contacts</description></field>
+        <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
+        <relationship type="one" related="mantle.party.communication.CommunicationEvent" short-alias="communicationEvent"/>
+        <relationship type="one" title="WorkEffortHealth" related="moqui.basic.Enumeration" short-alias="health">
+            <key-map field-name="healthEnumId"/></relationship>
+        <index name="WORKEFF_UPD_DATE" unique="false"><index-field name="workEffortId"/><index-field name="updateDate"/></index>
     </entity>
 
     <entity entity-name="WikiPageWorkEffort" package="mantle.work.effort" cache="never">

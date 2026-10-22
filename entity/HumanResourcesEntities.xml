@@ -794,6 +794,15 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="General Office" enumId="WktpGeneralOffice" enumTypeId="WorkType"/>
             <moqui.basic.Enumeration description="Paid Break" enumId="WktpPaidBreak" enumTypeId="WorkType"/>
             <moqui.basic.Enumeration description="Paid Non-productive Time" enumId="WktpPaidNpt" enumTypeId="WorkType"/>
+            <!-- services work: the time of projects (IronStone Projects Time) -->
+            <moqui.basic.Enumeration description="Development" enumId="WktpDevelopment" enumTypeId="WorkType"/>
+            <moqui.basic.Enumeration description="Design" enumId="WktpDesign" enumTypeId="WorkType"/>
+            <moqui.basic.Enumeration description="Testing" enumId="WktpTesting" enumTypeId="WorkType"/>
+            <moqui.basic.Enumeration description="Meeting" enumId="WktpMeeting" enumTypeId="WorkType"/>
+            <moqui.basic.Enumeration description="Support" enumId="WktpSupport" enumTypeId="WorkType"/>
+            <moqui.basic.Enumeration description="Project Management" enumId="WktpProjectMgmt" enumTypeId="WorkType"/>
+            <moqui.basic.Enumeration description="Consulting" enumId="WktpConsulting" enumTypeId="WorkType"/>
+            <moqui.basic.Enumeration description="Travel" enumId="WktpTravel" enumTypeId="WorkType"/>
 
             <!-- Empl Position Class -->
             <mantle.humanres.position.EmplPositionClass title="Project Manager" emplPositionClassId="ProjectManager"/>

@@ -906,6 +906,23 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- TODO: support template location setting  -->
             <mantle.party.PartySettingType partySettingTypeId="OrgTemplateFinancialAccountStatement" description="Template Location Financial Account Statement">
                 <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
+
+            <!-- Projects app settings of an organization (IronStone Projects Settings), each a JSON object of its page's fields;
+                the defaults of a project's own WorkEffortSetting rows name their key (WorkEffortSettingType optionValue and enumCode) -->
+            <mantle.party.PartySettingType partySettingTypeId="ProjWorkItemTypes" description="Projects - Work Item Types">
+                <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
+            <mantle.party.PartySettingType partySettingTypeId="ProjTimesheetPolicy" description="Projects - Timesheet Policy">
+                <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
+            <mantle.party.PartySettingType partySettingTypeId="ProjBillingDefaults" description="Projects - Billing Defaults">
+                <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
+            <mantle.party.PartySettingType partySettingTypeId="ProjRepositoryDefaults" description="Projects - Repository Defaults">
+                <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
+            <mantle.party.PartySettingType partySettingTypeId="ProjConventions" description="Projects - Commit and Branch Conventions">
+                <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
+            <mantle.party.PartySettingType partySettingTypeId="ProjIntake" description="Projects - Request Intake">
+                <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
+            <mantle.party.PartySettingType partySettingTypeId="ProjPublicForm" description="Projects - Public Request Form">
+                <roles roleTypeId="OrgInternal"/></mantle.party.PartySettingType>
         </seed-data>
     </entity>
     <entity entity-name="PartySettingTypeRole" package="mantle.party" use="configuration">
@@ -1482,6 +1499,8 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- a message of a chat room (the framework's moqui.chat store) filed on a record or turned into a task, request or
                 event (mantle.party.CommunicationServices.findOrCreate#ChatCommunicationEvent) -->
             <CommunicationEventType communicationEventTypeId="Chat" description="Chat Message"/>
+            <!-- a project's status update (mantle.work.effort.WorkEffortUpdate) -->
+            <CommunicationEventType communicationEventTypeId="StatusUpdate" description="Status Update"/>
         </seed-data>
     </entity>
     <entity entity-name="RecordFollower" package="mantle.party.communication" cache="never">
