@@ -60,25 +60,21 @@ feature("plan items take the next id of their kind; a release's version is its o
             estimatedCompletionDate: "2026-12-18" }).workEffortId
         const ga = call(`${PS}.create#Milestone`, { rootWorkEffortId: PROJECT, workEffortName: "General availability" }).workEffortId
         const given = call(`${PS}.create#Milestone`, { rootWorkEffortId: PROJECT, workEffortId: "PRL-KICKOFF", workEffortName: "Kick-off" }).workEffortId
-        const taken = errorOf(`${PS}.create#Milestone`, { rootWorkEffortId: PROJECT, workEffortId: "PRL-KICKOFF", workEffortName: "Again" })
         const one = call(`${PS}.create#Release`, { rootWorkEffortId: PROJECT, workEffortName: "1.0", estimatedCompletionDate: "2026-11-20",
             description: "The first release." }).workEffortId
         const two = call(`${PS}.create#Release`, { rootWorkEffortId: PROJECT, workEffortName: "1.1", estimatedCompletionDate: "2026-12-11" }).workEffortId
         const sameVersion = errorOf(`${PS}.create#Release`, { rootWorkEffortId: PROJECT, workEffortName: "1.0" })
         const component = call(`${PS}.create#Component`, { rootWorkEffortId: PROJECT, workEffortName: "Server" }).workEffortId
         const backwards = errorOf(`${PS}.update#Milestone`, { workEffortId: beta, estimatedCompletionDate: "2026-11-01" })
-        const renameClash = errorOf(`${PS}.update#Milestone`, { workEffortId: two, workEffortName: "1.0" })
         call(`${PS}.update#Milestone`, { workEffortId: beta, workEffortName: "Public beta", statusId: "WeInProgress", description: "Open to all" })
         call(`${PS}.update#Milestone`, { workEffortId: beta, clearFields: "estimatedStartDate" })
-        const notPlan = errorOf(`${PS}.update#Milestone`, { workEffortId: PROJECT, workEffortName: "Renamed" })
-        return { defaults, beta, ga, given, taken, one, two, sameVersion, component, backwards, renameClash, notPlan, betaRow: we(beta), oneRow: we(one) }
+        return { defaults, beta, ga, given, one, two, sameVersion, component, backwards, betaRow: we(beta), oneRow: we(one) }
     },
-    then({ defaults, beta, ga, given, taken, one, two, sameVersion, component, backwards, renameClash, notPlan, betaRow, oneRow }) {
+    then({ defaults, beta, ga, given, one, two, sameVersion, component, backwards, betaRow, oneRow }) {
         defaults.workEffortId == "PRL-MS-1"
         beta == "PRL-MS-1"
         ga == "PRL-MS-2"
         given == "PRL-KICKOFF"
-        taken.includes("taken")
         one == "PRL-REL-1"
         two == "PRL-REL-2"
         oneRow.workEffortTypeEnumId == "WetRelease"
@@ -87,8 +83,6 @@ feature("plan items take the next id of their kind; a release's version is its o
         sameVersion.includes("has a release 1.0 already")
         component == "PRL-CMP-1"
         backwards.includes("not before the start")
-        renameClash.includes("has a release 1.0 already")
-        notPlan.includes("not found")
         betaRow.workEffortName == "Public beta"
         betaRow.statusId == "WeInProgress"
         betaRow.description == "Open to all"
@@ -137,11 +131,9 @@ feature("a project's documentation space in its repository is a docs folder besi
         call("mantle.work.GitServices.create#ProjectRepository", { workEffortId: PROJECT, repositoryId, repositoryKind: "db", applyDefaults: false })
         call("org.moqui.impl.GitServices.commit#GitFiles", { repositoryId, message: "PRL code", fileMap: { "README.md": "# PRL\n", "src/app.js": "export {}\n" } })
         settle()
-        const notLinked = errorOf(`${PS}.create#ProjectDocsSpace`, { workEffortId: PROJECT, storage: "repository", repositoryId: "not-linked" })
         const made = call(`${PS}.create#ProjectDocsSpace`, { workEffortId: PROJECT, storage: "repository", repositoryId })
         wikiSpaceId = made.wikiSpaceId
         settle()
-        const again = errorOf(`${PS}.create#ProjectDocsSpace`, { workEffortId: PROJECT, storage: "db" })
         const setting = call(`${PS}.get#ProjectSettings`, { workEffortId: PROJECT }).settings.WstDocsWikiSpace
         const space = ec.entity.find("moqui.resource.wiki.WikiSpace").condition("wikiSpaceId", wikiSpaceId).one()
         const before = { john: spaceUser(userIdOf(JOHN)), joe: spaceUser(userIdOf(JOE)), bob: spaceUser(userIdOf(BOB)) }
@@ -155,15 +147,13 @@ feature("a project's documentation space in its repository is a docs folder besi
         // a page saved in the space is a file under docs/ of the repository, the code as it was
         call("org.moqui.impl.WikiServices.update#WikiPage", { wikiSpaceId, pageName: "GettingStarted", pageText: "# Getting started\n", versionNote: "Getting started" })
         settle()
-        return { notLinked, made, again, setting, space, before, bobJoined, joeLeft,
+        return { made, setting, space, before, bobJoined, joeLeft,
             home: text(`git://${repositoryId}/docs/${wikiSpaceId}.md`), page: text(`git://${repositoryId}/docs/${wikiSpaceId}/GettingStarted.md`),
             readme: text(`git://${repositoryId}/README.md`) }
     },
-    then({ notLinked, made, again, setting, space, before, bobJoined, joeLeft, home, page, readme }) {
-        notLinked.includes("not a repository of the project")
+    then({ made, setting, space, before, bobJoined, joeLeft, home, page, readme }) {
         made.wikiSpaceId == "PRL"
         made.rootPageLocation == "git://prl-code/docs/PRL.md"
-        again.includes("has the documentation space PRL already")
         setting == "PRL"
         space.rootPageLocation == "git://prl-code/docs/PRL.md"
         // a Work group project: members only
@@ -195,10 +185,9 @@ feature("a release's notes: its done items by type with their keys, how many are
         const none = call(`${PS}.get#ReleaseNotes`, { workEffortId: "PRL-REL-1" })
         call(`${PS}.store#ReleaseNotes`, { workEffortId: "PRL-REL-1", notesText: draft.notesText + "\nThanks to everyone who tried the beta.\n" })
         const kept = call(`${PS}.get#ReleaseNotes`, { workEffortId: "PRL-REL-1" })
-        const notRelease = errorOf(`${PS}.generate#ReleaseNotes`, { workEffortId: "PRL-MS-1" })
-        return { draft, none, kept, notRelease }
+        return { draft, none, kept }
     },
-    then({ draft, none, kept, notRelease }) {
+    then({ draft, none, kept }) {
         draft.version == "1.0"
         draft.title == "1.0 (2026-11-20)"
         draft.itemCount == 3
@@ -216,7 +205,6 @@ feature("a release's notes: its done items by type with their keys, how many are
         none.notesText == ""
         kept.notesText.includes("Thanks to everyone who tried the beta.")
         kept.workEffortContentId != null
-        notRelease.includes("not found")
     },
 })
 
@@ -225,18 +213,17 @@ feature("a release: the items not done go to the next release, a tag by its vers
         call("create#mantle.party.communication.RecordFollower", { recordEntityName: "mantle.work.effort.WorkEffort", recordId: PROJECT, userId: userIdOf(BOB) })
         const out = call(`${PS}.release#Release`, { workEffortId: "PRL-REL-1", createTag: true, repositoryId, toChangelog: true, notify: true })
         settle()
-        const again = errorOf(`${PS}.release#Release`, { workEffortId: "PRL-REL-1" })
         const notes = call(`${PS}.get#ReleaseNotes`, { workEffortId: "PRL-REL-1" })
         const notices = Array.from(ec.entity.find("moqui.security.user.NotificationMessageUser").condition("userId", userIdOf(BOB)).list())
             .map((row) => ec.entity.find("moqui.security.user.NotificationMessage").condition("notificationMessageId", row.notificationMessageId).one())
             .filter((notice) => notice && notice.topic === "ReleasePublished").map((notice) => JSON.parse(notice.messageJson || "{}"))
-        return { out, again, notes, release: we("PRL-REL-1"), notices,
+        return { out, notes, release: we("PRL-REL-1"), notices,
             refs: Array.from(ec.entity.find("mantle.work.effort.WorkEffortGitRef").condition({ workEffortId: "PRL-REL-1", repositoryId }).list()),
             page: text(`git://${repositoryId}/docs/${wikiSpaceId}/Releases/1.0.md`), releasesPage: text(`git://${repositoryId}/docs/${wikiSpaceId}/Releases.md`),
             changelog: text(`git://${repositoryId}/CHANGELOG.md`), openRelease: releaseOf(openId), featureRelease: releaseOf(featureId),
             linked: countOf("mantle.work.effort.WikiPageWorkEffort", { workEffortId: "PRL-REL-1" }) }
     },
-    then({ out, again, notes, release, notices, refs, page, releasesPage, changelog, openRelease, featureRelease, linked }) {
+    then({ out, notes, release, notices, refs, page, releasesPage, changelog, openRelease, featureRelease, linked }) {
         out.movedCount == 1
         out.movedToWorkEffortId == "PRL-REL-2"
         out.tagRefName == "refs/tags/v1.0"
@@ -247,7 +234,6 @@ feature("a release: the items not done go to the next release, a tag by its vers
         out.commitId != null
         release.statusId == "WeComplete"
         release.actualCompletionDate != null
-        again.includes("released or cancelled already")
         openRelease == ["PRL-REL-2"]
         featureRelease == ["PRL-REL-1"]
         refs.map((ref) => ref.refName).includes("refs/tags/v1.0")

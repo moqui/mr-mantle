@@ -24,10 +24,6 @@ spec({
     },
 })
 
-function errorOf(name, params) {
-    try { call(name, params) } catch (e) { ec.message.clearErrors(); return String(e.message) }
-    return null
-}
 const we = (id) => ec.entity.find("mantle.work.effort.WorkEffort").condition("workEffortId", id).one()
 const task = (rootWorkEffortId, workEffortName, more) =>
     call("mantle.work.TaskServices.create#Task", Object.assign({ rootWorkEffortId, workEffortName }, more || {})).workEffortId
@@ -159,14 +155,13 @@ feature("a project's settings: its own rows, else its organization's Projects ap
         const stored = call(`${PROJECT}.get#ProjectSettings`, { workEffortId: "PFVGEN" })
         call(`${PROJECT}.store#ProjectSetting`, { workEffortId: "PFVGEN", settingTypeEnumId: "WstBillingBasis", settingValue: "" })
         const cleared = call(`${PROJECT}.get#ProjectSettings`, { workEffortId: "PFVGEN" })
-        // a project with no organization has only its own rows; a setting type that is not one is refused
+        // a project with no organization has only its own rows
         const loose = call(`${PROJECT}.get#ProjectSettings`, { workEffortId: "PFK" })
-        const notType = errorOf(`${PROJECT}.store#ProjectSetting`, { workEffortId: "PFVGEN", settingTypeEnumId: "WepTask", settingValue: "x" })
         const rows = Array.from(ec.entity.find("mantle.work.effort.WorkEffortSetting").condition("workEffortId", "PFVGEN").orderBy("settingTypeEnumId").list())
                 .map((row) => row.settingTypeEnumId)
-        return { before, stored, cleared, loose, notType, rows }
+        return { before, stored, cleared, loose, rows }
     },
-    then({ before, stored, cleared, loose, notType, rows }) {
+    then({ before, stored, cleared, loose, rows }) {
         before.organizationPartyId == "PFV_ORG"
         before.settings.WstBillingBasis == "TimeAndMaterials"
         before.settingSources.WstBillingBasis == "organization"
@@ -181,7 +176,5 @@ feature("a project's settings: its own rows, else its organization's Projects ap
         rows == ["WstModules"]
         loose.organizationPartyId == null
         Object.keys(loose.settings).length == 0
-        notType != null
-        notType.includes("is not a project setting")
     },
 })

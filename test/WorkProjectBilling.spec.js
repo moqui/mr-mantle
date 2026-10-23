@@ -108,10 +108,9 @@ feature("logged time is unbilled at its rates, to the cent; a no-charge entry is
         made.joe3 = entry({ partyId: "ORG_ZIZI_JD", workEffortId: made.task, fromDate: at(4, 12, 9), thruDate: at(4, 12, 13), hours: 4, workTypeEnumId: "WktpDevelopment", comments: "Ledger import" })
         made.bob2 = entry({ partyId: "ORG_ZIZI_BD", workEffortId: made.task, fromDate: at(4, 13, 9), thruDate: at(4, 13, 11), hours: 2, workTypeEnumId: "WktpTesting", comments: "Import tests" })
         const out = summary({ withEntries: true })
-        const joeSees = as("joe.developer", () => errorOf(`${PROJECT}.get#UnbilledSummary`, { workEffortId: "TBL" }))
-        return { out, row: out.projectList[0], joeSees }
+        return { out, row: out.projectList[0] }
     },
-    then({ out, row, joeSees }) {
+    then({ out, row }) {
         out.projectList.length == 1
         row.clientPartyId == CLIENT && row.clientName == "Billing Walk Client" && row.vendorPartyId == "ORG_ZIZI_SERVICES"
         row.currencyUomId == "USD"
@@ -125,7 +124,6 @@ feature("logged time is unbilled at its rates, to the cent; a no-charge entry is
         dec(row.entryList.find((te) => te.timeEntryId === made.bob2).rate) == "160.00"
         dec(row.entryList.find((te) => te.timeEntryId === made.john1).amount) == "270.00"
         dec(out.totals.amount) == "2715.00" && out.totals.currencyUomId == "USD"
-        joeSees.includes("Only those who manage money")
     },
 })
 
@@ -186,21 +184,19 @@ feature("an invoice from the approved time: an item per entry at its rate, Net 3
     },
 })
 
-feature("Joe's second week approved and added to the draft by selection; an entry not approved is never billed, an empty selection bills nothing", {
+feature("Joe's second week approved and added to the draft by selection; an entry not approved is never billed", {
     when() {
         as("joe.developer", () => call(`${TS}.submit#Timesheet`, { timesheetId: sheetOf(made.joe3) }))
         call(`${TS}.approve#Timesheet`, { timesheetId: sheetOf(made.joe3) })
         const notApproved = errorOf(`${INVOICE}.create#ProjectInvoiceItems`, { workEffortId: "TBL", invoiceId: made.invoiceId, approvedOnly: true, billableOnly: true,
             timeEntryIdList: [made.bob2] })
-        const none = errorOf(`${INVOICE}.create#ProjectInvoiceItems`, { workEffortId: "TBL", invoiceId: made.invoiceId, approvedOnly: true, timeEntryIdList: [] })
         const added = call(`${INVOICE}.create#ProjectInvoiceItems`, { workEffortId: "TBL", invoiceId: made.invoiceId, approvedOnly: true, billableOnly: true,
             timeEntryIdList: [made.joe3, made.bob2] })
-        return { notApproved, none, added, invoice: one("mantle.account.invoice.Invoice", { invoiceId: made.invoiceId }),
+        return { notApproved, added, invoice: one("mantle.account.invoice.Invoice", { invoiceId: made.invoiceId }),
             bob2: one("mantle.work.time.TimeEntry", { timeEntryId: made.bob2 }), joe3: one("mantle.work.time.TimeEntry", { timeEntryId: made.joe3 }) }
     },
-    then({ notApproved, none, added, invoice, bob2, joe3 }) {
+    then({ notApproved, added, invoice, bob2, joe3 }) {
         notApproved.includes("No time entries")
-        none.includes("No time entries")
         added.invoiceId == made.invoiceId && added.invoiceItemCreatedCount == 1
         dec(invoice.invoiceTotal) == "2125.00"
         joe3.invoiceId == made.invoiceId

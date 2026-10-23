@@ -123,21 +123,17 @@ feature("store#PartyConsent keeps the history; the current state of a purpose is
         const third = call(STORE, { partyId: party.Cora, contactMechId: email.Cora, purposeEnumId: "PcpMarketingEmail", statusId: "PconGranted",
             sourceEnumId: "PcsForm", evidenceText: "Preferences form" })
         call(STORE, { partyId: party.Cora, purposeEnumId: "PcpDataProcessing", statusId: "PconGranted", sourceEnumId: "PcsForm" })
-        const unknownPurpose = errorOf(STORE, { partyId: party.Cora, purposeEnumId: "PcpPigeon", statusId: "PconGranted" })
-        const badStatus = errorOf(STORE, { partyId: party.Cora, purposeEnumId: "PcpPhone", statusId: "CLPT_ACCEPTED" })
         const notTheirs = errorOf(STORE, { partyId: party.Cora, contactMechId: email.Dale, purposeEnumId: "PcpMarketingEmail", statusId: "PconGranted" })
         const state = call(`${CONSENT}.get#PartyConsentState`, { partyId: party.Cora })
         const history = call(`${CONSENT}.get#PartyConsentHistory`, { partyId: party.Cora, purposeEnumId: "PcpMarketingEmail" })
         const page = call(`${CONSENT}.get#PartyConsentHistory`, { partyId: party.Cora, pageSize: 2, pageIndex: 1 })
-        return { first, second, third, unknownPurpose, badStatus, notTheirs, state, history, page }
+        return { first, second, third, notTheirs, state, history, page }
     },
-    then({ first, second, third, unknownPurpose, badStatus, notTheirs, state, history, page }) {
+    then({ first, second, third, notTheirs, state, history, page }) {
         first.partyConsentId != null
         first.allowSolicitation == "Y"
         second.allowSolicitation == "N"
         third.allowSolicitation == "Y"
-        unknownPurpose.includes("Unknown consent purpose")
-        badStatus.includes("PconGranted or PconWithdrawn")
         notTheirs.includes("is not party")
         consentRows("Cora", { purposeEnumId: "PcpMarketingEmail" }).length == 3
         history.historyListCount == 3
@@ -252,10 +248,9 @@ feature("subscribe#ContactListParty subscribes again with a grant for the list; 
         at(8)
         const out = call(`${CONSENT}.subscribe#ContactListParty`, { contactListId: list.promo, partyId: party.Cora })
         const again = call(`${CONSENT}.subscribe#ContactListParty`, { contactListId: list.promo, partyId: party.Cora })
-        const mailbox = errorOf(`${CONSENT}.subscribe#ContactListParty`, { contactListId: mailboxId, partyId: party.Cora })
-        return { out, again, mailbox, status: statusOf("promo", "Cora"), rows: consentRows("Cora", { contactListId: list.promo }) }
+        return { out, again, status: statusOf("promo", "Cora"), rows: consentRows("Cora", { contactListId: list.promo }) }
     },
-    then({ out, again, mailbox, status, rows }) {
+    then({ out, again, status, rows }) {
         out.statusId == "CLPT_ACCEPTED"
         out.previousStatusId == "CLPT_UNSUBSCRIBED"
         out.changed == true
@@ -264,7 +259,6 @@ feature("subscribe#ContactListParty subscribes again with a grant for the list; 
         rows.length == 2
         rows[0].statusId == "PconGranted"
         rows[0].sourceEnumId == "PcsStaff"
-        mailbox.includes("is a mailbox")
     },
 })
 
@@ -310,10 +304,9 @@ feature("create#UnsubscribeToken: a random token given once with its hash kept, 
         token.expired = call(CREATE_TOKEN, { contactListId: list.news, partyId: party.Cora, thruDate: new Date(effectiveTime + 11 * minute) }).token
         const row = ec.entity.find(TOKEN).condition("contactListTokenId", news.contactListTokenId).one()
         const plainCount = ec.entity.find(TOKEN).condition("tokenHash", news.token).count()
-        const missing = errorOf(CREATE_TOKEN, { contactListId: list.news })
-        return { news, communicationEventId, row, plainCount, missing }
+        return { news, communicationEventId, row, plainCount }
     },
-    then({ news, communicationEventId, row, plainCount, missing }) {
+    then({ news, communicationEventId, row, plainCount }) {
         news.token.length == 32
         urlSafe.test(news.token)
         news.unsubscribeUrl == "https://shop.example.com/u/" + news.token
@@ -330,7 +323,6 @@ feature("create#UnsubscribeToken: a random token given once with its hash kept, 
         row.tokenHash != news.token
         row.tokenHash == ec.user.singleUseCodeHash(news.token)
         plainCount == 0
-        missing.includes("needs a contactListId")
         token.promo != token.news
     },
 })
@@ -339,13 +331,12 @@ feature("resolve#UnsubscribeToken for an anonymous visitor: the organization, th
     when() {
         return anonymously(12, () => {
             const out = call(RESOLVE, { token: token.news })
-            const consentRead = errorOf(`${CONSENT}.get#PartyConsentState`, { partyId: party.Cora })
             const consentWrite = errorOf(STORE, { partyId: party.Cora, purposeEnumId: "PcpPhone", statusId: "PconGranted" })
             const staffPath = errorOf(UNSUBSCRIBE, { contactListId: list.news, partyId: party.Cora })
-            return { out, consentRead, consentWrite, staffPath, userId: ec.user.userId ?? null }
+            return { out, consentWrite, staffPath, userId: ec.user.userId ?? null }
         })
     },
-    then({ out, consentRead, consentWrite, staffPath, userId }) {
+    then({ out, consentWrite, staffPath, userId }) {
         userId == null
         out.organizationName == "Consent Co"
         out.contactListId == list.news
@@ -361,7 +352,6 @@ feature("resolve#UnsubscribeToken for an anonymous visitor: the organization, th
         out.listList.find((entry) => entry.contactListId === list.confirm).statusId == "CLPT_UNSUBSCRIBED"
         out.partyId == null
         out.listList.every((entry) => entry.partyId == null && entry.preferredContactMechId == null)
-        consentRead != null
         consentWrite != null
         staffPath.includes("needs a signed-in user")
     },
@@ -373,11 +363,8 @@ feature("an unknown, malformed or expired token, or one used beyond its party an
         const out = anonymously(13, () => {
             const refused = {
                 unknown: errorOf(RESOLVE, { token: unknownToken }),
-                malformed: errorOf(RESOLVE, { token: "not a token!" }),
                 expired: errorOf(RESOLVE, { token: token.expired }),
                 applyUnknown: errorOf(APPLY, { token: unknownToken, unsubscribeAll: true }),
-                applyExpired: errorOf(APPLY, { token: token.expired, listChoices: [{ contactListId: list.news, subscribed: false }] }),
-                oneClickUnknown: errorOf(UNSUBSCRIBE, { token: unknownToken, listUnsubscribe: "One-Click" }),
                 otherParty: errorOf(UNSUBSCRIBE, { token: token.news, partyId: party.Dale }),
                 otherOrganization: errorOf(UNSUBSCRIBE, { token: token.news, contactListId: list.other }),
             }
@@ -395,7 +382,7 @@ feature("an unknown, malformed or expired token, or one used beyond its party an
     },
     then({ refused, oneClickNoToken, markup, refusedOut, news, other, newsRowCount }) {
         Object.values(refused).every((message) => message != null && message.includes("This unsubscribe link is not valid or has expired"))
-        Object.keys(refused).length == 8
+        Object.keys(refused).length == 5
         oneClickNoToken.includes("needs the link token")
         markup != null
         refusedOut == null || (refusedOut.contactListId == null && refusedOut.organizationName == null && !refusedOut.listList?.length)

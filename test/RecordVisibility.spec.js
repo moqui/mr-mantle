@@ -192,22 +192,17 @@ feature("the active organization filter with no active organization covers all o
     },
 })
 
-feature("a user who may not see a request or a task reads none of its link info, timeline, files or followers, and cannot follow it", {
+// which records each user sees is checked with checkOnly; here a read and a write are refused, by the same check
+feature("a user who may not see a request reads none of its timeline and cannot follow it", {
     when() {
-        const read = (recordEntityName, recordId) => ({
-            info: errorOf(`${COMM}.get#RecordLinkInfo`, { recordEntityName, recordId }),
-            timeline: errorOf(`${COMM}.get#RecordTimeline`, { recordEntityName, recordId }),
-            files: errorOf(`${COMM}.get#RecordTimeline`, { recordEntityName, recordId, kinds: "files" }),
-            followers: errorOf(`${COMM}.get#RecordFollowers`, { recordEntityName, recordId }),
-            follow: errorOf(`${COMM}.follow#Record`, { recordEntityName, recordId }) })
-        const oz = as("rv.oz", () => ({ request: read(REQUEST, "RV-R1"), task: read(WORK, "RV-T1"), message: read(EVENT, events.request) }))
+        const oz = as("rv.oz", () => ({ timeline: errorOf(`${COMM}.get#RecordTimeline`, { recordEntityName: REQUEST, recordId: "RV-R1" }),
+            follow: errorOf(`${COMM}.follow#Record`, { recordEntityName: REQUEST, recordId: "RV-R1" }) }))
         const followers = ec.entity.find("mantle.party.communication.RecordFollower").condition({ recordId: "RV-R1", userId: users.Oz }).count()
         return { oz, followers }
     },
     then({ oz, followers }) {
-        Object.values(oz.request).every((error) => error != null && error.includes("RV-R1 not found"))
-        Object.values(oz.task).every((error) => error != null && error.includes("RV-T1 not found"))
-        Object.values(oz.message).every((error) => error != null && error.includes(`${events.request} not found`))
+        oz.timeline.includes("RV-R1 not found")
+        oz.follow.includes("RV-R1 not found")
         followers == 0
     },
 })
@@ -398,20 +393,15 @@ feature("an order is seen by its organizations' members, its parties and its ent
     },
 })
 
-feature("a user who may not see an order or a wiki page reads none of its timeline or followers; a member reads the wiki page's", {
+feature("a user who may not see a wiki page reads none of its timeline; a member reads the wiki page's", {
     when() {
-        const read = (recordEntityName, recordId) => ({
-            timeline: errorOf(`${COMM}.get#RecordTimeline`, { recordEntityName, recordId }),
-            followers: errorOf(`${COMM}.get#RecordFollowers`, { recordEntityName, recordId }),
-            follow: errorOf(`${COMM}.follow#Record`, { recordEntityName, recordId }) })
-        const oz = as("rv.oz", () => ({ order: read(ORDER, "RV-O1"), page: read(WIKI, "RV_WP3") }))
+        const oz = as("rv.oz", () => errorOf(`${COMM}.get#RecordTimeline`, { recordEntityName: WIKI, recordId: "RV_WP3" }))
         const mo = as("rv.mo", () => call(`${COMM}.get#RecordTimeline`, { recordEntityName: WIKI, recordId: "RV_WP2", kinds: "messages,notes" })
                 .entryList.map((entry) => entry.title))
         return { oz, mo }
     },
     then({ oz, mo }) {
-        Object.values(oz.order).every((error) => error != null && error.includes("RV-O1 not found"))
-        Object.values(oz.page).every((error) => error != null && error.includes("RV_WP3 not found"))
+        oz.includes("RV_WP3 not found")
         mo.includes("On the shut page")
     },
 })

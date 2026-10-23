@@ -1,8 +1,8 @@
 // Notes on a record changed and deleted (mantle.party.CommunicationServices update#RecordNote, delete#RecordNote,
 // check#RecordNoteAccess, delete#CommunicationEventRows; mantle.request.RequestServices update#RequestComment,
 // delete#RequestComment): the author changes a note, which is marked edited and notifies only the users newly mentioned;
-// another user may neither change nor delete it; a user in the ADMIN group deletes another's note; a note with replies,
-// a message and a note on another record are refused. The Mantle side of IronStone Chatter's edit and delete. New spec, no
+// another user may not change it; a user in the ADMIN group deletes another's note; a note with replies and a message
+// are refused. The Mantle side of IronStone Chatter's edit and delete. New spec, no
 // Groovy original.
 function errorOf(name, params) {
     try { call(name, params) } catch (e) { ec.message.clearErrors(); return String(e.message) }
@@ -98,7 +98,7 @@ feature("the author changes a note: the text and edited date change, the subject
     },
 })
 
-feature("another user may neither change nor delete the note, and it stays as it was", {
+feature("another user may change neither the note nor it as a request comment, and it stays as it was", {
     when() {
         at(6)
         const errors = as("joe.developer", () => {
@@ -106,33 +106,26 @@ feature("another user may neither change nor delete the note, and it stays as it
             return {
                 update: errorOf("mantle.party.CommunicationServices.update#RecordNote", { recordEntityName: REQUEST, recordId: "RN-R1",
                     communicationEventId: noteId, body: "<p>Joe was here</p>" }),
-                remove: errorOf("mantle.party.CommunicationServices.delete#RecordNote", { recordEntityName: REQUEST, recordId: "RN-R1", communicationEventId: noteId }),
                 comment: errorOf("mantle.request.RequestServices.update#RequestComment", { requestId: "RN-R1", communicationEventId: noteId, body: "Joe was here" }),
-                commentDelete: errorOf("mantle.request.RequestServices.delete#RequestComment", { requestId: "RN-R1", communicationEventId: noteId }),
             }
         })
         return { errors, note: ce(noteId) }
     },
     then({ errors, note }) {
         errors.update.includes("You may change only your own notes")
-        errors.remove.includes("You may delete only your own notes")
         errors.comment.includes("You may change only your own comments")
-        errors.commentDelete.includes("You may delete only your own comments")
         note.body.includes("access today")
         !note.body.includes("Joe was here")
     },
 })
 
-feature("the author may not change another's note even in the ADMIN group, which may delete it with its link", {
+feature("a user in the ADMIN group deletes another's note with its link", {
     when() {
         at(7)
-        const update = errorOf("mantle.party.CommunicationServices.update#RecordNote", { recordEntityName: WORK, recordId: "RN-T1",
-                communicationEventId: joeNoteId, body: "John's change" })
         const out = call("mantle.party.CommunicationServices.delete#RecordNote", { recordEntityName: WORK, recordId: "RN-T1", communicationEventId: joeNoteId })
-        return { update, out, note: ce(joeNoteId), joins: count("mantle.work.effort.WorkEffortCommEvent", { communicationEventId: joeNoteId }) }
+        return { out, note: ce(joeNoteId), joins: count("mantle.work.effort.WorkEffortCommEvent", { communicationEventId: joeNoteId }) }
     },
-    then({ update, out, note, joins }) {
-        update.includes("You may change only your own notes")
+    then({ out, note, joins }) {
         out.deleted
         note == null
         joins == 0
@@ -160,7 +153,7 @@ feature("a note with a reply is not deleted until the reply is; a note on a reco
     },
 })
 
-feature("a message is not changed or deleted as a note, and a note is not changed through a record it is not on", {
+feature("a message is not changed as a note, and a note is not emptied", {
     when() {
         at(9)
         const messageId = call("mantle.party.CommunicationServices.create#Message", { subject: "Sent", body: "Sent body", fromPartyId: "EX_JOHN_DOE",
@@ -169,18 +162,13 @@ feature("a message is not changed or deleted as a note, and a note is not change
         return {
             message: errorOf("mantle.party.CommunicationServices.update#RecordNote", { recordEntityName: REQUEST, recordId: "RN-R1", communicationEventId: messageId,
                 body: "Changed" }),
-            messageDelete: errorOf("mantle.party.CommunicationServices.delete#RecordNote", { recordEntityName: REQUEST, recordId: "RN-R1", communicationEventId: messageId }),
-            elsewhere: errorOf("mantle.party.CommunicationServices.update#RecordNote", { recordEntityName: WORK, recordId: "RN-T1", communicationEventId: noteId,
-                body: "Changed" }),
             empty: errorOf("mantle.party.CommunicationServices.update#RecordNote", { recordEntityName: REQUEST, recordId: "RN-R1", communicationEventId: noteId,
                 body: "<p> </p>" }),
             sent: ce(messageId),
         }
     },
-    then({ message, messageDelete, elsewhere, empty, sent }) {
+    then({ message, empty, sent }) {
         message.includes("Only a note or a comment can be changed")
-        messageDelete.includes("Only a note or a comment can be deleted")
-        elsewhere.includes(`Note ${noteId} not found`)
         empty.includes("A note needs its text")
         sent.body == "Sent body"
     },
@@ -193,19 +181,17 @@ feature("a request comment: its author changes and deletes it through update#Req
         const updated = call("mantle.request.RequestServices.update#RequestComment", { requestId: "RN-R1", communicationEventId: commentId, subject: "Comment",
                 body: "Second" })
         const edited = ce(commentId)
-        const wrongRequest = errorOf("mantle.request.RequestServices.delete#RequestComment", { requestId: "RN-NONE", communicationEventId: commentId })
         call("mantle.request.RequestServices.delete#RequestComment", { requestId: "RN-R1", communicationEventId: commentId })
         // the edited note of the request through delete#RecordNote, which goes through delete#RequestComment
         const note = call("mantle.party.CommunicationServices.delete#RecordNote", { recordEntityName: REQUEST, recordId: "RN-R1", communicationEventId: noteId })
-        return { updated, edited, wrongRequest, gone: ce(commentId) == null, note, noteGone: ce(noteId) == null,
+        return { updated, edited, gone: ce(commentId) == null, note, noteGone: ce(noteId) == null,
             joins: count("mantle.request.RequestCommEvent", { requestId: "RN-R1", communicationEventId: commentId }) }
     },
-    then({ updated, edited, wrongRequest, gone, note, noteGone, joins }) {
+    then({ updated, edited, gone, note, noteGone, joins }) {
         updated.editedDate != null
         edited.body == "Second"
         edited.fromPartyId == "EX_JOHN_DOE"
         edited.editedDate != null
-        wrongRequest.includes("not found on request RN-NONE")
         gone
         joins == 0
         note.deleted

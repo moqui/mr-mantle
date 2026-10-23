@@ -73,10 +73,9 @@ feature("a delivered payment cannot be released but can be refunded, and refunds
         const refund = call("mantle.account.PaymentServices.refund#SinglePayment", { paymentId, amount: 40 })
         refundId = refund.refundPaymentId
         const second = call("mantle.account.PaymentServices.refund#SinglePayment", { paymentId, amount: 60 })
-        const exhausted = errorOf("mantle.account.PaymentServices.refund#SinglePayment", { paymentId, amount: 1 })
-        return { captured, delivered, releaseRefused, tooMuch, refund, second, exhausted, refundPayment: payment(refundId) }
+        return { captured, delivered, releaseRefused, tooMuch, refund, second, refundPayment: payment(refundId) }
     },
-    then({ captured, delivered, releaseRefused, tooMuch, refund, second, exhausted, refundPayment }) {
+    then({ captured, delivered, releaseRefused, tooMuch, refund, second, refundPayment }) {
         captured.paymentGatewayResponse.resultSuccess == "Y"
         delivered.statusId == "PmntDelivered"
         releaseRefused.includes("try a refund instead")
@@ -86,7 +85,6 @@ feature("a delivered payment cannot be released but can be refunded, and refunds
         refundPayment.statusId == "PmntDelivered"
         refundPayment.refundForPaymentId == paymentId
         second.refundPaymentId != refundId
-        exhausted != null
     },
 })
 

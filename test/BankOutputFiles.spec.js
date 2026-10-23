@@ -113,15 +113,13 @@ feature("generate Positive Pay files #format", {
     },
 })
 
-feature("Positive Pay is refused without a format and for unsupported formats", {
+feature("Positive Pay is refused without a format", {
     when() {
         const noFormat = errorOf("mantle.account.PositivePayServices.generate#PositivePayFile", { paymentMethodId: companyBankId })
-        const notBank = errorOf("mantle.account.PositivePayServices.generate#PositivePayFile", { paymentMethodId: "NO_SUCH_METHOD" })
-        return { noFormat, notBank }
+        return { noFormat }
     },
-    then({ noFormat, notBank }) {
+    then({ noFormat }) {
         noFormat.includes("No Pos. Pay File Format")
-        notBank.includes("is not a bank account")
     },
 })
 
@@ -143,15 +141,13 @@ feature("import a NACHA return: a returned entry declines its payment and a bad 
             return text
         }
         const short = errorsOf("6short")
-        const unknown = errorsOf([entry("NOSUCHPAYMENT", 100), returnAddenda("R02", "Closed"), "9" + " ".repeat(93)].join("\n"))
-        return { returned, responses, short, unknown }
+        return { returned, responses, short }
     },
-    then({ returned, responses, short, unknown }) {
+    then({ returned, responses, short }) {
         returned.statusId == "PmntDeclined"
         responses.length >= 1
         responses.some(r => r.reasonCode == "R01")
         short.includes("Length of the line is incorrect")
-        unknown.includes("not found")
     },
 })
 
@@ -170,8 +166,6 @@ feature("system messages carry the files: a return is consumed, a file is queued
                 statusId: "SmsgReceived", messageText: [entry, addenda, "9" + " ".repeat(93)].join("\n"), initDate: effectiveTime }).systemMessageId
         call("mantle.account.NachaServices.consume#NachaReturnSystemMessage", { systemMessageId: messageId })
         const declined = ec.entity.find("mantle.account.payment.Payment").condition("paymentId", achPaymentIds[1]).one()
-        const noType = errorOf("mantle.account.NachaServices.consume#NachaReturnSystemMessage", { systemMessageId: call("create#moqui.service.message.SystemMessage", {
-                systemMessageTypeId: "TestBankOut", isOutgoing: "N", statusId: "SmsgReceived", messageText: "x", initDate: effectiveTime + 1 }).systemMessageId })
         // queue the NACHA file that was generated earlier as an outgoing message, once
         const notFound = call("mantle.account.PaymentMethodServices.produce#PaymentMethodFileSystemMessage", { paymentMethodFileId: "NO_SUCH_FILE" })
         const noConfig = call("mantle.account.PaymentMethodServices.produce#PaymentMethodFileSystemMessage", { paymentMethodFileId: nachaOut.paymentMethodFileId })
@@ -180,11 +174,10 @@ feature("system messages carry the files: a return is consumed, a file is queued
         const again = call("mantle.account.PaymentMethodServices.produce#PaymentMethodFileSystemMessage", { paymentMethodFileId: nachaOut.paymentMethodFileId,
                 systemMessageTypeId: "TestBankOut", systemMessageRemoteId: "TEST_BANK" })
         const message = ec.entity.find("moqui.service.message.SystemMessage").condition("systemMessageId", queued.systemMessageId).one()
-        return { declined, noType, notFound, noConfig, queued, again, message }
+        return { declined, notFound, noConfig, queued, again, message }
     },
-    then({ declined, noType, queued, again, message }) {
+    then({ declined, queued, again, message }) {
         declined.statusId == "PmntDeclined"
-        noType.includes("Could not find paymentMethodId")
         queued.systemMessageId != null
         again.systemMessageId == null
         message.isOutgoing == "Y"

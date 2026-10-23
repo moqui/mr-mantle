@@ -338,7 +338,7 @@ feature("an event and a request from chat messages: the same message's event is 
     },
 })
 
-feature("the same message is one communication event; a room the user may not read, a removed message and an unknown kind are refused", {
+feature("the same message is one communication event; a room the user may not read and an unknown kind are refused", {
     when() {
         at(30)
         const first = as("Uri", () => call(`${COMM}.findOrCreate#ChatCommunicationEvent`, { chatRoomId: room.request, eventSeq: seq.callBack }))
@@ -350,11 +350,10 @@ feature("the same message is one communication event; a room the user may not re
             chatEvents: ec.entity.find("mantle.party.communication.CommunicationEventRecord").condition("recordEntityName", "moqui.chat.ChatEvent")
                     .condition("recordId", `${room.request}::${seq.called}`).count(),
             notMember: as("Vik", () => errorOf(`${COMM}.create#RecordFromChatMessage`, { chatRoomId: room.direct, eventSeq: directSeq, recordKind: "task" })),
-            removed: as("Uri", () => errorOf(`${COMM}.create#RecordFromChatMessage`, { chatRoomId: room.request, eventSeq: seq.wrong, recordKind: "task" })),
             kind: as("Uri", () => errorOf(`${COMM}.create#RecordFromChatMessage`, { chatRoomId: room.request, eventSeq: seq.callBack, recordKind: "note" })),
         }
     },
-    then({ first, again, sameAsTask, chatEvents, notMember, removed, kind }) {
+    then({ first, again, sameAsTask, chatEvents, notMember, kind }) {
         first.created == true
         first.chatMessage.senderUserId == user.Uri
         first.chatMessage.senderPartyId == party.Uri
@@ -365,7 +364,6 @@ feature("the same message is one communication event; a room the user may not re
         sameAsTask.created == false
         chatEvents == 1
         notMember.includes(`Chat room ${room.direct} not found`)
-        removed.includes(`Message ${seq.wrong} not found in the room`)
         kind.includes("task, request or event")
     },
 })

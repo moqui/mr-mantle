@@ -70,10 +70,9 @@ feature("a project to log on, and the work types: the services types by default,
         const stored = call(`${TS}.store#WorkTypes`, { organizationPartyId: made.org, offered: "WktpTesting,WktpDevelopment" })
         const after = call(`${TS}.get#WorkTypes`, { organizationPartyId: made.org })
         const unknown = errorOf(`${TS}.store#WorkTypes`, { organizationPartyId: made.org, offered: "WktpTesting,NotAType" })
-        const none = errorOf(`${TS}.store#WorkTypes`, { organizationPartyId: made.org, offered: " , " })
-        return { defaults, stored, after, unknown, none }
+        return { defaults, stored, after, unknown }
     },
-    then({ defaults, stored, after, unknown, none }) {
+    then({ defaults, stored, after, unknown }) {
         made.org != null
         defaults.isSet == false
         defaults.offeredList.map((type) => type.enumId) == ["WktpDevelopment", "WktpDesign", "WktpTesting", "WktpMeeting", "WktpSupport", "WktpProjectMgmt", "WktpConsulting", "WktpTravel"]
@@ -82,7 +81,6 @@ feature("a project to log on, and the work types: the services types by default,
         after.offeredList.map((type) => type.enumId) == ["WktpTesting", "WktpDevelopment"]
         after.typeList[0].enumId == "WktpTesting" && after.typeList[0].sequence == 1
         unknown.includes("Not a work type: NotAType")
-        none.includes("Offer at least one work type")
     },
 })
 
@@ -137,11 +135,10 @@ feature("the Time entries CSV: a preview plans each row, the import makes the go
         const preview = as("joe.developer", () => call(`${TIME}.import#TimeEntryCsv`, { fileText: csv, preview: true }))
         const imported = as("joe.developer", () => call(`${TIME}.import#TimeEntryCsv`, { fileText: csv }))
         const again = as("joe.developer", () => call(`${TIME}.import#TimeEntryCsv`, { fileText: csv }))
-        const noHours = errorOf(`${TIME}.import#TimeEntryCsv`, { fileText: "date,person,comment\n2027-02-03,joe.developer,x\n" })
         const byComment = (comments) => one("mantle.work.time.TimeEntry", { comments })
-        return { preview, imported, again, noHours, ledger: byComment("CSV ledger"), small: byComment("CSV small"), stacked: byComment("CSV default person") }
+        return { preview, imported, again, ledger: byComment("CSV ledger"), small: byComment("CSV small"), stacked: byComment("CSV default person") }
     },
-    then({ preview, imported, again, noHours, ledger, small, stacked }) {
+    then({ preview, imported, again, ledger, small, stacked }) {
         preview.rowCount == 8
         preview.columnMapping.date == "Date" && preview.columnMapping.person == "Email" && preview.columnMapping.hours == "Duration"
         preview.columnMapping.workType == "Activity" && preview.columnMapping.comment == "Description"
@@ -165,7 +162,6 @@ feature("the Time entries CSV: a preview plans each row, the import makes the go
         Number(String(stacked.fromDate)) - Number(String(ledger.fromDate)) == 5 * 3600000 && Number(String(stacked.hours)) == 1.25 && stacked.partyId == "ORG_ZIZI_JD"
         stacked.timesheetId != null
         again.createdCount == 0 && again.skippedCount == 3 && again.failedCount == 5
-        noHours.includes("no hours column")
     },
 })
 

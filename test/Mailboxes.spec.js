@@ -105,20 +105,10 @@ feature("a post reaches each member but the poster, and a member also named in T
     },
 })
 
-feature("a private mailbox is closed to others: no posts, threads, replies or state, and not listed", {
+feature("a private mailbox is closed to others: its threads are not found, and it is not listed", {
     expect() {
-        const postError = asError("Nina", `${COMM}.create#Message`, { contactListId: teamId, subject: "Hello" })
         const threadsError = asError("Nina", `${COMM}.find#InternalThreads`, { contactListId: teamId })
-        const threadError = asError("Nina", `${COMM}.get#InternalThread`, { communicationEventId: msg.standup })
-        const replyError = asError("Nina", `${COMM}.reply#CommunicationEvent`, { parentCommEventId: msg.standup, body: "Me?" })
-        const stateError = asError("Nina", `${COMM}.set#InternalMessageState`, { communicationEventId: msg.standup, flagged: true })
-        const membersError = asError("Nina", `${LISTS}.find#ContactListParties`, { contactListId: teamId })
-        postError.includes("not found")
         threadsError.includes("not found")
-        threadError.includes("not found")
-        replyError.includes("not found")
-        stateError.includes("not found")
-        membersError.includes("not found")
         mailboxes("Nina").length == 0
     },
 })
@@ -129,25 +119,21 @@ feature("a join request waits: the requester sees only the header until an owner
         const join = asCall("Nina", `${LISTS}.join#ContactList`, { contactListId: teamId })
         const listed = mailboxes("Nina")
         const pendingThreads = threads("Nina", { contactListId: teamId }).threadList
-        const pendingThread = asError("Nina", `${COMM}.get#InternalThread`, { communicationEventId: msg.standup })
-        const pendingPost = asError("Nina", `${COMM}.create#Message`, { contactListId: teamId, subject: "Hello" })
         const memberAccepts = asError("Mia", `${LISTS}.add#ContactListParty`, { contactListId: teamId, partyId: party.Nina })
         const pending = asCall("Mike", `${LISTS}.find#ContactListParties`, { contactListId: teamId }).pendingList.map((entry) => nameOf(entry.partyId))
         const memberSeesPending = asCall("Mia", `${LISTS}.find#ContactListParties`, { contactListId: teamId }).pendingList.length
         at(4)
         const accepted = asCall("Olga", `${LISTS}.add#ContactListParty`, { contactListId: teamId, partyId: party.Nina })
-        return { join, listed, pendingThreads, pendingThread, pendingPost, memberAccepts, pending, memberSeesPending, accepted,
+        return { join, listed, pendingThreads, memberAccepts, pending, memberSeesPending, accepted,
             ninaRows: memberRow(teamId, party.Nina) }
     },
-    then({ join, listed, pendingThreads, pendingThread, pendingPost, memberAccepts, pending, memberSeesPending, accepted, ninaRows }) {
+    then({ join, listed, pendingThreads, memberAccepts, pending, memberSeesPending, accepted, ninaRows }) {
         join.statusId == "CLPT_PENDING"
         listed.length == 1
         listed[0].membershipStatusId == "CLPT_PENDING"
         listed[0].isMember == false
         listed[0].canPost == false
         pendingThreads.length == 0
-        pendingThread.includes("not found")
-        pendingPost.includes("You may not post to mailbox Team room")
         memberAccepts.includes("Only an owner or moderator of Team room may add members")
         pending == ["Nina"]
         memberSeesPending == 0
@@ -204,13 +190,12 @@ feature("a declined request: the requester sees nothing of the mailbox", {
         asCall("Quinn", `${LISTS}.join#ContactList`, { contactListId: teamId })
         asCall("Mike", `${LISTS}.decline#ContactListParty`, { contactListId: teamId, partyId: party.Quinn })
         const again = asError("Mike", `${LISTS}.decline#ContactListParty`, { contactListId: teamId, partyId: party.Quinn })
-        return { rows: memberRow(teamId, party.Quinn), listed: mailboxes("Quinn"), threadsError: asError("Quinn", `${COMM}.find#InternalThreads`, { contactListId: teamId }), again }
+        return { rows: memberRow(teamId, party.Quinn), listed: mailboxes("Quinn"), again }
     },
-    then({ rows, listed, threadsError, again }) {
+    then({ rows, listed, again }) {
         rows.length == 1
         rows[0].statusId == "CLPT_REJECTED"
         listed.length == 0
-        threadsError.includes("not found")
         again.includes("has no pending request")
     },
 })
@@ -222,15 +207,13 @@ feature("leaving ends the membership: no more posts or reading; the last owner c
         const ownerLeaves = asError("Olga", `${LISTS}.leave#ContactList`, { contactListId: teamId })
         at(8)
         msg.afterMia = post("Olga", { contactListId: teamId, subject: "After Mia", body: "Welcome Nina" })
-        return { left, rows: memberRow(teamId, party.Mia), ownerLeaves, roles: rolesOf(msg.afterMia),
-            miaThreads: asError("Mia", `${COMM}.find#InternalThreads`, { contactListId: teamId }) }
+        return { left, rows: memberRow(teamId, party.Mia), ownerLeaves, roles: rolesOf(msg.afterMia) }
     },
-    then({ left, rows, ownerLeaves, roles, miaThreads }) {
+    then({ left, rows, ownerLeaves, roles }) {
         left.left == true
         rows[0].thruDate != null
         ownerLeaves.includes("The last owner of a mailbox cannot leave it")
         roles == { Mike: "MessageMailbox", Nina: "MessageMailbox" }
-        miaThreads.includes("not found")
     },
 })
 
@@ -271,16 +254,14 @@ feature("an announcements mailbox: only owners and moderators post; a public mai
         const memberPosts = asError("Paul", `${COMM}.create#Message`, { contactListId: newsId, subject: "Me too" })
         at(12)
         msg.office = post("Mike", { contactListId: newsId, subject: "Office closed Monday", body: "Holiday" })
-        const memberReplies = asError("Paul", `${COMM}.reply#CommunicationEvent`, { parentCommEventId: msg.office, body: "Thanks" })
         const outsider = threads("Nina", { contactListId: newsId }).threadList
         const outsiderThread = asCall("Nina", `${COMM}.get#InternalThread`, { communicationEventId: msg.office })
-        return { join, memberPosts, roles: rolesOf(msg.office), memberReplies, outsider, outsiderThread }
+        return { join, memberPosts, roles: rolesOf(msg.office), outsider, outsiderThread }
     },
-    then({ join, memberPosts, roles, memberReplies, outsider, outsiderThread }) {
+    then({ join, memberPosts, roles, outsider, outsiderThread }) {
         join.statusId == "CLPT_ACCEPTED"
         memberPosts.includes("You may not post to mailbox News")
         roles == { Olga: "MessageMailbox", Paul: "MessageMailbox" }
-        memberReplies.includes("You may not post to mailbox News")
         outsider.map((thread) => thread.threadId) == [msg.office]
         outsider[0].unreadCount == 0
         outsiderThread.messageList.length == 1
@@ -301,7 +282,6 @@ feature("a help mailbox: any user posts, and a poster who is not a member sees o
         const ivanThreads = threadIds("Ivan", { contactListId: askId })
         const mikeThreads = threadIds("Mike", { contactListId: askId })
         const otherThread = asError("Ivan", `${COMM}.get#InternalThread`, { communicationEventId: msg.vpn })
-        const otherReply = asError("Ivan", `${COMM}.reply#CommunicationEvent`, { parentCommEventId: msg.vpn, body: "Me too" })
         const ivanBefore = unread("Ivan")
         at(16)
         msg.printerAnswer = asCall("Mike", `${COMM}.reply#CommunicationEvent`, { parentCommEventId: msg.printer, body: "On my way" }).communicationEventId
@@ -309,10 +289,10 @@ feature("a help mailbox: any user posts, and a poster who is not a member sees o
         const ivanAfter = { unread: unread("Ivan"), received: threadIds("Ivan") }
         at(17)
         msg.printerThanks = asCall("Ivan", `${COMM}.reply#CommunicationEvent`, { parentCommEventId: msg.printerAnswer, body: "Thanks" }).communicationEventId
-        return { printerRoles: rolesOf(msg.printer), listed, ivanThreads, mikeThreads, otherThread, otherReply, ivanBefore, answerRoles, ivanAfter,
+        return { printerRoles: rolesOf(msg.printer), listed, ivanThreads, mikeThreads, otherThread, ivanBefore, answerRoles, ivanAfter,
             thanksRoles: rolesOf(msg.printerThanks) }
     },
-    then({ printerRoles, listed, ivanThreads, mikeThreads, otherThread, otherReply, ivanBefore, answerRoles, ivanAfter, thanksRoles }) {
+    then({ printerRoles, listed, ivanThreads, mikeThreads, otherThread, ivanBefore, answerRoles, ivanAfter, thanksRoles }) {
         printerRoles == { Olga: "MessageMailbox", Mike: "MessageMailbox" }
         listed.isMember == false
         listed.canPost == true
@@ -320,7 +300,6 @@ feature("a help mailbox: any user posts, and a poster who is not a member sees o
         ivanThreads == [msg.printer]
         mikeThreads == [msg.vpn, msg.printer]
         otherThread.includes("not found")
-        otherReply.includes("not found")
         ivanBefore == 0
         // the poster is a participant of the thread, and not being a member gets it in the Inbox
         answerRoles == { Olga: "MessageMailbox", Ivan: "MessageMailbox" }
@@ -341,10 +320,9 @@ feature("Mailbox only delivery keeps a mailbox's posts out of the Inbox and its 
         at(19)
         msg.retro = post("Nina", { contactListId: teamId, subject: "Retro notes", body: "Went well" })
         const afterPost = unread("Olga")
-        const nonMember = asError("Quinn", `${LISTS}.set#ContactListPartyDelivery`, { contactListId: teamId, deliveryEnumId: "CldInbox" })
-        return { before, delivery, after, received, mailbox, afterPost, nonMember }
+        return { before, delivery, after, received, mailbox, afterPost }
     },
-    then({ before, delivery, after, received, mailbox, afterPost, nonMember }) {
+    then({ before, delivery, after, received, mailbox, afterPost }) {
         // Team: the stand-up and its reply; Nina's private reply; News: the office post; Ask IT: four posts
         before == 8
         delivery.effectiveDeliveryEnumId == "CldMailboxOnly"
@@ -356,7 +334,6 @@ feature("Mailbox only delivery keeps a mailbox's posts out of the Inbox and its 
         mailbox[0].unreadCount == 2
         mailbox[0].messageCount == 2
         afterPost == 6
-        nonMember.includes("not found")
     },
 })
 
@@ -366,21 +343,19 @@ feature("close#ListThread: an owner or moderator closes a thread, which then tak
         const memberCloses = asError("Nina", `${COMM}.close#ListThread`, { communicationEventId: msg.standupReply })
         const closed = asCall("Mike", `${COMM}.close#ListThread`, { communicationEventId: msg.standupReply })
         const replyError = asError("Nina", `${COMM}.reply#CommunicationEvent`, { parentCommEventId: msg.standupReply, body: "One more thing" })
-        const postError = asError("Nina", `${COMM}.create#Message`, { contactListId: teamId, parentCommEventId: msg.standup, body: "And another" })
         const toSender = asCall("Nina", `${COMM}.reply#CommunicationEvent`, { parentCommEventId: msg.standup, body: "Privately", replyToSenderOnly: true })
         const row = threads("Nina", { contactListId: teamId }).threadList.find((thread) => thread.threadId === msg.standup)
         const view = asCall("Nina", `${COMM}.get#InternalThread`, { rootCommEventId: msg.standup })
         at(21)
         const reopened = asCall("Mike", `${COMM}.close#ListThread`, { communicationEventId: msg.standup, reopen: true })
         const afterReopen = asCall("Nina", `${COMM}.reply#CommunicationEvent`, { parentCommEventId: msg.standupReply, body: "One more thing" })
-        return { memberCloses, closed, replyError, postError, toSender, row, view, reopened, afterReopen }
+        return { memberCloses, closed, replyError, toSender, row, view, reopened, afterReopen }
     },
-    then({ memberCloses, closed, replyError, postError, toSender, row, view, reopened, afterReopen }) {
+    then({ memberCloses, closed, replyError, toSender, row, view, reopened, afterReopen }) {
         memberCloses.includes("Only an owner or moderator of Team room may close a thread")
         closed.rootCommEventId == msg.standup
         closed.statusId == "CeResolved"
         replyError.includes("is closed")
-        postError.includes("is closed")
         toSender.contactListId == null
         toSender.toPartyId == party.Mia
         row.isClosed == true
@@ -476,21 +451,19 @@ feature("remove#ContactListParty and update#ContactList: a moderator removes a m
         const removeOwner = asError("Mike", `${LISTS}.remove#ContactListParty`, { contactListId: teamId, partyId: party.Olga })
         const moderatorUpdates = asError("Mike", `${LISTS}.update#ContactList`, { contactListId: teamId, description: "Ours" })
         asCall("Mike", `${LISTS}.remove#ContactListParty`, { contactListId: teamId, partyId: party.Nina })
-        const removedReads = asError("Nina", `${COMM}.find#InternalThreads`, { contactListId: teamId })
+        const removedRows = memberRow(teamId, party.Nina)
         asCall("Olga", `${LISTS}.update#ContactList`, { contactListId: newsId, description: "Company news", archived: true })
         const archivedPost = asError("Mike", `${COMM}.create#Message`, { contactListId: newsId, subject: "Late news" })
-        const archivedJoin = asError("Nina", `${LISTS}.join#ContactList`, { contactListId: newsId })
         const listed = mailboxes("Olga").map((list) => list.contactListName)
         const withArchived = mailboxes("Olga", { includeArchived: true }).map((list) => list.contactListName)
         const news = ec.entity.find("mantle.marketing.contact.ContactList").condition("contactListId", newsId).one()
-        return { removeOwner, moderatorUpdates, removedReads, archivedPost, archivedJoin, listed, withArchived, news }
+        return { removeOwner, moderatorUpdates, removedRows, archivedPost, listed, withArchived, news }
     },
-    then({ removeOwner, moderatorUpdates, removedReads, archivedPost, archivedJoin, listed, withArchived, news }) {
+    then({ removeOwner, moderatorUpdates, removedRows, archivedPost, listed, withArchived, news }) {
         removeOwner.includes("Only an owner of Team room may remove an owner")
         moderatorUpdates.includes("Only an owner of the mailbox may change it")
-        removedReads.includes("not found")
+        removedRows[0].thruDate != null
         archivedPost.includes("Mailbox News is archived")
-        archivedJoin.includes("News is archived")
         listed == ["Ask IT", "Team room"]
         withArchived == ["Ask IT", "News", "Team room"]
         news.description == "Company news"

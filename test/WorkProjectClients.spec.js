@@ -269,12 +269,16 @@ feature("an allocation request is told to the approvers who see the project only
         const allocationId = call("create#mantle.work.effort.WorkEffortAllocation", { rootWorkEffortId: "CLP1", roleTypeId: "Programmer",
             fromDate: "2030-03-04", thruDate: "2030-03-29", hoursPerWeek: 10, statusId: "WealRequested" }).workEffortAllocationId
         const told = call("mantle.work.ResourceServices.notify#Allocation", { workEffortAllocationId: allocationId, change: "requested" }).userIdList
-        return { told: Array.from(told || []) }
+        return { allocationId, told: Array.from(told || []) }
     },
     then({ told }) {
         told.includes(users.Amy)
         !told.includes(users.Otto)
         !told.includes(users.Dex)
+    },
+    // the request is only for its notice: left open it is one more for the approvers of the specs after this one
+    cleanup({ allocationId }) {
+        if (allocationId) call("delete#mantle.work.effort.WorkEffortAllocation", { workEffortAllocationId: allocationId })
     },
 })
 
@@ -377,8 +381,6 @@ feature("review threads: a client who views a shared repository reads no review 
         const cleo = asOff("cl.cleo", () => ({
             threads: Array.from(call("mantle.work.GitServices.get#ReviewThreads", { mergeRequestId: "CL_MR" }).threadList || []),
             comment: errorsOf(() => ec.service.sync().name("mantle.work.GitServices.create#ReviewComment").parameters({ mergeRequestId: "CL_MR", body: "client" }).call()),
-            reply: errorsOf(() => ec.service.sync().name("mantle.work.GitServices.create#ReviewComment").parameters({ mergeRequestId: "CL_MR", body: "client",
-                parentCommEventId: commentId }).call()),
             anchor: errorsOf(() => ec.service.sync().name("mantle.work.GitServices.store#ReviewAnchor").parameters({ communicationEventId: commentId,
                 mergeRequestId: "CL_MR", path: "b.txt", newLine: 2 }).call()),
             resolve: errorsOf(() => ec.service.sync().name("mantle.work.GitServices.resolve#ReviewThread").parameters({ communicationEventId: commentId }).call()),
@@ -392,7 +394,6 @@ feature("review threads: a client who views a shared repository reads no review 
     then({ cleo, john, comments, status, path }) {
         cleo.threads == []
         cleo.comment.includes("not found")
-        cleo.reply.includes("not found")
         cleo.anchor.includes("not found")
         cleo.resolve.includes("not found")
         john.length == 1

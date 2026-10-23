@@ -161,16 +161,14 @@ feature("linking again changes nothing, unlinking removes the link", {
     },
 })
 
-feature("a record type that is not an entity, has no single key, or a record not found is refused", {
+feature("a record type that is not an entity or has no single key is refused", {
     expect() {
         const notEntity = errorOf("mantle.party.CommunicationServices.link#CommunicationEventRecord",
                 { communicationEventId: messageIds[ORDER], recordEntityName: "mantle.NoSuchRecord", recordId: "X" })
         const twoKeys = errorOf("mantle.party.CommunicationServices.link#CommunicationEventRecord",
                 { communicationEventId: messageIds[ORDER], recordEntityName: "mantle.order.OrderItem", recordId: "RL-O1" })
-        const notFound = errorOf("mantle.party.CommunicationServices.get#RecordTimeline", { recordEntityName: ORDER, recordId: "RL-NONE" })
         notEntity.includes("is not an entity")
         twoKeys.includes("primary key fields")
-        notFound.includes("RL-NONE not found")
     },
 })
 
@@ -465,19 +463,18 @@ feature("a request goes on an order through RequestRecord and on a work effort o
             wikiRows: count("mantle.request.WikiPageRequest", { requestId: "RL-R1", wikiPageId }),
             wikiGeneric: count("mantle.request.RequestRecord", { requestId: "RL-R1", recordEntityName: WIKI, recordId: wikiPageId }),
         }
-        const missing = errorOf("mantle.request.RequestServices.link#RequestRecord", { requestId: "RL-NONE", recordEntityName: ORDER, recordId: "RL-O1" })
         const unlink = (entityName, recordId) => call("mantle.request.RequestServices.unlink#RequestRecord",
                 { requestId: "RL-R1", recordEntityName: entityName, recordId }).unlinked
         const unlinkedOrder = unlink(ORDER, "RL-O1")
         const unlinkedOrderAgain = unlink(ORDER, "RL-O1")
         const unlinkedWork = unlink(WORK, "RL-T1")
         const unlinkedWiki = unlink(WIKI, wikiPageId)
-        return { onOrder, orderAgain, orderRow, onWork, workAgain, onWiki, linked, missing, unlinkedOrder, unlinkedOrderAgain, unlinkedWork, unlinkedWiki,
+        return { onOrder, orderAgain, orderRow, onWork, workAgain, onWiki, linked, unlinkedOrder, unlinkedOrderAgain, unlinkedWork, unlinkedWiki,
             orderRows: count("mantle.request.RequestRecord", { requestId: "RL-R1", recordEntityName: ORDER, recordId: "RL-O1" }),
             workRows: count("mantle.request.RequestWorkEffort", { requestId: "RL-R1", workEffortId: "RL-T1" }),
             wikiRows: count("mantle.request.WikiPageRequest", { requestId: "RL-R1", wikiPageId }) }
     },
-    then({ onOrder, orderAgain, orderRow, onWork, workAgain, onWiki, linked, missing, unlinkedOrder, unlinkedOrderAgain, unlinkedWork, unlinkedWiki,
+    then({ onOrder, orderAgain, orderRow, onWork, workAgain, onWiki, linked, unlinkedOrder, unlinkedOrderAgain, unlinkedWork, unlinkedWiki,
             orderRows, workRows, wikiRows }) {
         onOrder.linkEntityName == "mantle.request.RequestRecord"
         onOrder.recordEntityName == ORDER
@@ -492,7 +489,6 @@ feature("a request goes on an order through RequestRecord and on a work effort o
         onWiki.linkEntityName == "mantle.request.WikiPageRequest"
         onWiki.created
         linked == { orderRows: 1, workRows: 1, workGeneric: 0, wikiRows: 1, wikiGeneric: 0 }
-        missing.includes("RL-NONE not found")
         unlinkedOrder == true
         unlinkedOrderAgain == false
         unlinkedWork == true

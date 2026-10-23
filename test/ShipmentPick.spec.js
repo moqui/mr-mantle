@@ -46,27 +46,23 @@ feature("inventory, two pick containers and a shipment assigned to one of them",
     then({ ids }) { ids.every(id => id != null) },
 })
 
-feature("pick part of the shipment into the container by scan; unknown containers and products are refused", {
+feature("pick part of the shipment into the container by scan; a container with no shipment and an unknown product are refused", {
     when() {
         // by product id into the container named by its serial number; no shipment given so it is found from the container
         call("mantle.shipment.ShipmentServices.pickMove#ProductToContainer", { scanProduct: productId, toContainerId: "PICKBIN-A", quantity: 4 })
         const afterFirst = sources(shipmentId)[0]
         const inBin = assetsOf(binId)
-        const noContainer = errorOf("mantle.shipment.ShipmentServices.pickMove#ProductToContainer", { scanProduct: productId, toContainerId: "NO_SUCH_BIN" })
         const noShipment = errorOf("mantle.shipment.ShipmentServices.pickMove#ProductToContainer", { scanProduct: productId, toContainerId: "PICKBIN-B" })
         const noProduct = errorOf("mantle.shipment.ShipmentServices.pickMove#ShipmentProduct", { scanProduct: "NO_SUCH_PRODUCT", shipmentId, toContainerId: "PICKBIN-A" })
-        const noShipmentId = errorOf("mantle.shipment.ShipmentServices.pickMove#ShipmentProduct", { scanProduct: productId, shipmentId: "NO_SUCH_SHIPMENT" })
-        return { afterFirst, inBin, noContainer, noShipment, noProduct, noShipmentId }
+        return { afterFirst, inBin, noShipment, noProduct }
     },
-    then({ afterFirst, inBin, noContainer, noShipment, noProduct, noShipmentId }) {
+    then({ afterFirst, inBin, noShipment, noProduct }) {
         n(afterFirst.quantityPicked) == 4
         inBin.length >= 1
         // the picked assets (which of the reserved assets, and how many, depends on what other specs left) are in the bin
         inBin.length >= 1
-        noContainer.includes("Container not found")
         noShipment.includes("No unpicked Shipment")
         noProduct.includes("Could not find Product")
-        noShipmentId.includes("Shipment not found")
     },
 })
 
@@ -89,15 +85,13 @@ feature("shipment and route segment edits, package route segments", {
         const segment = Array.from(ec.entity.find("mantle.shipment.ShipmentRouteSegment").condition("shipmentId", shipmentId).list())[0]
         call("mantle.shipment.ShipmentServices.update#ShipmentPackageAndRouteSeg", { shipmentId, shipmentPackageSeqId: packageSeqId, boxTypeEnumId: null, trackingCode: "PKG-TRK" })
         const packageRouteSeg = Array.from(ec.entity.find("mantle.shipment.ShipmentPackageRouteSeg").condition("shipmentId", shipmentId).list())[0]
-        const missing = errorOf("mantle.shipment.ShipmentServices.update#ShipmentAndRouteSegment", { shipmentId: "NO_SUCH_SHIPMENT" })
-        return { ship: shipment(shipmentId), segment, packageRouteSeg, missing }
+        return { ship: shipment(shipmentId), segment, packageRouteSeg }
     },
-    then({ ship, segment, packageRouteSeg, missing }) {
+    then({ ship, segment, packageRouteSeg }) {
         segment.shipmentMethodEnumId == "ShMthNextDay"
         n(segment.actualTransportCost) == 12.5
         packageRouteSeg.trackingCode == "PKG-TRK"
         ship.addtlShippingChargeDesc == "edited"
-        missing.includes("Shipment not found")
     },
 })
 

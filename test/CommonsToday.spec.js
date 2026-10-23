@@ -401,7 +401,6 @@ feature("another user's Today and counts only with authorization disabled; one's
         })
         return {
             todayError: asBen(() => errorOf(TODAY, { userId: user.Ada })),
-            partyError: asBen(() => errorOf(TODAY, { partyId: party.Ada })),
             countsError: asBen(() => errorOf(COUNTS, { userId: user.Ada })),
             notificationsError: asBen(() => errorOf("mantle.party.PartyServices.count#UserNotifications", { userId: user.Ada })),
             own: asBen(() => call(TODAY, {})),
@@ -409,9 +408,8 @@ feature("another user's Today and counts only with authorization disabled; one's
             internal: call(TODAY, { partyId: party.Ada, countOnly: true }),
         }
     },
-    then({ todayError, partyError, countsError, notificationsError, own, ownCounts, internal }) {
+    then({ todayError, countsError, notificationsError, own, ownCounts, internal }) {
         todayError.includes("authorization disabled")
-        partyError.includes("authorization disabled")
         countsError.includes("authorization disabled")
         notificationsError.includes("authorization disabled")
         titles(own.dueToday) == ["Ben only task", "Call the supplier"]

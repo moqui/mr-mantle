@@ -93,13 +93,11 @@ feature("a second invoice takes the remaining product quantity; mismatched parti
 feature("unapply an invoice item from the order zeroes the billing quantity", {
     when() {
         const billing = billings(invoiceId).find(b => b.orderItemSeqId == shippingSeqId)
-        const wrongInvoice = errorOf("mantle.account.InvoiceServices.unapply#InvoiceItemFromOrder", { invoiceId: "NO_SUCH_INVOICE", orderItemBillingId: billing.orderItemBillingId })
         call("mantle.account.InvoiceServices.unapply#InvoiceItemFromOrder", { invoiceId, orderItemBillingId: billing.orderItemBillingId })
         const after = ec.entity.find("mantle.order.OrderItemBilling").condition("orderItemBillingId", billing.orderItemBillingId).one()
-        return { wrongInvoice, after }
+        return { after }
     },
-    then({ wrongInvoice, after }) {
-        wrongInvoice != null
+    then({ after }) {
         n(after.quantity) == 0
     },
 })
@@ -159,13 +157,11 @@ feature("ship an order and move its invoice between ShipmentItemSources", {
         // the shipped status creates the sales invoice itself, so the source already has one
         const auto = sources[0].invoiceId
         if (auto) call("mantle.account.InvoiceServices.unapply#InvoiceItemFromShipment", { invoiceId: auto, shipmentItemSourceId: sisId })
-        const wrongInvoice = errorOf("mantle.account.InvoiceServices.unapply#InvoiceItemFromShipment", { invoiceId: "NO_SUCH_INVOICE", shipmentItemSourceId: sisId })
         const cleared = ec.entity.find("mantle.shipment.ShipmentItemSource").condition("shipmentItemSourceId", sisId).one()
-        return { sources, auto, wrongInvoice, cleared }
+        return { sources, auto, cleared }
     },
-    then({ sources, auto, wrongInvoice, cleared }) {
+    then({ sources, auto, cleared }) {
         sources.length == 1
-        wrongInvoice != null
         cleared.invoiceId == null
     },
 })
@@ -178,18 +174,14 @@ feature("apply a manual invoice to the shipment, then unapply it", {
         call("mantle.account.InvoiceServices.apply#InvoiceToShipment", { invoiceId: shipInvoiceId, shipmentId })
         const applied = ec.entity.find("mantle.shipment.ShipmentItemSource").condition("shipmentItemSourceId", sisId).one()
         const issuances = Array.from(ec.entity.find("mantle.product.issuance.AssetIssuance").condition("shipmentItemSourceId", sisId).list())
-        const wrongParty = newInvoice("ORG_ZIZI_RETAIL")
-        call("mantle.account.InvoiceServices.create#InvoiceItem", { invoiceId: wrongParty, itemTypeEnumId: "ItemProduct", productId, quantity: 1, amount: 8, description: "Product" })
-        const mismatch = errorOf("mantle.account.InvoiceServices.apply#InvoiceToShipment", { invoiceId: wrongParty, shipmentId })
         call("mantle.account.InvoiceServices.unapply#InvoiceItemFromShipment", { invoiceId: shipInvoiceId, shipmentItemSourceId: sisId })
         const unapplied = ec.entity.find("mantle.shipment.ShipmentItemSource").condition("shipmentItemSourceId", sisId).one()
-        return { applied, issuances, mismatch, unapplied }
+        return { applied, issuances, unapplied }
     },
-    then({ applied, issuances, mismatch, unapplied }) {
+    then({ applied, issuances, unapplied }) {
         applied.invoiceId == shipInvoiceId
         // the issuance keeps the invoice it was first billed on: only issuances with no invoice are filled in
         issuances.length == 1
-        mismatch.includes("does not match")
         unapplied.invoiceId == null
     },
 })

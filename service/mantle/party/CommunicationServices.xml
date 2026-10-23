@@ -2263,7 +2263,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (entityName === COMM_EVENT) return commEventVisible(value, depth)
                 if (entityName === WIKI_PAGE) return wikiPageVisible(value)
                 // a merge request or a repository: whoever may view the repository (org.moqui.impl.GitServices)
-                if (entityName === GIT_MERGE_REQUEST || entityName === GIT_REPOSITORY) return !!ec.service.sync()
+                if (entityName === GIT_MERGE_REQUEST || entityName === GIT_REPOSITORY) return ec.factory.hasFeature('git') && !!ec.service.sync()
                         .name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameter('repositoryId', value.repositoryId).call()?.canView
                 // a timesheet: its person, its approvers and ADMIN (mantle.work.TimesheetServices.get#TimesheetAccess)
                 if (entityName === TIMESHEET) return !!ec.service.sync()

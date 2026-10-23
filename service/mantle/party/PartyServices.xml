@@ -1068,6 +1068,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions>
             <entity-find-one entity-name="mantle.party.Party" value-field="party"/>
+            <if condition="party == null"><return error="true" message="Party ${partyId} not found"/></if>
             <entity-set value-field="party" include="nonpk" set-if-empty="true"/>
             <entity-update value-field="party"/>
             <if condition="party.partyTypeEnumId == 'PtyPerson'">

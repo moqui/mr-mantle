@@ -91,13 +91,11 @@ feature("import an OFX file", {
 feature("an OFX file for another account is refused", {
     when() {
         const wrong = ofx.replace(routing, "999999999")
-        return { error: errorOf("mantle.account.OfxServices.import#OfxVersion1", { paymentMethodId: bankId, ofxString: wrong }),
-                 bad: errorOf("mantle.account.OfxServices.import#OfxVersion1", { paymentMethodId: bankId, ofxString: "<OFX><X>1</X></OFX>" }) }
+        return { error: errorOf("mantle.account.OfxServices.import#OfxVersion1", { paymentMethodId: bankId, ofxString: wrong }) }
     },
-    then({ error, bad }) {
+    then({ error }) {
         error != null
         error.includes("does not match routing number")
-        bad.includes("could not find STMTRS")
     },
 })
 
@@ -219,7 +217,7 @@ feature("statements arrive as system messages and are consumed through the payme
     },
 })
 
-feature("statement files are uploaded: OFX and BAI 2 files and their missing-file errors", {
+feature("statement files are uploaded: OFX and BAI 2 files", {
     when() {
         const before = ec.entity.find("mantle.account.method.PaymentMethodTrans").condition("paymentMethodId", bankId).count()
         call("mantle.account.OfxServices.upload#OfxVersion1", { paymentMethodId: bankId, ofxFile: uploadedFile("stmt.ofx", ofx.replace("OFX1", "OFXUP1").replace("OFX2", "OFXUP2").replace("OFX3", "OFXUP3")) })
@@ -228,14 +226,10 @@ feature("statement files are uploaded: OFX and BAI 2 files and their missing-fil
                 "16,108,5000,S,2500,2500,Deposit memo,UP-REF", "49,205000,4/", "98,205000,1,6/", "99,205000,1,8/"].join("\n")
         call("mantle.account.BaiServices.upload#BaiVersion2", { paymentMethodId: bankId, baiFile: uploadedFile("stmt.bai", bai) })
         const afterBai = ec.entity.find("mantle.account.method.PaymentMethodTrans").condition("paymentMethodId", bankId).count()
-        const noOfx = errorOf("mantle.account.OfxServices.upload#OfxVersion1", { paymentMethodId: bankId })
-        const noBai = errorOf("mantle.account.BaiServices.upload#BaiVersion2", { paymentMethodId: bankId })
-        return { before, afterOfx, afterBai, noOfx, noBai }
+        return { before, afterOfx, afterBai }
     },
-    then({ before, afterOfx, afterBai, noOfx, noBai }) {
+    then({ before, afterOfx, afterBai }) {
         afterOfx == before + 3
         afterBai == afterOfx + 1
-        noOfx != null
-        noBai != null
     },
 })

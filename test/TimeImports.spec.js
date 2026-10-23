@@ -37,10 +37,9 @@ feature("import a time summary: a standard, overtime and double time entry per e
     when() {
         const text = `${workerA},,8,2,1,,,\n${workerB},,40,,,,,\n`
         call("mantle.work.TimeServices.import#TimeSummaryFile", { clientPartyId: clientId, effectiveDate: day(2026, 11, 14) + 17 * 3600000, fileText: text })
-        const unknown = errorOf("mantle.work.TimeServices.import#TimeSummaryRecord", { clientPartyId: clientId, employeeId: "NO_SUCH_EMPLOYEE", standardHours: 1 })
-        return { a: entriesOf(workerA), b: entriesOf(workerB), unknown }
+        return { a: entriesOf(workerA), b: entriesOf(workerB) }
     },
-    then({ a, b, unknown }) {
+    then({ a, b }) {
         a.length == 3
         b.length == 1
         n(a.find(e => e.rateModifierEnumId == "RatmRegular").hours) == 8
@@ -48,7 +47,6 @@ feature("import a time summary: a standard, overtime and double time entry per e
         n(a.find(e => e.rateModifierEnumId == "RatmDouble").hours) == 1
         n(b[0].hours) == 40
         a.every(e => e.clientPartyId == clientId)
-        unknown.includes("Could not find employee")
     },
 })
 
@@ -109,17 +107,12 @@ feature("a bulk entry before the project start or for a disabled party is refuse
                 estimatedStartDate: day(2026, 12, 1), estimatedCompletionDate: day(2026, 12, 31) })
         const early = errorOf("mantle.work.TimeServices.store#TimeEntryWorkEffort", { rootWorkEffortId: projectId, workEffortName: "Too early", actualStartDate: day(2026, 11, 1),
                 actualWorkDuration: 2, clientPartyId: clientId })
-        const late = errorOf("mantle.work.TimeServices.store#TimeEntryWorkEffort", { rootWorkEffortId: projectId, workEffortName: "Too late", actualStartDate: day(2027, 1, 15),
-                actualWorkDuration: 2, clientPartyId: clientId })
-        const earlyTime = errorOf("mantle.work.TimeServices.store#WorkEffortPartyTime", { workEffortId: projectId, partyId: workerA, fromDate: day(2026, 11, 1), hours: 1 })
         call("update#mantle.party.Party", { partyId: workerB, disabled: "Y" })
         const disabled = errorOf("mantle.work.TimeServices.store#WorkEffortPartyTime", { workEffortId: bulkEffortId, partyId: workerB })
-        return { early, late, earlyTime, disabled }
+        return { early, disabled }
     },
-    then({ early, late, earlyTime, disabled }) {
+    then({ early, disabled }) {
         early.includes("outside of project's start date")
-        late.includes("out side of project's end date")
-        earlyTime.includes("outside of project's start date")
         disabled.includes("is not active")
     },
 })

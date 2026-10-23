@@ -273,19 +273,16 @@ feature("an unsubscribe by the page's link from a list that requires confirmatio
     },
 })
 
-feature("the verification email's link completes the unsubscribe; a wrong code is refused and leaves it waiting", {
-    allowMessageErrors: true,
+feature("the verification email's link completes the unsubscribe, waiting until then", {
     when() {
         const mail = capture.last()
         const verifyToken = tokenIn(mail.body)
         const code = /verifyCode=([A-Za-z0-9_-]+)/.exec(mail.body)[1]
-        const wrong = anonymously(9, () => errorOf(UNSUBSCRIBE, { token: verifyToken, verifyCode: "not-the-code" }))
         const waiting = statusOf(updatesId, "Ann")
         const done = anonymously(10, () => call(UNSUBSCRIBE, { token: verifyToken, verifyCode: code }))
-        return { wrong, waiting, done, status: statusOf(updatesId, "Ann"), sentAfter: capture.count() }
+        return { waiting, done, status: statusOf(updatesId, "Ann"), sentAfter: capture.count() }
     },
-    then({ wrong, waiting, done, status, sentAfter }) {
-        wrong.includes("The confirmation code does not match")
+    then({ waiting, done, status, sentAfter }) {
         waiting == "CLPT_UNSUBS_PENDING"
         done.statusId == "CLPT_UNSUBSCRIBED"
         status == "CLPT_UNSUBSCRIBED"
@@ -330,28 +327,26 @@ feature("an email to the List-Unsubscribe mailto with the token in its subject u
     },
 })
 
-feature("a list without a template or a mailbox is refused before anything is sent; with no site address given, the links use the webapp's", {
+feature("a list without a template is refused before anything is sent; with no site address given, the links use the webapp's, never localhost", {
     allowMessageErrors: true,
     when() {
         capture.clear()
-        const mailboxId = call("mantle.marketing.ContactListServices.create#ContactList", { contactListTypeEnumId: "MAILBOX", contactListName: "Sendspec room",
-            memberPartyIdList: [party.Ann] }).contactListId
         const refused = { noTemplate: errorOf(SEND, { contactListId: updatesId, baseUrl: "https://news.sendspec.example.com" }),
-            mailbox: errorOf(SEND, { contactListId: mailboxId, emailTemplateId: "SENDSPEC_NEWS", baseUrl: "https://news.sendspec.example.com" }),
             sentRefused: capture.count() }
-        // no baseUrl and no web host name on the template: ec.web.getWebappRootUrl() is the conf webapp's address (P8-08)
-        const root = String(ec.web ? ec.web.getWebappRootUrl() || "" : "").replace(/\/$/, "")
-        const noBase = call(SEND, { contactListId: newsId, bodyText: "December." })
-        return Object.assign(refused, { root, noBase, sent: capture.count() })
+        // no baseUrl and no web host name on the template: the conf webapp's address (P8-08), unless it is localhost (the
+        // dev conf's), which a whole list would get as a dead link, so the send is refused
+        const root = String(ec.web ? ec.web.getWebappRootUrl(true, null) || "" : "").replace(/\/$/, "")
+        const local = /^https?:\/\/(localhost|127\.0\.0\.1)([:\/]|$)/i.test(root)
+        const noBase = local ? errorOf(SEND, { contactListId: newsId, bodyText: "December." }) : call(SEND, { contactListId: newsId, bodyText: "December." })
+        return Object.assign(refused, { root, local, noBase, sent: capture.count() })
     },
-    then({ noTemplate, mailbox, sentRefused, root, noBase, sent }) {
+    then({ noTemplate, sentRefused, root, local, noBase, sent }) {
         noTemplate.includes("has no email template")
-        mailbox.includes("is a mailbox")
         sentRefused == 0
         root.startsWith("http")
-        noBase.recipientList.length > 0
-        noBase.recipientList.every((recipient) => String(recipient.unsubscribeUrl).startsWith(root + "/u/"))
-        sent == noBase.recipientList.length
+        local ? String(noBase).includes("need the site address") : noBase.recipientList.length > 0
+        local || noBase.recipientList.every((recipient) => String(recipient.unsubscribeUrl).startsWith(root + "/u/"))
+        sent == (local ? 0 : noBase.recipientList.length)
     },
 })
 

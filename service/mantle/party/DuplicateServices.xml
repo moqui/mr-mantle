@@ -210,7 +210,9 @@ along with this software (see the LICENSE.md file). If not, see
             </iterate>
 
             <set field="dupPartyIds" from="Object.keys(matchingInfoByPartyId)"/>
-            <script>if (!dupPartyIds.includes(partyId)) dupPartyIds.push(partyId)</script>
+            <!-- in id order: checks of two matching parties run at once on the job workers, and each updates both rows, so
+                the same order of locks keeps them from deadlocking -->
+            <script>if (!dupPartyIds.includes(partyId)) dupPartyIds.push(partyId); dupPartyIds.sort()</script>
             <iterate list="dupPartyIds" entry="dupPartyId">
                 <entity-find-one entity-name="mantle.party.Party" value-field="dupParty">
                     <field-map field-name="partyId" from="dupPartyId"/></entity-find-one>

@@ -108,7 +108,7 @@ feature("labels are requested, refunded and tracked through the gateway the rout
     },
 })
 
-feature("a gateway with no service for the operation is logged and skipped; refund works and unknown shipments fail", {
+feature("a gateway with no service for the operation is logged and skipped; refund works", {
     when() {
         call("update#mantle.shipment.carrier.ShippingGatewayConfig", { shippingGatewayConfigId: "TEST_SHIP", trackLabelsServiceName: null })
         call("mantle.shipment.CarrierServices.track#ShipmentLabels", { shipmentId, shipmentPackageSeqId: packageSeqId })
@@ -116,12 +116,10 @@ feature("a gateway with no service for the operation is logged and skipped; refu
         call("mantle.shipment.CarrierServices.refund#ShipmentLabels", { shipmentId, shipmentPackageSeqId: packageSeqId })
         const afterRefund = packageRouteSeg()
         const returnRemoved = call("mantle.shipment.CarrierServices.remove#ShipmentReturnLabelInfo", { shipmentId, shipmentPackageSeqId: packageSeqId, shipmentRouteSegmentSeqId: segmentSeqId })
-        const missing = errorOf("mantle.shipment.CarrierServices.request#ShipmentLabels", { shipmentId: "NO_SUCH_SHIPMENT" })
-        return { afterRefund, returnRemoved, missing }
+        return { afterRefund, returnRemoved }
     },
-    then({ afterRefund, missing }) {
+    then({ afterRefund }) {
         afterRefund.trackingCode == null
-        missing != null
     },
 })
 

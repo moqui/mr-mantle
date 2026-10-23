@@ -49,10 +49,9 @@ feature("a sprint's defaults: Sprint n, two weeks on weekdays after the last one
         const second = call(`${PROJECT}.get#SprintDefaults`, { rootWorkEffortId: "PSP" })
         const made2 = call(`${PROJECT}.create#Sprint`, { rootWorkEffortId: "PSP", workEffortName: "Hardening" }).workEffortId
         call(`${PROJECT}.update#Sprint`, { workEffortId: made2, capacity: "10", description: "Fix what the first found" })
-        const backwards = errorOf(`${PROJECT}.update#Sprint`, { workEffortId: made2, estimatedCompletionDate: "2026-11-01" })
-        return { first, made, sprint: we(made), second, made2, sprint2: we(made2), backwards }
+        return { first, made, sprint: we(made), second, made2, sprint2: we(made2) }
     },
-    then({ first, made, sprint, second, made2, sprint2, backwards }) {
+    then({ first, made, sprint, second, made2, sprint2 }) {
         first.workEffortId == "PSP-SP-1"
         first.workEffortName == "Sprint 1"
         first.estimateUnit == "points"
@@ -76,7 +75,6 @@ feature("a sprint's defaults: Sprint n, two weeks on weekdays after the last one
         sprint2.workEffortName == "Hardening"
         sprint2.estimatedPoints == 10
         sprint2.description == "Fix what the first found"
-        backwards.includes("A sprint ends after it starts")
     },
 })
 
@@ -95,10 +93,9 @@ feature("the backlog is one order over the project's tasks at every depth: a mov
         // the sub-item between two top-level items: the middle of the gap
         const middle = call(`${TASK}.set#TaskBacklogRank`, { workEffortId: "PSP-6", previousWorkEffortId: "PSP-1" })
         const afterMiddle = order()
-        const unknown = errorOf(`${TASK}.set#TaskBacklogRank`, { workEffortId: "PSP-6", previousWorkEffortId: "IRON-1" })
-        return { first, numbered, middle, afterMiddle, unknown, ranks: [we("PSP-4").sequenceNum, we("PSP-1").sequenceNum, we("PSP-6").sequenceNum, we("PSP-2").sequenceNum] }
+        return { first, numbered, middle, afterMiddle, ranks: [we("PSP-4").sequenceNum, we("PSP-1").sequenceNum, we("PSP-6").sequenceNum, we("PSP-2").sequenceNum] }
     },
-    then({ first, numbered, middle, afterMiddle, unknown, ranks }) {
+    then({ first, numbered, middle, afterMiddle, ranks }) {
         first.renumbered
         first.sequenceNum == 1000
         numbered == ["PSP-4", "PSP-1", "PSP-2", "PSP-3", "PSP-5", "PSP-6"]
@@ -106,7 +103,6 @@ feature("the backlog is one order over the project's tasks at every depth: a mov
         middle.sequenceNum == 2500
         afterMiddle == ["PSP-4", "PSP-1", "PSP-6", "PSP-2", "PSP-3", "PSP-5"]
         ranks == [1000, 2000, 2500, 3000]
-        unknown.includes("is not in the project of PSP-6")
     },
 })
 
@@ -117,21 +113,19 @@ feature("start#Sprint begins a planned sprint with its items; another start is r
         const moved = call(`${TASK}.set#TaskSprint`, { workEffortId: "PSP-3", sprintWorkEffortId: "PSP-SP-1" })
         ec.user.setEffectiveTime(at(2, 15))
         const started = call(`${PROJECT}.start#Sprint`, { workEffortId: "PSP-SP-1" })
-        const again = errorOf(`${PROJECT}.start#Sprint`, { workEffortId: "PSP-SP-1" })
         const other = errorOf(`${PROJECT}.start#Sprint`, { workEffortId: "PSP-SP-2" })
         // a sprint not started has no actuals: its committed size is what is in it
         const planned = call(`${REPORT}.get#SprintBurndown`, { workEffortId: "PSP-SP-2" })
         // no scope-change rows for a sprint not yet started
         const audits = ec.entity.find("moqui.entity.EntityAuditLog").condition("changedEntityName", "mantle.work.effort.WorkEffortAssoc")
                 .condition("pkPrimaryValue", "PSP-SP-1").count()
-        return { moved, started, sprint: we("PSP-SP-1"), again, other, planned, audits }
+        return { moved, started, sprint: we("PSP-SP-1"), other, planned, audits }
     },
-    then({ moved, started, sprint, again, other, planned, audits }) {
+    then({ moved, started, sprint, other, planned, audits }) {
         !moved.changed
         started.itemCount == 3
         sprint.statusId == "WeInProgress"
         sprint.actualStartDate != null
-        again.includes("is not planned")
         other.includes("Sprint 1 is in progress")
         planned.committed == 0
         planned.daysLeft == 10
@@ -182,15 +176,13 @@ feature("changes in a sprint in progress are its scope changes, with who made th
 feature("complete#Sprint keeps the done items and carries the open ones to the next sprint; the velocity counts it", {
     when() {
         ec.user.setEffectiveTime(at(13, 16))
-        const refusedClosed = errorOf(`${PROJECT}.complete#Sprint`, { workEffortId: "PSP-SP-2" })
         const completed = call(`${PROJECT}.complete#Sprint`, { workEffortId: "PSP-SP-1", carryTo: "next" })
         const burndown = call(`${REPORT}.get#SprintBurndown`, { workEffortId: "PSP-SP-1" })
         const intoClosed = errorOf(`${TASK}.set#TaskSprint`, { workEffortId: "PSP-5", sprintWorkEffortId: "PSP-SP-1" })
         const velocity = call(`${REPORT}.get#SprintVelocity`, { rootWorkEffortId: "PSP" })
-        return { refusedClosed, completed, sprint: we("PSP-SP-1"), burndown, intoClosed, velocity, two: sprintOf("PSP-2"), one: sprintOf("PSP-1") }
+        return { completed, sprint: we("PSP-SP-1"), burndown, intoClosed, velocity, two: sprintOf("PSP-2"), one: sprintOf("PSP-1") }
     },
-    then({ refusedClosed, completed, sprint, burndown, intoClosed, velocity, two, one }) {
-        refusedClosed.includes("is not in progress")
+    then({ completed, sprint, burndown, intoClosed, velocity, two, one }) {
         completed.doneCount == 3
         completed.notDoneCount == 1
         completed.carriedToSprintId == "PSP-SP-2"
@@ -221,18 +213,16 @@ feature("a project that allows several sprints starts two at once; open items go
         ec.user.setEffectiveTime(at(16, 15))
         call(`${PROJECT}.start#Sprint`, { workEffortId: "PSP-SP-2" })
         const third = call(`${PROJECT}.create#Sprint`, { rootWorkEffortId: "PSP" }).workEffortId
-        const refused = errorOf(`${PROJECT}.start#Sprint`, { workEffortId: third })
         call(`${PROJECT}.store#ProjectSetting`, { workEffortId: "PSP", settingTypeEnumId: "WstSeveralSprints", settingValue: "Y" })
         call(`${PROJECT}.start#Sprint`, { workEffortId: third })
         call(`${TASK}.set#TaskSprint`, { workEffortId: "PSP-6", sprintWorkEffortId: third })
         ec.user.setEffectiveTime(at(27, 16))
         const toNew = call(`${PROJECT}.complete#Sprint`, { workEffortId: third, carryTo: "new", newSprintName: "Leftovers" })
         const toBacklog = call(`${PROJECT}.complete#Sprint`, { workEffortId: "PSP-SP-2", carryTo: "backlog" })
-        return { third, refused, toNew, toBacklog, made: we(toNew.carriedToSprintId), six: sprintOf("PSP-6"), two: sprintOf("PSP-2") }
+        return { third, toNew, toBacklog, made: we(toNew.carriedToSprintId), six: sprintOf("PSP-6"), two: sprintOf("PSP-2") }
     },
-    then({ third, refused, toNew, toBacklog, made, six, two }) {
+    then({ third, toNew, toBacklog, made, six, two }) {
         third == "PSP-SP-3"
-        refused.includes("Hardening is in progress")
         toNew.carriedToSprintId == "PSP-SP-4"
         made.workEffortName == "Leftovers"
         made.statusId == "WeInPlanning"

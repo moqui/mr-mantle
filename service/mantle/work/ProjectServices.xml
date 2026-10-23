@@ -1684,7 +1684,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const canView = (repositoryId) => {
                     if (!(repositoryId in viewable)) {
                         ec.message.pushErrors()
-                        try { viewable[repositoryId] = !!ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId}).call()?.canView && !ec.message.hasError() }
+                        try { viewable[repositoryId] = ec.factory.hasFeature('git') && !!ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId}).call()?.canView && !ec.message.hasError() }
                         catch (err) { viewable[repositoryId] = false }
                         finally { ec.message.clearErrors(); ec.message.popErrors() }
                     }
@@ -1861,6 +1861,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const linked = Array.from(ec.entity.find('mantle.work.effort.WorkEffortGitRepository').condition('workEffortId', release.rootWorkEffortId)
                         .conditionDate('fromDate', 'thruDate', null).orderBy('repositoryId').list()).map((row) => row.repositoryId)
                 const access = (id) => {
+                    if (!ec.factory.hasFeature('git')) return {}
                     ec.message.pushErrors()
                     try { const out = ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId: id}).call() || {}; return ec.message.hasError() ? {} : out }
                     finally { ec.message.clearErrors(); ec.message.popErrors() }
@@ -2054,7 +2055,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!repositoryId || !linked.includes(repositoryId)) { ec.message.addError(ec.resource.expand('${repositoryId} is not a repository of the project', '', {repositoryId: repositoryId || '-'})); return }
                 ec.message.pushErrors()
                 let canUpdate = false
-                try { canUpdate = !!ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId}).call()?.canUpdate && !ec.message.hasError() }
+                try { canUpdate = ec.factory.hasFeature('git') && !!ec.service.sync().name('org.moqui.impl.GitServices.get#GitRepositoryAccess').parameters({repositoryId}).call()?.canUpdate && !ec.message.hasError() }
                 catch (err) { canUpdate = false }
                 finally { ec.message.clearErrors(); ec.message.popErrors() }
                 if (!canUpdate) { ec.message.addError(ec.resource.expand('You may not update the repository ${repositoryId}', '', {repositoryId})); return }
@@ -2782,8 +2783,9 @@ along with this software (see the LICENSE.md file). If not, see
             })
             part('reviewsWaiting', () => {
                 if (!ec.user.userId) { counts.reviewsWaiting = 0; return }
-                // the framework's merge requests; git hosting is a build feature: without it the count stays null, not a failure. The
-                // call runs in a transaction of its own, so a service not built into the host leaves this one usable for the other parts
+                // the framework's merge requests; git hosting is a build feature: without it the count stays null. The call runs in a
+                // transaction of its own, so a failure leaves this one usable for the other parts
+                if (!ec.factory.hasFeature('git')) return
                 ec.message.pushErrors()
                 try {
                     const out = ec.service.sync().name('org.moqui.impl.GitReviewServices.find#MergeRequests').parameters({waitingForUserId: ec.user.userId,

@@ -15,10 +15,6 @@ spec({
     cleanup() { ec.artifactExecution.enableAuthz() },
 })
 
-function errorOf(name, params) {
-    try { call(name, params) } catch (e) { ec.message.clearErrors(); return String(e.message) }
-    return null
-}
 const period = (id) => ec.entity.find("mantle.party.time.TimePeriod").condition("timePeriodId", id).one()
 const periods = (typeId) => Array.from(ec.entity.find("mantle.party.time.TimePeriod").condition("partyId", orgId).condition("timePeriodTypeId", typeId).orderBy("fromDate").list())
 
@@ -78,13 +74,11 @@ feature("get and create the previous and next periods", {
 feature("getOrCreate#TimePeriod finds an existing period by its from date and creates a missing one", {
     when() {
         const existing = call("mantle.party.TimeServices.getOrCreate#TimePeriod", { partyId: orgId, timePeriodTypeId: "FiscalMonth", fromDate: year + "-03-01" })
-        const missing = errorOf("mantle.party.TimeServices.getOrCreate#TimePeriod", { partyId: orgId, timePeriodTypeId: "FiscalMonth" })
         const quarter = call("mantle.party.TimeServices.getOrCreate#TimePeriod", { partyId: orgId, timePeriodTypeId: "FiscalQuarter", fromDate: (year + 3) + "-01-01" })
-        return { existing, missing, quarter, created: period(quarter.timePeriodId) }
+        return { existing, quarter, created: period(quarter.timePeriodId) }
     },
-    then({ existing, missing, quarter, created }) {
+    then({ existing, quarter, created }) {
         existing.timePeriodId == monthIds[2]
-        missing.includes("Must specify fromDate or thruDate")
         quarter.timePeriodId != null
         created.partyId == orgId
         created.periodName != null

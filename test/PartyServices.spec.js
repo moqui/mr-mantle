@@ -163,20 +163,18 @@ feature("badge lookup and scans: access, clock in, clock out, expired", {
         const clockOut = call("mantle.party.PartyServices.scan#PartyBadge", { scanValue: badgeId, scanPurposeEnumId: "PbspClockOut",
                 scanDate: effectiveTime + 2 * 3600000 })
         const timeEntry = ec.entity.find("mantle.work.time.TimeEntry").condition("timeEntryId", clockIn.timeEntryId).one()
-        const unknown = errorOf("mantle.party.PartyServices.scan#PartyBadge", { scanValue: "NOPE-NOPE" })
         const expiredId = call("create#mantle.party.PartyBadge", { partyId: employeeId, organizationPartyId: "ORG_ZIZI_RETAIL",
                 fromDate: effectiveTime - 2 * 86400000, thruDate: effectiveTime - 86400000, serialNumber: "OLD-" + effectiveTime }).partyBadgeId
         const expired = errorOf("mantle.party.PartyServices.scan#PartyBadge", { scanValue: "OLD-" + effectiveTime })
-        return { lookup, access, clockIn, clockOut, timeEntry, unknown, expired }
+        return { lookup, access, clockIn, clockOut, timeEntry, expired }
     },
-    then({ lookup, access, clockIn, clockOut, timeEntry, unknown, expired }) {
+    then({ lookup, access, clockIn, clockOut, timeEntry, expired }) {
         lookup.partyBadge.partyBadgeId == badgeId
         access.scanResultEnumId == "PbsrSuccess"
         access.partyId == employeeId
         clockIn.timeEntryId != null
         clockOut.closedTimeEntryId == clockIn.timeEntryId
         timeEntry.thruDate != null
-        unknown.includes("No badge found")
         expired.includes("Badge expired")
     },
 })

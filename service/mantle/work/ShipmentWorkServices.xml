@@ -107,6 +107,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <return type="danger" message="Cannot add Order to Picklist ${workEffortId} in status ${workEffort.status?.description || workEffort.statusId}"/></if>
 
             <entity-find-one entity-name="mantle.order.OrderPart" value-field="orderPart"/>
+            <if condition="orderPart == null"><return error="true" message="Order ${orderId} part ${orderPartSeqId} not found"/></if>
             <if condition="orderPart.statusId != 'OrderApproved'">
                 <return type="danger" message="Order ${orderId} part ${orderPartSeqId} is not in Approved status, not shipping"/></if>
 

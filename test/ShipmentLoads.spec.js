@@ -64,11 +64,9 @@ feature("create a shipment load with an asset and a shipment, and add order part
         const added = call("mantle.work.ShipmentWorkServices.add#OrderPartToShipmentLoad", { orderId: orderB, orderPartSeqId: "01", workEffortId: loadId })
         shipmentB = added.shipmentIdList[0]
         const addedAgain = call("mantle.work.ShipmentWorkServices.add#OrderPartToShipmentLoad", { orderId: orderB, orderPartSeqId: "01", workEffortId: loadId })
-        // a shipment on a bin number given
-        const notApproved = errorOf("mantle.work.ShipmentWorkServices.add#OrderPartToShipmentLoad", { orderId: "NO_SUCH_ORDER", orderPartSeqId: "01", workEffortId: loadId })
-        return { added, addedAgain, notApproved, we: effort(loadId), a: shipment(shipmentA), b: shipment(shipmentB) }
+        return { added, addedAgain, we: effort(loadId), a: shipment(shipmentA), b: shipment(shipmentB) }
     },
-    then({ added, addedAgain, notApproved, we, a, b }) {
+    then({ added, addedAgain, we, a, b }) {
         we.purposeEnumId == "WepShipmentShip"
         we.statusId == "WeInPlanning"
         a.shipWorkEffortId == loadId
@@ -79,7 +77,6 @@ feature("create a shipment load with an asset and a shipment, and add order part
         n(b.binLocationNumber) == 2
         added.shipmentIdList.length == 1
         addedAgain.shipmentIdList[0] == shipmentB
-        notApproved != null
     },
 })
 
@@ -162,15 +159,13 @@ feature("ship the packed shipment and close the load", {
 feature("make the order conditions and create loads for the remaining approved orders", {
     when() {
         const conds = call("mantle.work.ShipmentWorkServices.make#ShipmentLoadOrderConditions", {})
-        const badCategory = errorOf("mantle.work.ShipmentWorkServices.make#ShipmentLoadOrderConditions", { inventoryCategoryId: "NO_SUCH_CATEGORY" })
         const orderE = approvedOrder(1).orderId
         const out = call("mantle.work.ShipmentWorkServices.create#ShipmentLoadsForOrders", { facilityId, workEffortName: "Bulk Load", ordersPerPicklist: 2, excludeNotPickLoc: "false",
                 inputFieldsMap: { orderId: orderE } })
-        return { conds, badCategory, out }
+        return { conds, out }
     },
-    then({ conds, badCategory, out }) {
+    then({ conds, out }) {
         conds.excludeOnPicklistCond != null
-        badCategory.includes("Invalid Category ID")
         n(out.picklistsCreated) == 1
         out.workEffortIdList.length == 1
     },

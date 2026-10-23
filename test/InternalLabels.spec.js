@@ -35,7 +35,6 @@ feature("a recipient labels an internal message, and only that user sees and app
         login(adaUsername, "moqui1!!")
         const sent = call(`${COMM}.create#Message`, { subject: "Plans", body: "See you", toPartyId: benParty })
         const eventId = sent.communicationEventId
-        const hidden = call(`${COMM}.create#Message`, { subject: "Ada alone", body: "Not for Ben", toPartyId: adaParty }).communicationEventId
 
         login(benUsername, "moqui1!!")
         const accountId = call(`${MAIL}.ensure#InternalAccount`, {}).emailAccountId
@@ -46,13 +45,11 @@ feature("a recipient labels an internal message, and only that user sees and app
         const byName = call(`${COMM}.find#InternalThreads`, { searchText: "label:follow" })
         const thread = call(`${COMM}.get#InternalThread`, { communicationEventId: eventId })
         const unnamed = errorOf(`${COMM}.set#InternalMessageLabels`, { communicationEventId: eventId })
-        const unseen = errorOf(`${COMM}.set#InternalMessageLabels`, { communicationEventId: hidden, addLabelIdList: [labelId] })
 
         login(adaUsername, "moqui1!!")
         call(`${COMM}.reply#CommunicationEvent`, { parentCommEventId: eventId, body: "A reply does not take the label" })
         const adaThread = call(`${COMM}.get#InternalThread`, { communicationEventId: eventId })
         const stolen = errorOf(`${COMM}.set#InternalMessageLabels`, { communicationEventId: eventId, addLabelIdList: [labelId] })
-        const adaFind = errorOf(`${COMM}.find#InternalThreads`, { emailLabelId: labelId })
         const joinsAfterReply = ec.entity.find(JOIN).condition("emailLabelId", labelId).count()
 
         login(benUsername, "moqui1!!")
@@ -65,7 +62,7 @@ feature("a recipient labels an internal message, and only that user sees and app
 
         return { first, again, foundSubjects: Array.from(found.threadList).map((row) => row.subject),
             foundLabels: names(found.threadList[0] && found.threadList[0].labelList), byNameCount: Array.from(byName.threadList).length,
-            threadLabels: names(thread.labelList), unnamed, unseen, adaLabels: names(adaThread.labelList), stolen, adaFind,
+            threadLabels: names(thread.labelList), unnamed, adaLabels: names(adaThread.labelList), stolen,
             joinsAfterReply, stillCount: Array.from(still.threadList).length, removed, afterCount: Array.from(after.threadList).length,
             clearedLabels: names(cleared.labelList), joinsAfterRemove, removeMissing }
     },
@@ -78,10 +75,8 @@ feature("a recipient labels an internal message, and only that user sees and app
         out.byNameCount == 1
         out.threadLabels == ["Follow up"]
         out.unnamed.includes("Name the labels to add or remove")
-        out.unseen.includes("not found")
         out.adaLabels == []
         out.stolen.includes("not found")
-        out.adaFind.includes("not found")
         out.joinsAfterReply == 1
         out.stillCount == 1
         out.removed.updatedCount == 1

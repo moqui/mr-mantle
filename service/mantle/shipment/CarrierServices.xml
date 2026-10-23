@@ -745,8 +745,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <entity-find entity-name="mantle.shipment.ShipmentRouteSegment" list="routeSegmentList">
                     <econdition field-name="shipmentId"/><order-by field-name="shipmentRouteSegmentSeqId"/></entity-find>
                 <set field="routeSegment" from="routeSegmentList[0]"/>
-                <set field="shipmentRouteSegmentSeqId" from="routeSegment.shipmentRouteSegmentSeqId"/>
+                <set field="shipmentRouteSegmentSeqId" from="routeSegment?.shipmentRouteSegmentSeqId"/>
             </else></if>
+            <if condition="shipment == null || routeSegment == null">
+                <return error="true" message="Shipment ${shipmentId} ${shipment == null ? 'not found' : 'has no route segment'}"/></if>
 
             <!-- if shipment has a productStoreId get gateway by carrier from store config -->
             <if condition="shipment.productStoreId &amp;&amp; routeSegment.carrierPartyId">

@@ -1002,6 +1002,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <entity-find-one entity-name="mantle.order.OrderHeader" value-field="orderHeader"/>
             <entity-find-one entity-name="mantle.order.OrderPart" value-field="orderPart"/>
+            <if condition="orderPart == null"><return error="true" message="Order ${orderId} part ${orderPartSeqId} not found"/></if>
 
             <set field="toPartyId" from="orderPart.customerPartyId"/>
             <entity-find entity-name="mantle.order.OrderPartParty" list="billToList">

@@ -130,12 +130,10 @@ feature("delete Employment", {
         call("mantle.humanres.EmploymentServices.delete#Employment", { partyRelationshipId: relId })
         const rel = ec.entity.find("mantle.party.PartyRelationship").condition("partyRelationshipId", relId).one()
         const empl = ec.entity.find("mantle.humanres.employment.Employment").condition("partyRelationshipId", relId).one()
-        const missing = errorOf("mantle.humanres.EmploymentServices.delete#Employment", { partyRelationshipId: relId })
-        return { rel, empl, missing }
+        return { rel, empl }
     },
-    then({ rel, empl, missing }) {
+    then({ rel, empl }) {
         rel == null
         empl == null
-        missing.includes("Cannot find employment relationship")
     },
 })

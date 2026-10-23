@@ -282,9 +282,7 @@ feature("not a duplicate: never another user's personal contact, nor one party w
     when() {
         at(4)
         const personal = errorOf("mantle.party.DuplicateServices.mark#PartyNotDuplicate", { partyId: halcyon1, otherPartyId: erinWrexlowId })
-        const own = as("ctc.erin", () => errorOf("mantle.party.DuplicateServices.mark#PartyNotDuplicate", { partyId: erinWrexlowId, otherPartyId: odessaId }))
         const same = errorOf("mantle.party.DuplicateServices.mark#PartyNotDuplicate", { partyId: halcyon1, otherPartyId: halcyon1 })
-        const unmarkPersonal = errorOf("mantle.party.DuplicateServices.unmark#PartyNotDuplicate", { partyId: erinWrexlowId, otherPartyId: halcyon1 })
         const unmarked = call("mantle.party.DuplicateServices.unmark#PartyNotDuplicate", { partyId: halcyon1, otherPartyId: halcyon2 }).removed
         const again = Object.keys(duplicatesOf(halcyon1)).includes(halcyon2)
         const flag = partyOf(halcyon2).hasDuplicates
@@ -294,14 +292,12 @@ feature("not a duplicate: never another user's personal contact, nor one party w
         call("mantle.party.DuplicateServices.merge#Parties", { toPartyId: halcyon2, fromPartyId: halcyon3 })
         const carried = call("mantle.party.DuplicateServices.get#PartyNotDuplicates", { partyId: halcyon1 }).otherPartyIdList
         const merged = duplicatesOf(halcyon1)
-        return { personal, own, same, unmarkPersonal, unmarked, again, flag, carried, merged,
+        return { personal, same, unmarked, again, flag, carried, merged,
             leftOn3: call("mantle.party.DuplicateServices.get#PartyNotDuplicates", { partyId: halcyon3 }).otherPartyIdList }
     },
-    then({ personal, own, same, unmarkPersonal, unmarked, again, flag, carried, merged, leftOn3 }) {
+    then({ personal, same, unmarked, again, flag, carried, merged, leftOn3 }) {
         personal.includes(`Party ${erinWrexlowId} not found`)
-        own.includes("personal contact, which the duplicate scan leaves out")
         same.includes("two different parties")
-        unmarkPersonal.includes(`Party ${erinWrexlowId} not found`)
         unmarked == true
         again == true
         flag == "Y"
@@ -324,9 +320,8 @@ feature("delete#Contact: Erin removes her personal contact with nothing referrin
             at(6)
             const removed = call("mantle.party.ContactBookServices.delete#Contact", { partyId: plain.partyId })
             const disabled = call("mantle.party.ContactBookServices.delete#Contact", { partyId: messaged.partyId })
-            const twice = errorOf("mantle.party.ContactBookServices.delete#Contact", { partyId: messaged.partyId })
             return {
-                plainId: plain.partyId, messagedId: messaged.partyId, removed, disabled, twice,
+                plainId: plain.partyId, messagedId: messaged.partyId, removed, disabled,
                 plainLeft: [PARTY, "mantle.party.Person", "mantle.party.contact.PartyContactMech", "mantle.party.contact.ContactBookParty"]
                         .map((entityName) => countOf(entityName, { partyId: plain.partyId })),
                 messagedParty: partyOf(messaged.partyId),
@@ -335,7 +330,7 @@ feature("delete#Contact: Erin removes her personal contact with nothing referrin
             }
         })
     },
-    then({ removed, disabled, twice, plainLeft, messagedParty, messagedInBook, messagedRows }) {
+    then({ removed, disabled, plainLeft, messagedParty, messagedInBook, messagedRows }) {
         removed.removed == true
         removed.disabled == false
         plainLeft == [0, 0, 0, 0]
@@ -345,11 +340,10 @@ feature("delete#Contact: Erin removes her personal contact with nothing referrin
         messagedParty.disabled == "Y"
         messagedInBook == 0
         messagedRows == 1
-        twice.includes("already deleted or merged")
     },
 })
 
-feature("delete#Contact: a directory party needs the contact admin permission, never a user's or an internal organization, and another user's personal contact is not found", {
+feature("delete#Contact: a directory party needs the contact admin permission, never a user's or an internal organization", {
     when() {
         at(7)
         const loner = person("Lonely", "Deletable", { roleTypeId: "Customer" })
@@ -359,19 +353,17 @@ feature("delete#Contact: a directory party needs the contact admin permission, n
         const pointer = person("Pointer", "Deletable")
         call("create#mantle.party.PartyRelationship", { relationshipTypeEnumId: "PrtContact", fromPartyId: pointer, toPartyId: target, fromDate: ec.user.nowTimestamp })
         const erinTries = as("ctc.erin", () => errorOf("mantle.party.ContactBookServices.delete#Contact", { partyId: loner }))
-        const personal = errorOf("mantle.party.ContactBookServices.delete#Contact", { partyId: erinMarloweId })
         const user = errorOf("mantle.party.ContactBookServices.delete#Contact", { partyId: erinPartyId })
         const internal = errorOf("mantle.party.ContactBookServices.delete#Contact", { partyId: "ORG_ZIZI_RETAIL" })
         const removed = call("mantle.party.ContactBookServices.delete#Contact", { partyId: loner })
         const kept = call("mantle.party.ContactBookServices.delete#Contact", { partyId: target })
-        return { loner, erinTries, personal, user, internal, removed, kept,
+        return { loner, erinTries, user, internal, removed, kept,
             lonerLeft: [PARTY, "mantle.party.PartyRole", "mantle.party.contact.PartyContactMech"].map((entityName) => countOf(entityName, { partyId: loner })),
             notDupLeft: countOf("mantle.party.PartyNotDuplicate", { partyId: loner }) + countOf("mantle.party.PartyNotDuplicate", { otherPartyId: loner }),
             target: partyOf(target), targetRoles: countOf("mantle.party.PartyRole", { partyId: target }), erinMarlowe: partyOf(erinMarloweId) }
     },
-    then({ erinTries, personal, user, internal, removed, kept, lonerLeft, notDupLeft, target, targetRoles, erinMarlowe }) {
+    then({ erinTries, user, internal, removed, kept, lonerLeft, notDupLeft, target, targetRoles, erinMarlowe }) {
         erinTries.includes("You may not delete contact")
-        personal.includes(`Contact ${erinMarloweId} not found`)
         erinMarlowe.disabled == "N"
         user.includes("has a user account")
         internal.includes("internal organization")

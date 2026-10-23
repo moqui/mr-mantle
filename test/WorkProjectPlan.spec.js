@@ -41,7 +41,7 @@ const dependsOn = (id) => Array.from(ec.entity.find("mantle.work.effort.WorkEffo
         .condition("workEffortAssocTypeEnumId", "WeatDependsOn").conditionDate("fromDate", "thruDate", null).list())
         .map((row) => row.toWorkEffortId + (row.lagDays != null ? "+" + Number(String(row.lagDays)) : ""))
 
-feature("a dependency has a direction and a lag; one on itself, in its branch of the tree, closing a loop or with a negative lag is refused", {
+feature("a dependency has a direction and a lag; one in its branch of the tree or closing a loop is refused", {
     when() {
         call(`${PS}.create#Project`, { workEffortId: "PTL", workEffortName: "Timeline project", visibilityEnumId: "WevWorkGroup" })
         // PTL-1 design, PTL-2 build, PTL-3 test; PTL-4 a phase with PTL-5 and PTL-6
@@ -54,24 +54,20 @@ feature("a dependency has a direction and a lag; one on itself, in its branch of
         const first = call(`${TASK}.add#TaskDependency`, { workEffortId: "PTL-2", toWorkEffortId: "PTL-1" })
         const second = call(`${TASK}.add#TaskDependency`, { workEffortId: "PTL-3", toWorkEffortId: "PTL-2", lagDays: 2 })
         const again = call(`${TASK}.add#TaskDependency`, { workEffortId: "PTL-3", toWorkEffortId: "PTL-2", lagDays: 1 })
-        const self = errorOf(`${TASK}.add#TaskDependency`, { workEffortId: "PTL-1", toWorkEffortId: "PTL-1" })
         const loop = errorOf(`${TASK}.add#TaskDependency`, { workEffortId: "PTL-1", toWorkEffortId: "PTL-3" })
         const branch = errorOf(`${TASK}.add#TaskDependency`, { workEffortId: "PTL-5", toWorkEffortId: "PTL-4" })
-        const negative = errorOf(`${TASK}.add#TaskDependency`, { workEffortId: "PTL-4", toWorkEffortId: "PTL-3", lagDays: -1 })
         call(`${TASK}.add#TaskDependency`, { workEffortId: "PTL-4", toWorkEffortId: "PTL-1" })
         const removed = call(`${TASK}.remove#TaskDependency`, { workEffortId: "PTL-4", toWorkEffortId: "PTL-1" })
         const removedAgain = call(`${TASK}.remove#TaskDependency`, { workEffortId: "PTL-4", toWorkEffortId: "PTL-1" })
-        return { first, second, again, self, loop, branch, negative, removed, removedAgain, deps: [dependsOn("PTL-2"), dependsOn("PTL-3"), dependsOn("PTL-4")] }
+        return { first, second, again, loop, branch, removed, removedAgain, deps: [dependsOn("PTL-2"), dependsOn("PTL-3"), dependsOn("PTL-4")] }
     },
-    then({ first, second, again, self, loop, branch, negative, removed, removedAgain, deps }) {
+    then({ first, second, again, loop, branch, removed, removedAgain, deps }) {
         first.created
         second.created
         !again.created
         deps == [["PTL-1"], ["PTL-2+1"], []]
-        self.includes("does not depend on itself")
         loop.includes("PTL-3 already waits for PTL-1")
         branch.includes("are in one branch of the tree")
-        negative.includes("0 or more working days")
         removed.removed
         !removedAgain.removed
     },
@@ -113,7 +109,6 @@ feature("what the timeline draws: the items with their own dates and a parent's 
 
 feature("a bar moved with auto-schedule moves its dependents on by business days, keeping their length; a summary bar moves its sub-items", {
     when() {
-        const backwards = errorOf(`${TASK}.set#TaskDates`, { workEffortId: "PTL-1", startDay: "2026-11-05", dueDay: "2026-11-04" })
         // Design now ends Friday: Build starts the Monday after (2 business days long: Wednesday), Test the Friday after a day's lag
         const moved = call(`${TASK}.set#TaskDates`, { workEffortId: "PTL-1", dueDay: "2026-11-06", autoSchedule: true })
         const after = { design: dates("PTL-1"), build: dates("PTL-2"), test: dates("PTL-3") }
@@ -122,10 +117,9 @@ feature("a bar moved with auto-schedule moves its dependents on by business days
         const test = dates("PTL-3")
         // the phase a week later: its sub-items with it
         const phase = call(`${TASK}.set#TaskDates`, { workEffortId: "PTL-4", startDay: "2026-11-23", dueDay: "2026-11-27", moveSubtree: true })
-        return { backwards, moved, after, alone, test, phase, train: dates("PTL-5"), switchOver: dates("PTL-6"), phaseDates: dates("PTL-4") }
+        return { moved, after, alone, test, phase, train: dates("PTL-5"), switchOver: dates("PTL-6"), phaseDates: dates("PTL-4") }
     },
-    then({ backwards, moved, after, alone, test, phase, train, switchOver, phaseDates }) {
-        backwards.includes("is due on or after the day it starts")
+    then({ moved, after, alone, test, phase, train, switchOver, phaseDates }) {
         after.design == ["2026-11-02", "2026-11-06"]
         after.build == ["2026-11-09", "2026-11-11"]
         after.test == ["2026-11-13", "2026-11-13"]

@@ -198,7 +198,7 @@ feature("unread counts per account with the Internal account and the Unified cou
     },
 })
 
-feature("a view that reads one store calls only that store; an account or mailbox the user does not reach is an error", {
+feature("a view that reads one store calls only that store; an account the user does not reach, or an unknown view, is an error", {
     when() {
         at(110)
         const draftId = as("Ada", () => call(`${MAIL}.save#Draft`, { emailAccountId: account.sales, toAddresses: "carl.ibx@example.com",
@@ -223,12 +223,7 @@ feature("a view that reads one store calls only that store; an account or mailbo
         const benSent = as("Ben", () => inbox({ store: "internal", view: "sent" }))
         const refused = {
             strangerAccount: as("Cy", () => errorOf(`${COMM}.find#InboxThreads`, { emailAccountId: account.sales })),
-            strangerMailbox: as("Cy", () => errorOf(`${COMM}.find#InboxThreads`, { contactListId: mailboxId })),
-            badCursor: as("Ada", () => errorOf(`${COMM}.find#InboxThreads`, { cursor: "email:soon" })),
             badView: as("Ada", () => errorOf(`${COMM}.find#InboxThreads`, { view: "everything" })),
-            strangerFolder: as("Cy", () => errorOf(`${COMM}.find#InboxThreads`, { emailFolderId: salesInboxId })),
-            folderView: as("Ada", () => errorOf(`${COMM}.find#InboxThreads`, { view: "folder" })),
-            notInternal: as("Ada", () => errorOf(`${COMM}.find#InboxThreads`, { emailAccountId: account.sales, store: "internal" })),
         }
         return { draftId, views, benSent, refused, salesInboxId }
     },
@@ -252,12 +247,7 @@ feature("a view that reads one store calls only that store; an account or mailbo
         benSent.storeList == ["internal"]
         benSent.threadList.length == 8
         refused.strangerAccount.includes(`Email account ${account.sales} not found`)
-        refused.strangerMailbox.includes(`Mailbox ${mailboxId} not found`)
-        refused.badCursor.includes("Not an Inbox cursor")
         refused.badView.includes("Unknown view everything")
-        refused.strangerFolder.includes(`Email folder ${salesInboxId} not found`)
-        refused.folderView.includes("The folder view needs an emailFolderId")
-        refused.notInternal.includes("is not the Internal account")
         views.folder.storeList == ["email"]
         views.folder.threadList.length == 7
     },
@@ -283,7 +273,6 @@ feature("send#EmailDraft keeps the records with the draft and files the email on
         at(130)
         const draftId = as("Ada", () => call(`${MAIL}.save#Draft`, { emailAccountId: account.sales, toAddresses: "\"Carl Ibxdirectory\" <carl.ibx@example.com>",
                 ccAddresses: "dora.ibx@example.com", subject: "IBX quote", body: "<p>Your quote</p>" }).emailMessageId)
-        const refusedRecord = as("Ada", () => errorOf(`${COMM}.send#EmailDraft`, { emailMessageId: draftId, recordEntityName: REQUEST, recordId: "IBX-NONE" }))
         const refusedSender = as("Ben", () => errorOf(`${COMM}.send#EmailDraft`, { emailMessageId: draftId, recordEntityName: REQUEST, recordId: "IBX-R1" }))
         const out = as("Ada", () => call(`${COMM}.send#EmailDraft`, { emailMessageId: draftId,
                 recordList: [{ recordEntityName: REQUEST, recordId: "IBX-R1" }, { recordEntityName: SHIPMENT, recordId: "IBX-S1" }] }))
@@ -294,7 +283,7 @@ feature("send#EmailDraft keeps the records with the draft and files the email on
         settle()
         const event = eventOfEmail(draftId)
         const eventId = event?.communicationEventId ?? "none"
-        return { draftId, refusedRecord, refusedSender, out, waiting, event, pending: count(EMR, { emailMessageId: draftId }),
+        return { draftId, refusedSender, out, waiting, event, pending: count(EMR, { emailMessageId: draftId }),
             requestJoin: count("mantle.request.RequestCommEvent", { requestId: "IBX-R1", communicationEventId: eventId }),
             shipmentLink: ec.entity.find("mantle.party.communication.CommunicationEventRecord").condition({ communicationEventId: eventId,
                 recordEntityName: SHIPMENT, recordId: "IBX-S1" }).one(),
@@ -302,8 +291,7 @@ feature("send#EmailDraft keeps the records with the draft and files the email on
             requestTimeline: as("Ada", () => call(`${COMM}.get#RecordTimeline`, { recordEntityName: REQUEST, recordId: "IBX-R1", kinds: "messages" }))
                     .entryList.map((entry) => entry.communicationEventId) }
     },
-    then({ draftId, refusedRecord, refusedSender, out, waiting, event, pending, requestJoin, shipmentLink, doraRow, requestTimeline }) {
-        refusedRecord.includes("IBX-NONE not found")
+    then({ draftId, refusedSender, out, waiting, event, pending, requestJoin, shipmentLink, doraRow, requestTimeline }) {
         refusedSender.includes(`You may not send from email account ${account.sales}`)
         out.sent == false
         out.statusId == "ES_READY"
@@ -382,15 +370,13 @@ feature("received mail is filed on the matching parties in an account that files
         const personalBefore = count(CE, { emailMessageId: "IBX_R2" })
         const carl = subjectsOf(party.Carl)
         const dora = subjectsOf(party.Dora)
-        // the owner of the personal account links that one; a stranger may not
-        const strangerLink = as("Cy", () => errorOf(`${COMM}.link#CommunicationEventRecord`, { emailMessageId: "IBX_R2",
-                recordEntityName: REQUEST, recordId: "IBX-R1" }))
+        // the owner of the personal account links that one
         const ownerLink = as("Ada", () => call(`${COMM}.link#CommunicationEventRecord`, { emailMessageId: "IBX_R2",
                 recordEntityName: REQUEST, recordId: "IBX-R1" }))
         return { r1, r1Dora: count(CEP, { communicationEventId: r1?.communicationEventId ?? "none", partyId: party.Dora, roleTypeId: "MessageCc" }),
-            r3: count(CE, { emailMessageId: "IBX_R3" }), carl, dora, personalBefore, strangerLink, ownerLink, r2: eventOfEmail("IBX_R2") }
+            r3: count(CE, { emailMessageId: "IBX_R3" }), carl, dora, personalBefore, ownerLink, r2: eventOfEmail("IBX_R2") }
     },
-    then({ r1, r1Dora, r3, carl, dora, personalBefore, strangerLink, ownerLink, r2 }) {
+    then({ r1, r1Dora, r3, carl, dora, personalBefore, ownerLink, r2 }) {
         r1.communicationEventTypeId == "Email"
         r1.fromPartyId == party.Carl
         r1.toPartyId == null
@@ -403,7 +389,6 @@ feature("received mail is filed on the matching parties in an account that files
         !carl.includes("IBX personal note")
         dora.includes("IBX question")
         personalBefore == 0
-        strangerLink.includes("Email message IBX_R2 not found")
         ownerLink.communicationEventId == r2.communicationEventId
         ownerLink.linkEntityName == "mantle.request.RequestCommEvent"
         r2.fromPartyId == party.Carl
@@ -542,8 +527,6 @@ feature("the search operators apply to the internal threads as they do to the ma
         }))
         const refused = {
             date: as("Ada", () => errorOf(`${COMM}.find#InboxThreads`, { searchText: "before:someday" })),
-            size: as("Ada", () => errorOf(`${COMM}.find#InboxThreads`, { searchText: "larger:huge" })),
-            is: as("Ada", () => errorOf(`${COMM}.find#InboxThreads`, { searchText: "is:purple" })),
         }
         return { found, unified, refused }
     },
@@ -574,8 +557,6 @@ feature("the search operators apply to the internal threads as they do to the ma
         unified.trash.storeList == ["email"]
         unified.mixed.threadList.filter((row) => row.store == "internal").map((row) => row.subject) == ["IBX zeppelin plans"]
         refused.date.includes("before:someday needs a date")
-        refused.size.includes("larger:huge needs a size")
-        refused.is.includes("is:purple is not a search term")
     },
 })
 

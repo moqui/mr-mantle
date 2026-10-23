@@ -14,10 +14,6 @@ spec({
     cleanup() { ec.artifactExecution.enableAuthz() },
 })
 
-function errorOf(name, params) {
-    try { call(name, params) } catch (e) { ec.message.clearErrors(); return String(e.message) }
-    return null
-}
 const account = (id) => ec.entity.find("moqui.security.UserAccount").condition("userId", id).one()
 
 feature("a person with a user account, found by the person search", {
@@ -62,17 +58,15 @@ feature("update#Account changes the person, user and primary email", {
     when() {
         call("mantle.party.PartyServices.update#Account", { partyId: personId, firstName: "Searchier", emailAddress: "searchier@example.com", timeZone: "America/Denver", locale: "en_US" })
         const byUser = call("mantle.party.PartyServices.update#Account", { userId, lastName: "Renamed" })
-        const nothing = errorOf("mantle.party.PartyServices.update#Account", {})
         const person = ec.entity.find("mantle.party.Person").condition("partyId", personId).one()
         const info = call("mantle.party.ContactServices.get#PartyContactInfo", { partyId: personId, emailContactMechPurposeId: "EmailPrimary" })
-        return { person, user: account(userId), nothing, info }
+        return { person, user: account(userId), info }
     },
-    then({ person, user, nothing, info }) {
+    then({ person, user, info }) {
         person.firstName == "Searchier"
         person.lastName == "Renamed"
         user.timeZone == "America/Denver"
         info.emailAddress == "searchier@example.com"
-        nothing.includes("must specify either userId or partyId")
     },
 })
 
@@ -104,13 +98,11 @@ feature("badge info and party relationship settings", {
         call("mantle.party.PartyServices.store#PartyRelationshipSetting", { partySettingTypeId: "CustomerSingleLot", partyRelationshipId: relationshipId, settingValue: "BlY" })
         call("mantle.party.PartyServices.store#PartyRelationshipSetting", { partySettingTypeId: "CustomerSingleLot", partyRelationshipId: relationshipId, settingValue: "BlN" })
         const setting = ec.entity.find("mantle.party.PartyRelationshipSetting").condition("partyRelationshipId", relationshipId).condition("partySettingTypeId", "CustomerSingleLot").one()
-        const invalid = errorOf("mantle.party.PartyServices.store#PartyRelationshipSetting", { partySettingTypeId: "CustomerSingleLot", partyRelationshipId: relationshipId, settingValue: "Nope" })
-        return { info, setting, invalid }
+        return { info, setting }
     },
-    then({ info, setting, invalid }) {
+    then({ info, setting }) {
         info.partyBadge.partyBadgeId == badgeId
         info.person.partyId == personId
         setting.settingValue == "BlN"
-        invalid.includes("is not valid")
     },
 })

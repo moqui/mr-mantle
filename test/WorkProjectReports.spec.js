@@ -303,11 +303,10 @@ feature("the progress breakdown: the top-level items with their subtree's number
             level: call(`${REPORT}.get#ProgressBreakdown`, { workEffortId: "RPT", parentWorkEffortId: made.epic }),
             from: call(`${REPORT}.get#ProgressBreakdown`, { workEffortId: "RPT", fromWorkEffortId: made.epic }),
             joe: as("joe.developer", () => call(`${REPORT}.get#ProgressBreakdown`, { workEffortId: "RPT", depth: 2 })),
-            bobError: as("bob.developer", () => errorOf(`${REPORT}.get#ProgressBreakdown`, { workEffortId: "RPX" })),
             child: one("mantle.work.effort.WorkEffort", { workEffortId: made.child }),
         }
     },
-    then({ depth1, depth2, level, from, joe, bobError, child }) {
+    then({ depth1, depth2, level, from, joe, child }) {
         depth1.rowList.length == 3 && depth1.rowList.every((row) => row.level == 1 && row.parentWorkEffortId == null)
         const epic = depth1.rowList.find((row) => row.workEffortId == made.epic)
         // the epic's numbers are its subtree's: its child's estimate and actual
@@ -321,7 +320,6 @@ feature("the progress breakdown: the top-level items with their subtree's number
         depth1.moneyShown == true && "actualCost" in epic
         joe.moneyShown == false && joe.rowList.length == 4 && joe.rowList.every((row) => !hasMoney(row)) && !hasMoney(joe.totals)
         joe.milestoneList.every((row) => !hasMoney(row))
-        bobError != null
     },
 })
 

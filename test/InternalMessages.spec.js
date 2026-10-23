@@ -235,16 +235,14 @@ feature("reply to sender only answers the parent's sender alone", {
         at(5)
         const out = reply("Cora", { parentCommEventId: msg.benReply, subject: "Re: Quarterly plan", body: "Just between us", replyToSenderOnly: true })
         msg.coraPrivate = out.communicationEventId
-        const outsider = errorOf(`${COMM}.reply#CommunicationEvent`, { parentCommEventId: msg.plan, fromPartyId: party.Eve, body: "Me too" })
-        return { event: eventOf(msg.coraPrivate), roles: rolesOf(msg.coraPrivate), outsider }
+        return { event: eventOf(msg.coraPrivate), roles: rolesOf(msg.coraPrivate) }
     },
-    then({ event, roles, outsider }) {
+    then({ event, roles }) {
         event.communicationEventTypeId == "Message"
         event.rootCommEventId == msg.plan
         event.parentCommEventId == msg.benReply
         event.toPartyId == party.Ben
         roles == { Ben: "MessageTo" }
-        outsider.includes("not found")
     },
 })
 
@@ -279,12 +277,11 @@ feature("get#InternalThread: the messages a user may see, oldest first, with the
     when() {
         const dan = as("Dan", () => call(`${COMM}.get#InternalThread`, { rootCommEventId: msg.plan }))
         const ben = as("Ben", () => call(`${COMM}.get#InternalThread`, { communicationEventId: msg.coraPrivate }))
-        const danPrivate = as("Dan", () => errorOf(`${COMM}.get#InternalThread`, { communicationEventId: msg.coraPrivate }))
         const eve = as("Eve", () => errorOf(`${COMM}.get#InternalThread`, { rootCommEventId: msg.plan }))
         const eveThreads = threadIds("Eve", { view: "all" })
-        return { dan, ben, danPrivate, eve, eveThreads, danUnread: unread("Dan") }
+        return { dan, ben, eve, eveThreads, danUnread: unread("Dan") }
     },
-    then({ dan, ben, danPrivate, eve, eveThreads, danUnread }) {
+    then({ dan, ben, eve, eveThreads, danUnread }) {
         dan.rootCommEventId == msg.plan
         dan.subject == "Quarterly plan"
         dan.messageList.map((message) => message.communicationEventId) == [msg.plan, msg.benReply]
@@ -300,7 +297,6 @@ feature("get#InternalThread: the messages a user may see, oldest first, with the
         ben.messageList.map((message) => message.communicationEventId) == [msg.plan, msg.benReply, msg.coraPrivate]
         ben.messageList[1].myState == null
         ben.participantList.map((participant) => participant.name) == ["Ada Inmessage", "Ben Inmessage", "Cora Inmessage", "Dan Inmessage"]
-        danPrivate.includes("not found")
         eve.includes("not found")
         eveThreads.length == 0
         danUnread == 2

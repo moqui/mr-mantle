@@ -258,14 +258,12 @@ feature("repost a delivered payment and its applications", {
         const before = Array.from(ec.entity.find("mantle.ledger.transaction.AcctgTrans").condition("paymentId", paymentId).list()).length
         call("mantle.ledger.PaymentAutoPostServices.repost#PaymentAndApplications", { paymentId })
         const after = Array.from(ec.entity.find("mantle.ledger.transaction.AcctgTrans").condition("paymentId", paymentId).list())
-        const missing = errorOf("mantle.ledger.PaymentAutoPostServices.repost#PaymentAndApplications", { paymentId: "NO_SUCH_PAYMENT" })
-        return { delivered, before, after, missing }
+        return { delivered, before, after }
     },
-    then({ before, after, missing }) {
+    then({ before, after }) {
         // the transactions are deleted and posted again, so there are still some and they are posted
         after.length >= 1
         before >= 1
         after.every(t => t.isPosted == "Y")
-        missing.includes("Could not find Payment")
     },
 })

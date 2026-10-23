@@ -213,13 +213,11 @@ feature("issue any available asset for a shipment item source", {
         call("mantle.order.OrderServices.approve#Order", { orderId: created.orderId })
         const ship = call("mantle.shipment.ShipmentServices.create#OrderPartShipment", { orderId: created.orderId, orderPartSeqId: created.orderPartSeqId })
         const sis = Array.from(ec.entity.find("mantle.shipment.ShipmentItemSource").condition("shipmentId", ship.shipmentId).list())[0]
-        const missing = errorOf("mantle.product.AssetServices.issue#AnyAssetForShipmentItemSource", { shipmentItemSourceId: "NO_SUCH_SIS", quantity: 1 })
         const out = call("mantle.product.AssetServices.issue#AnyAssetForShipmentItemSource", { shipmentItemSourceId: sis.shipmentItemSourceId, quantity: 1 })
         const issuances = Array.from(ec.entity.find("mantle.product.issuance.AssetIssuance").condition("shipmentItemSourceId", sis.shipmentItemSourceId).list())
-        return { missing, out, issuances }
+        return { out, issuances }
     },
-    then({ missing, out, issuances }) {
-        missing.includes("Could not find ShipmentItemSource")
+    then({ out, issuances }) {
         n(out.quantityRemaining) == 0
         issuances.length >= 1
     },

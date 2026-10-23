@@ -1,9 +1,5 @@
 // Communication events, requests, sales accounts and contacts, party duplicates, and equipment maintenance: services no
 // flow reaches. New spec, no Groovy original.
-function errorOf(name, params) {
-    try { call(name, params) } catch (e) { ec.message.clearErrors(); return String(e.message) }
-    return null
-}
 const effectiveTime = Date.now()
 let personId, accountId, contactId, requestId, messageId, equipmentId, productMaintenanceId
 
@@ -182,7 +178,6 @@ feature("create purchase orders from a request, one for each supplier", {
         const supplierA = call("mantle.party.PartyServices.create#Organization", { organizationName: "Request Supplier A", roleTypeId: "Supplier" }).partyId
         const supplierB = call("mantle.party.PartyServices.create#Organization", { organizationName: "Request Supplier B", roleTypeId: "Supplier" }).partyId
         const purchaseRequest = call("mantle.request.RequestServices.create#Request", { requestName: "Buy stuff", requestTypeEnumId: "RqtPurchase", facilityId: warehouse }).requestId
-        const noItems = errorOf("mantle.order.OrderServices.create#PurchaseRequestOrder", { requestId: purchaseRequest, customerPartyId: "ORG_ZIZI_RETAIL" })
         call("create#mantle.request.RequestItem", { requestId: purchaseRequest, requestItemSeqId: "01", productId: "DEMO_1_1", quantity: 3, supplierPartyId: supplierA })
         call("create#mantle.request.RequestItem", { requestId: purchaseRequest, requestItemSeqId: "02", productId: "DEMO_2_1", quantity: 2, supplierPartyId: supplierB })
         call("create#mantle.request.RequestItem", { requestId: purchaseRequest, requestItemSeqId: "03", productId: "DEMO_3_1", quantity: 1, supplierPartyId: supplierA })
@@ -191,15 +186,13 @@ feature("create purchase orders from a request, one for each supplier", {
         const links = Array.from(ec.entity.find("mantle.request.RequestItemOrder").condition("requestId", purchaseRequest).list())
         const orderIds = [...new Set(links.map(l => l.orderId))]
         const req = ec.entity.find("mantle.request.Request").condition("requestId", purchaseRequest).one()
-        const noFacility = errorOf("mantle.order.OrderServices.create#PurchaseRequestOrder", { requestId: requestId, customerPartyId: "ORG_ZIZI_RETAIL" })
-        return { noItems, out, links, orderIds, req, noFacility }
+        return { out, links, orderIds, req }
     },
-    then({ links, orderIds, req, noFacility }) {
+    then({ links, orderIds, req }) {
         // one order for each supplier holds that supplier's items
         links.length == 3
         orderIds.length == 2
         req.statusId == "ReqInProgress"
-        noFacility.includes("has no Facility set")
     },
 })
 

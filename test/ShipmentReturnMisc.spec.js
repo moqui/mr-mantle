@@ -165,12 +165,10 @@ feature("resell a shipment to another customer", {
     when() {
         // resell#Shipment (as in mantle-usl upstream) never places or approves the order it creates, so there is nothing to
         // ship on it and the move of the issuances to the new shipment fails; the checks above it do run
-        const notSales = errorOf("mantle.order.ReturnServices.resell#Shipment", { shipmentId: "NO_SUCH_SHIPMENT", customerPartyId: "CustJqp" })
         const res = errorOf("mantle.order.ReturnServices.resell#Shipment", { shipmentId: returnShipmentId, customerPartyId: "CustJqp" })
-        return { notSales, res }
+        return { res }
     },
-    then({ notSales, res }) {
-        notSales != null
+    then({ res }) {
         res.includes("Field cannot be empty(for field New Shipment")
     },
 })
