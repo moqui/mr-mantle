@@ -701,13 +701,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <view-entity entity-name="ProductMaintenanceDetail" package="mantle.product.maintenance">
         <member-entity entity-alias="PDM" entity-name="mantle.product.maintenance.ProductMaintenance"/>
-        <member-entity entity-alias="UOM" entity-name="moqui.basic.Uom" join-from-alias="PDM">
+        <member-entity entity-alias="UOM" entity-name="moqui.basic.Uom" join-from-alias="PDM" join-optional="true">
             <key-map field-name="intervalUomId"/></member-entity>
-        <member-entity entity-alias="PMTR" entity-name="mantle.product.maintenance.ProductMeter" join-from-alias="PDM">
+        <member-entity entity-alias="PMTR" entity-name="mantle.product.maintenance.ProductMeter" join-from-alias="PDM" join-optional="true">
             <key-map field-name="intervalProductMeterId"/></member-entity>
-        <member-entity entity-alias="PMUOM" entity-name="moqui.basic.Uom" join-from-alias="PMTR">
+        <member-entity entity-alias="PMUOM" entity-name="moqui.basic.Uom" join-from-alias="PMTR" join-optional="true">
             <key-map field-name="meterUomId"/></member-entity>
-        <member-entity entity-alias="MTENM" entity-name="moqui.basic.Enumeration" join-from-alias="PDM">
+        <member-entity entity-alias="MTENM" entity-name="moqui.basic.Enumeration" join-from-alias="PDM" join-optional="true">
             <key-map field-name="maintenanceTypeEnumId"/></member-entity>
         <alias-all entity-alias="PDM"/>
         <alias name="uomDescription" entity-alias="UOM" field="description"/>
