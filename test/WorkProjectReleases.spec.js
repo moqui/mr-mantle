@@ -6,7 +6,7 @@
 // release itself (release#Release: unfinished items to the next release, a tag, the notes), and a project's documentation
 // space in its repository at git://<repository>/docs or on database files (create#ProjectDocsSpace) whose users follow the
 // project's members (sync#ProjectDocsSpaceUsers, the rule on WorkEffortParty). New spec, no Groovy original.
-// Run: ./moq test mantle-usl --spec WorkProjectReleases
+// Run: ./moq test mr-mantle --spec WorkProjectReleases
 const PROJECT = "PRL"
 const PS = "mantle.work.ProjectServices"
 const TASK = "mantle.work.TaskServices"

@@ -29,7 +29,7 @@ along with this software (see the LICENSE.md file). If not, see
     <mantle.party.Organization partyId="ORG_ZIZI_CORP" organizationName="Ziziwork Industries"/>
     <mantle.party.PartyRole partyId="ORG_ZIZI_CORP" roleTypeId="OrgInternal"/>
     <mantle.party.PartyContent partyContentId="ZICORP_LOGO" partyId="ORG_ZIZI_CORP" partyContentTypeEnumId="PcntLogoImage"
-            contentLocation="component://SimpleScreens/screen/ssstatic/images/Return.png"/>
+            contentLocation="component://mr-marble/screen/ssstatic/images/Return.png"/>
 
     <mantle.party.Party partyId="ORG_ZIZI_SALES" pseudoId="ZISAL" partyTypeEnumId="PtyOrganization" ownerPartyId="ORG_ZIZI_SALES"/>
     <mantle.party.Organization partyId="ORG_ZIZI_SALES" organizationName="Ziziwork Sales"/>
@@ -51,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
     <mantle.party.PartyRole partyId="ORG_ZIZI_SERVICES" roleTypeId="OrgInternal"/>
     <mantle.party.PartyRole partyId="ORG_ZIZI_SERVICES" roleTypeId="Vendor"/>
     <mantle.party.PartyContent partyContentId="ZISER_LOGO" partyId="ORG_ZIZI_SERVICES" partyContentTypeEnumId="PcntLogoImage"
-            contentLocation="component://SimpleScreens/screen/ssstatic/images/Vendor.png"/>
+            contentLocation="component://mr-marble/screen/ssstatic/images/Vendor.png"/>
 
     <mantle.party.PartyRelationship partyRelationshipId="ORG_ZIZI_SERVICES" relationshipTypeEnumId="PrtOrgRollup"
             fromPartyId="ORG_ZIZI_SERVICES" fromRoleTypeId="OrgInternal" toPartyId="ORG_ZIZI_CORP" toRoleTypeId="OrgInternal"
@@ -238,7 +238,7 @@ along with this software (see the LICENSE.md file). If not, see
         <roles roleTypeId="OrgInternal"/>
 
         <contents partyContentId="ZIRET_LOGO" partyContentTypeEnumId="PcntLogoImage"
-                contentLocation="component://SimpleScreens/screen/ssstatic/images/Customer.png"/>
+                contentLocation="component://mr-marble/screen/ssstatic/images/Customer.png"/>
 
         <mantle.party.contact.ContactMech contactMechId="ORG_ZIZI_RTL_PA" contactMechTypeEnumId="CmtPostalAddress">
             <mantle.party.contact.PostalAddress toName="Ziziwork Retail &amp; Wholesale"

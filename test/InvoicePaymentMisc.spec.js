@@ -99,7 +99,7 @@ feature("record a payment, auto apply it, and read payment info", {
     when() {
         const stray = call("mantle.account.PaymentServices.create#Payment", { fromPartyId: customerId, toPartyId: orgId, amount: 1, amountUomId: "USD",
                 statusId: "PmntDelivered", effectiveDate: effectiveTime }).paymentId
-        // autoApply#Payment and autoApplyTo#Invoice are TODO stubs in mantle-usl, so they run and apply nothing
+        // autoApply#Payment and autoApplyTo#Invoice are TODO stubs in mr-mantle, so they run and apply nothing
         const applied = call("mantle.account.PaymentServices.autoApply#Payment", { paymentId: stray })
         const appliedTo = call("mantle.account.InvoiceServices.autoApplyTo#Invoice", { invoiceId })
         paymentId = call("mantle.account.PaymentServices.create#InvoicePayment", { invoiceId, amount: 153, paymentInstrumentEnumId: "PiCompanyCheck",

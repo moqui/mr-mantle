@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
         a resource location (fileLocation), so a large import can run later as a job on a stored file. -->
 
     <service verb="read" noun="WorkItemRows" type="script"
-            location="component://mantle-usl/service/mantle/work/WorkItemImportServices/readWorkItemRows.js">
+            location="component://mr-mantle/service/mantle/work/WorkItemImportServices/readWorkItemRows.js">
         <description>
             The file's columns (a repeated name once, with its count and first values), the mapping (target field to column:
             columnMapping overrides the preset's, an empty column leaves a target out; presetId jira, redmine, github or generic,

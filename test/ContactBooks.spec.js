@@ -646,13 +646,13 @@ feature("a contact file in its character set: Windows-1252, UTF-16 by its byte o
             utf8bom: [[0xEF, 0xBB, 0xBF].concat(utf8Bytes(charsetText)), "UTF-8"] }
         const out = {}
         for (const [name, [bytes, characterSet]] of Object.entries(files)) {
-            const fileLocation = `dbresource://mantle-usl-test/ContactBooks/${name}.csv`
+            const fileLocation = `dbresource://mr-mantle-test/ContactBooks/${name}.csv`
             ec.resource.getLocationReference(fileLocation).putBytes(new Uint8Array(bytes))
             const read = call("mantle.party.ContactImportServices.read#ContactFileText", { fileLocation, characterSet })
             const parsed = call("mantle.party.ContactImportServices.parse#ContactFile", { fileLocation, fileName: `${name}.csv`, characterSet })
             out[name] = { text: read.text, used: read.characterSetUsed, name: parsed.sampleRowList[0]["Full Name"], rowCount: parsed.rowCount }
         }
-        out.missing = call("mantle.party.ContactImportServices.read#ContactFileText", { fileLocation: "dbresource://mantle-usl-test/ContactBooks/none.csv" })
+        out.missing = call("mantle.party.ContactImportServices.read#ContactFileText", { fileLocation: "dbresource://mr-mantle-test/ContactBooks/none.csv" })
         out.upload = call("mantle.party.ContactImportServices.read#ContactFileText", { contactFile: uploadedFile("upload.csv", charsetText, "text/csv") })
         return out
     },

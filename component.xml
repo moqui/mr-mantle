@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd"
         name="mr-mantle" version="3.0.0">
-    <!-- no dependencies; the data model (formerly mantle-udm) and the services (formerly mantle-usl) are both here -->
+    <!-- no dependencies; the data model (formerly mr-mantle) and the services (formerly mr-mantle) are both here -->
 </component>

@@ -86,7 +86,7 @@ feature("create variant products from the selectable features", {
     then({ assoc, found, info }) {
         assoc.length == 2
         found.productId != null
-        // get#VariantProductsInfo is a stub in mantle-usl (a TODO after the feature query), so it returns nothing yet
+        // get#VariantProductsInfo is a stub in mr-mantle (a TODO after the feature query), so it returns nothing yet
         info != null
     },
 })

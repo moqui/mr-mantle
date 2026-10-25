@@ -6,7 +6,7 @@
 // release tags by version (link#RefByName), the topics MergeRequestReview, MergeRequestUpdate and CommitStatusFailed, and
 // search#Code. On a database repository whose commits are made through org.moqui.impl.GitServices.commit#GitFiles; a branch's
 // commits are made with the branch as the default for the moment. New spec, no Groovy original.
-// Run: ./moq test mantle-usl --spec WorkGitReview
+// Run: ./moq test mr-mantle --spec WorkGitReview
 const PROJECT = "GITR"
 const ORG = "ORG_ZIZI_SERVICES"
 const JOHN = "EX_JOHN_DOE"

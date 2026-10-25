@@ -7,7 +7,7 @@
 // imported (types, statuses and priorities by their value maps, estimates in seconds, parents and epics, labels and a release
 // made, a sprint carried over and completed, a row without a title failing alone), then imported again (skipped, updated). New
 // spec, no Groovy original.
-// Run: ./moq test mantle-usl --spec WorkProjectPlan
+// Run: ./moq test mr-mantle --spec WorkProjectPlan
 const TASK = "mantle.work.TaskServices"
 const PS = "mantle.work.ProjectServices"
 const IMPORT = "mantle.work.WorkItemImportServices"

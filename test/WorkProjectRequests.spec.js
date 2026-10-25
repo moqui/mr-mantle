@@ -7,7 +7,7 @@
 // owner is not on the project filing no project); a work item from email for an internal sender (createWorkItem); the triage
 // notice (notify#RequestTriage); a work item made from a request (make#RequestWorkItem) and the request following its work
 // (complete#RequestFromWork, the WorkEffort status rule; off with WstRequestFromWork N); and convert#RequestToProject. Who
-// sees a request of a project (get#RecordLinkInfo) is checked through IronStone's screens (ironstone-boss test/ProjectRequests).
+// sees a request of a project (get#RecordLinkInfo) is checked through IronStone's screens (mr-boss test/ProjectRequests).
 // New spec, no Groovy original.
 const effectiveTime = Date.now()
 const REQ = "mantle.request.RequestServices"

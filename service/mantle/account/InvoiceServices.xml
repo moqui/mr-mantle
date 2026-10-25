@@ -303,7 +303,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="calculate" noun="MissingInvoiceTotals" transaction-timeout="600">
         <description>This is a simple service not meant for very large Invoice tables and mainly for migration from older versions
-            of mantle-usl before the invoiceTotal, appliedPaymentsTotal, and unpaidTotal fields were added.</description>
+            of mr-mantle before the invoiceTotal, appliedPaymentsTotal, and unpaidTotal fields were added.</description>
         <in-parameters><parameter name="calculateAll" type="Boolean" default="false"/></in-parameters>
         <actions>
             <entity-find entity-name="mantle.account.invoice.Invoice" list="invoiceList">

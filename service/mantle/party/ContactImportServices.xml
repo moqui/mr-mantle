@@ -67,7 +67,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="read" noun="ContactRows" type="script"
-            location="component://mantle-usl/service/mantle/party/ContactImportServices/readContactRows.js">
+            location="component://mr-mantle/service/mantle/party/ContactImportServices/readContactRows.js">
         <description>
             The file's columns and its rows, each mapped to a contact (the map ContactBookServices.store#ContactParty
             takes, with groupNames and isFavorite) with its problems. A column maps to a target field (targetFieldList):

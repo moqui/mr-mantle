@@ -1151,7 +1151,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- Git repositories of projects, and their commits, branches and tags on tasks (MR Moqui, no Java counterpart).
         The services are mantle.work.GitServices; the linking conventions, as gitECA rules, Work.gitecas.xml in
-        mantle-usl. The repositories themselves are moqui.resource.GitRepository, hosted by the framework. -->
+        mr-mantle. The repositories themselves are moqui.resource.GitRepository, hosted by the framework. -->
     <entity entity-name="WorkEffortGitRepository" package="mantle.work.effort" cache="never">
         <description>A git repository of a project. Commit messages, branch names and tag names in it that name a task
             of the project are linked to the task, and the project's members may use the repository.</description>
