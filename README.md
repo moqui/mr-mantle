@@ -1,20 +1,35 @@
-## Mantle Business Artifacts - Universal Service Library
+# MR Mantle - Mantle Business Artifacts for MR Moqui
 
-
-[![license](http://img.shields.io/badge/license-CC0%201.0%20Universal-blue.svg)](https://github.com/moqui/mantle-usl/blob/master/LICENSE.md)
-[![build](https://travis-ci.org/moqui/mantle-usl.svg)](https://travis-ci.org/moqui/mantle-usl)
-[![release](http://img.shields.io/github/release/moqui/mantle-usl.svg)](https://github.com/moqui/mantle-usl/releases)
-[![commits since release](http://img.shields.io/github/commits-since/moqui/mantle-usl/v2.9.9.svg)](https://github.com/moqui/mantle-usl/commits/master)
+[![license](http://img.shields.io/badge/license-CC0%201.0%20Universal-blue.svg)](https://github.com/moqui/mr-mantle/blob/master/LICENSE.md)
 
 [![Discourse Forum](https://img.shields.io/badge/moqui%20forum-discourse-blue.svg)](https://forum.moqui.org)
 [![Google Group](https://img.shields.io/badge/google%20group-moqui-blue.svg)](https://groups.google.com/d/forum/moqui)
 [![LinkedIn Group](https://img.shields.io/badge/linked%20in%20group-moqui-blue.svg)](https://www.linkedin.com/groups/4640689)
 [![Stack Overflow](https://img.shields.io/badge/stack%20overflow-moqui-blue.svg)](http://stackoverflow.com/questions/tagged/moqui)
 
+Mantle Business Artifacts for [MR Moqui](https://github.com/moqui/mr-moqui), in one component named `mr-mantle`:
+
+- **Universal Data Model** (`entity/`, the seed, install and demo data in `data/`), from the Java Moqui component
+  [mantle-udm](https://github.com/moqui/mantle-udm).
+- **Universal Service Library** (`service/`, its data and `test/` specs), from the Java Moqui component
+  [mantle-usl](https://github.com/moqui/mantle-usl).
+
+The two were ported in the forks `mr-mantle-udm` and `mr-mantle-usl` (Groovy to JavaScript, Spock flows to JavaScript
+specs run by `moqui test`), then merged into this repository with the commit history of both. Other components depend on
+it with `<depends-on name="mr-mantle"/>`; the renames from the Java names are in the MR Moqui
+`docs/Moqui-Java-Migration.md`.
+
+```sh
+./moq component-get mr-mantle
+./moq test mr-mantle
+./moq test mr-mantle --spec OrderToCashBasicFlow
+```
+
 For details about Mantle see its page on moqui.org:
 
 <http://www.moqui.org/mantle.html>
 
-There is an overview of Mantle Business Artifacts in the **Making Apps with Moqui** book. Download the PDF here:
+There is an overview of the Universal Data Model and of Mantle Business Artifacts in the **Making Apps with Moqui** book.
+Download the PDF here:
 
 <http://www.moqui.org/MakingAppsWithMoqui-1.0.pdf>
