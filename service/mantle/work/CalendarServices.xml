@@ -743,8 +743,13 @@ along with this software (see the LICENSE.md file). If not, see
             Writes parsed iCalendar events (the event maps of the ICalendar tool's parse, see the file comment) into a
             calendar: a WorkEffort (WetEvent) per UID (universalId) with its WorkEffortRecurrence, and an override instance
             (one with recurrenceId) as its own WorkEffort linked from its series by WorkEffortAssoc WeatRecurrenceInstance
-            (fromDate the recurrenceId). With replaceAll the calendar's events whose UID is not in the list are cancelled and
-            taken out of it. Each event stands alone: one that fails is logged, counted and left out.
+            (fromDate the recurrenceId). An override with recurrenceRange THISANDFUTURE (RANGE=THISANDFUTURE) splits its
+            series, when the series is in the list: the series ends before the instance (UNTIL the second before it, a day
+            before for an all-day series, or a COUNT of the instances before it, counted with the ICalendar tool's expand) and
+            a new series with the override's fields and start takes the rest of the rule, stored by the UID
+            "{uid}/{recurrenceId}" so the next read updates it; the overrides of later instances go with it, keyed by their
+            start moved as the new series moved. With replaceAll the calendar's events whose UID is not in the list are
+            cancelled and taken out of it. Each event stands alone: one that fails is logged, counted and left out.
         </description>
         <in-parameters>
             <parameter name="calendarId" required="true"/>
@@ -815,6 +820,71 @@ along with this software (see the LICENSE.md file). If not, see
                 if (row == null) ec.service.sync().name('create#mantle.work.effort.WorkEffortRecurrence').parameters(Object.assign({workEffortId: workEffortId}, fields)).call()
                 else { for (const [field, value] of Object.entries(fields)) row.set(field, value); row.update() }
             }
+            // RANGE=THISANDFUTURE: each such override of a series in the list becomes a series of its own from its instance
+            // on, the series before it (or an earlier split) ends there, and the overrides of later instances move to the
+            // new series, keyed by their start moved as it moved. Without the series or the tool it stays an override.
+            function splitThisAndFuture(list) {
+                const splits = list.filter((event) => event.recurrenceId != null && String(event.recurrenceRange || '').toUpperCase() === 'THISANDFUTURE')
+                if (!splits.length) return list
+                const tool = ec.factory.getToolFactory('ICalendar') != null ? ec.factory.getTool('ICalendar') : null
+                const dayStartMs = (text) => toMillis(ec.l10n.parseTimestamp(String(text).substring(0, 10) + ' 00:00:00.000', 'yyyy-MM-dd HH:mm:ss.SSS'))
+                const startOf = (event) => event.allDay ? dayStartMs(event.startDate) : toMillis(event.start)
+                const ruleParts = (rule) => String(rule).replace(/^RRULE:/i, '').split(';').filter((piece) => piece.includes('='))
+                        .map((piece) => [piece.substring(0, piece.indexOf('=')).toUpperCase(), piece.substring(piece.indexOf('=') + 1)])
+                const ruleText = (parts) => parts.map(([key, value]) => `${key}=${value}`).join(';')
+                // the series of each UID with the original start each takes over from (-Infinity for the first) and how far
+                // its instances moved from the original ones
+                const out = list.map((event) => event.recurrenceId == null ? Object.assign({}, event, {baseUid: String(event.uid), fromMs: -Infinity, deltaMs: 0}) : event)
+                const segmentOf = (uid, originalMs) => out.filter((event) => event.recurrenceId == null && event.baseUid === uid && event.fromMs <= originalMs)
+                        .sort((a, b) => b.fromMs - a.fromMs)[0]
+                const used = new Set()
+                for (const split of splits.slice().sort((a, b) => toMillis(a.recurrenceId) - toMillis(b.recurrenceId))) {
+                    try {
+                        const uid = String(split.uid || '')
+                        const originalMs = toMillis(split.recurrenceId)
+                        const segment = segmentOf(uid, originalMs)
+                        if (!segment || !segment.rrule || !tool) continue
+                        const cutMs = originalMs + segment.deltaMs
+                        const segmentStart = startOf(segment)
+                        const newStart = startOf(split)
+                        if (segmentStart == null || newStart == null) continue
+                        const parts = ruleParts(segment.rrule)
+                        const countPart = parts.find(([key]) => key === 'COUNT')
+                        const untilPart = parts.find(([key]) => key === 'UNTIL')
+                        const rest = parts.filter(([key]) => key !== 'COUNT' && key !== 'UNTIL')
+                        // the instances the rule makes before the split: COUNT counts them before EXDATE takes any out
+                        const before = Array.from(tool.expand(ruleText(parts), segmentStart, segment.timeZone || ec.user.timeZone || null, [], [],
+                                null, cutMs - 1) || []).map(toMillis).filter((value) => value != null && value < cutMs).length
+                        const countLeft = countPart ? Number(countPart[1]) - before : null
+                        used.add(split)
+                        if (countLeft != null && countLeft <= 0) continue
+                        const moved = {summary: split.summary, description: split.description, location: split.location, url: split.url,
+                            status: split.status, sequence: split.sequence, allDay: split.allDay, start: split.start, end: split.end,
+                            startDate: split.startDate, endDate: split.endDate}
+                        if (before === 0) {
+                            // from the series' first instance on: the series itself changes
+                            Object.assign(segment, moved, {deltaMs: newStart - originalMs})
+                            continue
+                        }
+                        const until = segment.allDay ? dayBefore(ec.l10n.format(String(cutMs), 'yyyy-MM-dd')).replace(/-/g, '')
+                                : new Date(cutMs - 1000).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+                        segment.rrule = ruleText(rest.concat([countPart ? ['COUNT', String(before)] : ['UNTIL', until]]))
+                        out.push(Object.assign({}, moved, {uid: `${uid}/${originalMs}`, timeZone: split.timeZone || segment.timeZone,
+                            rrule: ruleText(rest.concat(countPart ? [['COUNT', String(countLeft)]] : (untilPart ? [untilPart] : []))),
+                            exdates: segment.exdates, rdates: null, recurrenceId: null, baseUid: uid, fromMs: originalMs, deltaMs: newStart - originalMs}))
+                    } catch (err) {
+                        ec.logger.warn(`Calendar ${calendarId} feed event ${split.uid} from ${split.recurrenceId} on not split from its series: ${err && err.message ? err.message : err}`)
+                    }
+                }
+                // the overrides of single instances: of the series their instance falls in, keyed by its start there
+                return out.filter((event) => !used.has(event)).map((event) => {
+                    if (event.recurrenceId == null) return event
+                    const originalMs = toMillis(event.recurrenceId)
+                    const segment = segmentOf(String(event.uid || ''), originalMs)
+                    if (!segment) return event
+                    return Object.assign({}, event, {uid: segment.uid, recurrenceId: originalMs + segment.deltaMs})
+                })
+            }
             const upsert = (workEffortId, fields) => {
                 if (workEffortId) {
                     const row = ec.entity.find('mantle.work.effort.WorkEffort').condition('workEffortId', workEffortId).one()
@@ -831,7 +901,7 @@ along with this software (see the LICENSE.md file). If not, see
                 return id
             }
             // the series first, then the overrides, which need their series
-            const events = Array.from(eventList || [])
+            const events = splitThisAndFuture(Array.from(eventList || []).filter((event) => event))
             const ordered = events.filter((event) => event && event.recurrenceId == null).concat(events.filter((event) => event && event.recurrenceId != null))
             for (const event of ordered) {
                 ec.message.pushErrors()

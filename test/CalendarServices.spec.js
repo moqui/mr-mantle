@@ -690,6 +690,59 @@ feature("export#Calendar writes an iCalendar file that reads back through the IC
     },
 })
 
+// RANGE=THISANDFUTURE: a weekly series of five moved to the afternoon from its third instance on, with its fourth (as first
+// given) moved again on its own, and an open weekly series renamed and an hour later from its third on
+const splitIcs = icsOf(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Mantle CalendarServices spec//EN",
+    "BEGIN:VEVENT", "UID:split-count@example.com", "DTSTAMP:20270501T120000Z", "DTSTART;TZID=America/Chicago:20270512T090000",
+    "DTEND;TZID=America/Chicago:20270512T100000", "RRULE:FREQ=WEEKLY;COUNT=5", "SUMMARY:Split weekly", "END:VEVENT",
+    "BEGIN:VEVENT", "UID:split-count@example.com", "DTSTAMP:20270501T120000Z",
+    "RECURRENCE-ID;RANGE=THISANDFUTURE;TZID=America/Chicago:20270526T090000", "DTSTART;TZID=America/Chicago:20270526T140000",
+    "DTEND;TZID=America/Chicago:20270526T150000", "SUMMARY:Split weekly (afternoon)", "END:VEVENT",
+    "BEGIN:VEVENT", "UID:split-count@example.com", "DTSTAMP:20270501T120000Z", "RECURRENCE-ID;TZID=America/Chicago:20270602T090000",
+    "DTSTART;TZID=America/Chicago:20270603T080000", "DTEND;TZID=America/Chicago:20270603T090000", "SUMMARY:Split weekly (moved)", "END:VEVENT",
+    "BEGIN:VEVENT", "UID:split-open@example.com", "DTSTAMP:20270501T120000Z", "DTSTART;TZID=America/Chicago:20270513T100000",
+    "DTEND;TZID=America/Chicago:20270513T103000", "RRULE:FREQ=WEEKLY", "SUMMARY:Open weekly", "END:VEVENT",
+    "BEGIN:VEVENT", "UID:split-open@example.com", "DTSTAMP:20270501T120000Z",
+    "RECURRENCE-ID;RANGE=THISANDFUTURE;TZID=America/Chicago:20270527T100000", "DTSTART;TZID=America/Chicago:20270527T110000",
+    "DTEND;TZID=America/Chicago:20270527T113000", "SUMMARY:Open weekly (renamed)", "END:VEVENT",
+    "END:VCALENDAR"])
+
+feature("import#Calendar splits a series at a RANGE=THISANDFUTURE override: the instances before it as they were, the later ones as changed", {
+    when() {
+        setTime(14.7)
+        return as("Ada", () => {
+            cal.split = call(`${CAL}.create#Calendar`, { calendarName: "Ada Split", color: "#00897b" }).calendarId
+            const imported = call(`${CAL}.import#Calendar`, { calendarId: cal.split, fileText: splitIcs })
+            const again = call(`${CAL}.import#Calendar`, { calendarId: cal.split, fileText: splitIcs })
+            const ids = Array.from(ec.entity.find("mantle.work.calendar.CalendarWorkEffort").condition("calendarId", cal.split).list())
+                    .map((row) => row.workEffortId)
+            const workEfforts = Array.from(ec.entity.find("mantle.work.effort.WorkEffort")
+                    .condition(ec.entity.conditionFactory.makeCondition("workEffortId", "in", ids)).list()).map((row) => row.getMap())
+            const rules = Object.fromEntries(workEfforts.map((row) => [row.universalId + " " + row.workEffortName,
+                ec.entity.find("mantle.work.effort.WorkEffortRecurrence").condition("workEffortId", row.workEffortId).one()?.rrule ?? null]))
+            const instances = Array.from(call(`${EV}.get#EventInstances`, { workEffortList: workEfforts, rangeStart: at(0), rangeEnd: at(42 * 24) })
+                    .instanceList).map((instance) => [instance.workEffort.workEffortName, (instance.start - dayStart) / hour])
+            return { imported, again, ids, rules, instances }
+        })
+    },
+    then({ imported, again, ids, rules, instances }) {
+        imported.createdCount == 5
+        imported.failedCount == 0
+        again.createdCount == 0
+        again.updatedCount == 5
+        ids.length == 5
+        rules["split-count@example.com Split weekly"] == "FREQ=WEEKLY;COUNT=2"
+        rules[`split-count@example.com/${at(16 * 24 + 9).getTime()} Split weekly (afternoon)`] == "FREQ=WEEKLY;COUNT=3"
+        rules["split-open@example.com Open weekly"] == "FREQ=WEEKLY;UNTIL=20270527T145959Z"
+        rules[`split-open@example.com/${at(17 * 24 + 10).getTime()} Open weekly (renamed)`] == "FREQ=WEEKLY"
+        instances.filter((entry) => entry[0].startsWith("Split weekly")) == [["Split weekly", 2 * 24 + 9], ["Split weekly", 9 * 24 + 9],
+            ["Split weekly (afternoon)", 16 * 24 + 14], ["Split weekly (moved)", 24 * 24 + 8], ["Split weekly (afternoon)", 30 * 24 + 14]]
+        instances.filter((entry) => entry[0].startsWith("Open weekly")) == [["Open weekly", 3 * 24 + 10], ["Open weekly", 10 * 24 + 10],
+            ["Open weekly (renamed)", 17 * 24 + 11], ["Open weekly (renamed)", 24 * 24 + 11], ["Open weekly (renamed)", 31 * 24 + 11],
+            ["Open weekly (renamed)", 38 * 24 + 11]]
+    },
+})
+
 feature("a publish link reads the calendar with its password only", {
     when() {
         setTime(15)
