@@ -1759,12 +1759,12 @@ along with this software (see the LICENSE.md file). If not, see
                 const key = text.toLowerCase()
                 if (key in cache.person) return cache.person[key]
                 let found = Array.from(ec.entity.find('moqui.security.UserAccount').condition(ec.entity.conditionFactory.makeCondition([
-                        ec.entity.conditionFactory.makeCondition('username', 'equals', text, true),
-                        ec.entity.conditionFactory.makeCondition('emailAddress', 'equals', text, true)], 'or')).list()).filter((account) => account.partyId)
+                        ec.entity.conditionFactory.makeCondition('username', 'equals', text).ignoreCase(),
+                        ec.entity.conditionFactory.makeCondition('emailAddress', 'equals', text).ignoreCase()], 'or')).list()).filter((account) => account.partyId)
                 if (!found.length && /\s/.test(text)) {
                     const parts = text.split(/\s+/)
-                    const people = Array.from(ec.entity.find('mantle.party.Person').condition('firstName', 'equals', parts[0], true)
-                            .condition('lastName', 'equals', parts.slice(1).join(' '), true).list())
+                    const people = Array.from(ec.entity.find('mantle.party.Person').condition(ec.entity.conditionFactory.makeCondition('firstName', 'equals', parts[0]).ignoreCase())
+                            .condition(ec.entity.conditionFactory.makeCondition('lastName', 'equals', parts.slice(1).join(' ')).ignoreCase()).list())
                     found = people.length === 1 ? [{partyId: people[0].partyId}] : (people.length > 1 ? people : [])
                     if (people.length > 1) { cache.person[key] = {error: L('${name} matches several people', {name: text})}; return cache.person[key] }
                 }
