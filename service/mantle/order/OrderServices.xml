@@ -208,15 +208,15 @@ General Order Placement and eCommerce Usage
         </out-parameters>
         <actions>
             <!-- for return value, unitAmount * selectedAmount -->
-            <!-- a zero or null selectedAmount counts as 1 -->
-            <set field="selectedAmountFactor" from="(orderItem.selectedAmount == null || toDecimal(orderItem.selectedAmount).isZero()) ? 1 : orderItem.selectedAmount"/>
-            <set field="combinedAmount" from="toDecimal(orderItem.unitAmount ?? 0).multiply(selectedAmountFactor)"/>
+            <!-- a zero or null selectedAmount counts as 1.0; the 0.0 and 1.0 literals carry Java's scale -->
+            <set field="selectedAmountFactor" from="(orderItem.selectedAmount == null || toDecimal(orderItem.selectedAmount).isZero()) ? toDecimal('1.0') : orderItem.selectedAmount"/>
+            <set field="combinedAmount" from="toDecimal(orderItem.unitAmount ?? '0.0').multiply(selectedAmountFactor)"/>
 
-            <set field="combinedQuantity" from="toDecimal(orderItem.quantity ?? 1).multiply(selectedAmountFactor)"/>
+            <set field="combinedQuantity" from="toDecimal(orderItem.quantity ?? '1.0').multiply(selectedAmountFactor)"/>
             <!-- NOTE: also a sales/VAT tax calculation concern on item vs invoice level, but using 2 digits so consistent across order, invoice, GL TX entry
                 (tax should generally be calculated to 3 digits on the item level then summed and rounded to 2 digits to get a tax total) -->
             <!-- NOTE: CurrencyRoundingMarker scale here may vary by currency, make configurable -->
-            <set field="itemTotal" from="combinedQuantity.multiply(orderItem.unitAmount ?? 0).setScale(2, 'HALF_UP')"/>
+            <set field="itemTotal" from="combinedQuantity.multiply(orderItem.unitAmount ?? '0.0').setScale(2, 'HALF_UP')"/>
             <if condition="getChildrenTotals">
                 <!-- recursively get total of child OrderItems -->
                 <!-- don't use relationship, allow view-entities, etc <entity-find-related value-field="orderItem" relationship-name="Child#OrderItem" list="childOrderItemList"/> -->
@@ -224,15 +224,15 @@ General Order Placement and eCommerce Usage
                     <econdition field-name="orderId" from="orderItem.orderId"/>
                     <econdition field-name="parentItemSeqId" from="orderItem.orderItemSeqId"/>
                 </entity-find>
-                <set field="childrenTotal" from="toDecimal(0)"/>
+                <set field="childrenTotal" from="toDecimal('0.0')"/>
                 <set field="hasPromo" from="false"/>
-                <set field="promoQuantityUsed" from="toDecimal(0)"/>
+                <set field="promoQuantityUsed" from="toDecimal('0.0')"/>
                 <iterate list="childOrderItemList" entry="childOrderItem">
                     <service-call name="mantle.order.OrderServices.get#OrderItemTotal" out-map="getOitResult" out-map-add-to-existing="false"
                             in-map="{orderItem:childOrderItem, getChildrenTotals:true}"/>
                     <set field="childrenTotal" from="childrenTotal.add(getOitResult.itemPlusChildrenTotal)"/>
                     <if condition="childOrderItem.isPromo == 'Y' || getOitResult.hasPromo"><set field="hasPromo" from="true"/></if>
-                    <set field="promoQuantityUsed" from="promoQuantityUsed.add(childOrderItem.promoQuantity ?? 0).add(getOitResult.promoQuantityUsed)"/>
+                    <set field="promoQuantityUsed" from="promoQuantityUsed.add(childOrderItem.promoQuantity ?? '0.0').add(getOitResult.promoQuantityUsed)"/>
                 </iterate>
                 <set field="itemPlusChildrenTotal" from="itemTotal.add(childrenTotal)"/>
                 <set field="childItemCount" from="childOrderItemList.length"/>
