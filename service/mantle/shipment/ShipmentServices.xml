@@ -109,7 +109,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="productId" required="true"/>
             <auto-parameters entity-name="mantle.shipment.ShipmentItem" include="nonpk"/>
             <auto-parameters entity-name="mantle.shipment.ShipmentItemSource" include="nonpk"/>
-            <parameter name="statusId" default-value="SisPending"/>
+            <!-- Java's default="SisPending" is a Groovy expression naming an unset field, so it is null: the
+                ShipmentItemSource gets no status unless one is passed, as on Java. -->
+            <parameter name="statusId"/>
             <parameter name="quantity" type="BigDecimal" required="true"/>
         </in-parameters>
         <out-parameters><parameter name="shipmentItemSourceId"/></out-parameters>
