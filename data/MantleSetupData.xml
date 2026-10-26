@@ -430,10 +430,10 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="ProcessTimePeriodPay" description="Process Pay for Payroll Period"
             serviceName="mantle.humanres.PayrollServices.process#TimePeriodPay" topic="ProcessTimePeriodPay"/>
 
-    <!-- Service Job: Send Due Reminders of tasks and events - every minute -->
+    <!-- Service Job: Send Due Reminders of tasks and events - every minute. A success is not kept: the reminder is the record. -->
     <moqui.service.job.ServiceJob jobName="send_DueReminders" description="Send Due Task and Event Reminders"
             serviceName="mantle.work.EventServices.send#DueReminders" cronExpression="0 0/1 * * * ?" paused="N"
-            transactionTimeout="300"/>
+            transactionTimeout="300" errorHistoryOnly="Y"/>
     <!-- Service Job: Send Missing Time Reminders - every hour; each organization's timesheet policy says on which day and hour its people
         are reminded of last week's timesheet (mantle.work.TimesheetServices.send#MissingTimeReminders), once a week each -->
     <moqui.service.job.ServiceJob jobName="send_MissingTimeReminders" description="Send Missing Time Reminders"
