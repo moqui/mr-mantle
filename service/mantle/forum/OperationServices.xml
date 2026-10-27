@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+  <service verb="get" noun="Health" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("getHealth", input)</script>
+    </actions>
+  </service>
+  <service verb="find" noun="Runs" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findRuns',input || {})</script>
+    </actions>
+  </service>
+  <service verb="manage" noun="Run" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('manageRun',input || {})</script>
+    </actions>
+  </service>
+  <service verb="bump" noun="MailboxVisibility" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="contactListId" required="true"/>
+    </in-parameters>
+    <actions>
+      <script><![CDATA[
+      const old=ec.artifactExecution.disableAuthz()
+      try{
+        const category=ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',contactListId).one()
+        if(category){const site=ec.entity.find('mantle.public.PublicSite').condition('siteId',category.siteId).forUpdate(true).one();if(site){site.set('generation',Number(site.generation || 0)+1);site.update()}}
+      }finally{if(!old)ec.artifactExecution.enableAuthz()}
+    ]]></script>
+    </actions>
+  </service>
+  <service verb="cleanup" noun="Cursors" authenticate="false" allow-remote="false">
+    <actions>
+      <script><![CDATA[
+    const old=ec.artifactExecution.disableAuthz()
+    try{for(const row of ec.entity.find('mantle.forum.ForumCursor').condition('expiresAt','less',ec.user.nowTimestamp).orderBy('expiresAt,cursorId').limit(1000).list()){
+        try{ec.service.sync().throwOnError(true).name('delete#mantle.forum.ForumCursor').parameters({cursorId:row.cursorId}).requireNewTransaction(true).call()}
+        catch(error){ec.message.clearErrors();ec.logger.error('Forum cursor cleanup failed for '+row.cursorId)}
+    }}finally{if(!old)ec.artifactExecution.enableAuthz()}
+  ]]></script>
+    </actions>
+  </service>
+</services>

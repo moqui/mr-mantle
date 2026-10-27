@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+  <service verb="prepare" noun="Outbox" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="outboxId" required="true"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script('component://mr-mantle/service/mantle/forum/DeliveryWorker.js').execute('prepare',{outboxId:outboxId})</script>
+    </actions>
+  </service>
+  <service verb="claim" noun="Delivery" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="deliveryId" required="true"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script('component://mr-mantle/service/mantle/forum/DeliveryWorker.js').execute('claim',{deliveryId:deliveryId})</script>
+    </actions>
+  </service>
+  <service verb="send" noun="Delivery" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="deliveryId" required="true"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script('component://mr-mantle/service/mantle/forum/DeliveryWorker.js').execute('deliver',{deliveryId:deliveryId})</script>
+    </actions>
+  </service>
+  <service verb="dispatch" noun="Outbox" authenticate="false" allow-remote="false">
+    <in-parameters/>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script('component://mr-mantle/service/mantle/forum/DeliveryWorker.js').execute('dispatch',{})</script>
+    </actions>
+  </service>
+  <service verb="reconcile" noun="Delivery" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="deliveryId" required="true"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script('component://mr-mantle/service/mantle/forum/DeliveryWorker.js').execute('reconcile',{deliveryId})</script>
+    </actions>
+  </service>
+</services>

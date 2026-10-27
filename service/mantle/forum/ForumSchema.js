@@ -1,0 +1,469 @@
+/* CC0 plus patent grant. */
+;({
+    findSites: {
+        service: 'mantle.public.SiteServices.find#Sites',
+        fields: ['siteId', 'limit', 'cursor'],
+    },
+    createSite: {
+        service: 'mantle.public.SiteServices.create#Site',
+        fields: ['name', 'ownerPartyId', 'locale', 'timeZone'],
+    },
+    updateSite: {
+        service: 'mantle.public.SiteServices.update#Site',
+        fields: [
+            'siteId',
+            'expectedRevision',
+            'name',
+            'locale',
+            'timeZone',
+            'state',
+        ],
+    },
+    getMembership: {
+        service: 'mantle.public.SiteServices.get#Membership',
+        fields: ['siteId'],
+    },
+    joinSite: {
+        service: 'mantle.public.SiteServices.join#Site',
+        fields: ['siteId'],
+    },
+    leaveSite: {
+        service: 'mantle.public.SiteServices.leave#Site',
+        fields: ['siteId', 'expectedRevision'],
+    },
+    setMembership: {
+        service: 'mantle.public.SiteServices.set#Membership',
+        fields: [
+            'siteId',
+            'targetPartyId',
+            'state',
+            'expectedRevision',
+            'reason',
+        ],
+    },
+    setSiteRole: {
+        service: 'mantle.public.SiteServices.set#SiteRole',
+        fields: [
+            'siteId',
+            'targetPartyId',
+            'role',
+            'expectedRevision',
+            'password',
+            'code',
+            'reason',
+        ],
+    },
+    findMembers: {
+        service: 'mantle.public.SiteServices.find#Members',
+        fields: ['siteId', 'limit', 'cursor'],
+    },
+    storeProfile: {
+        service: 'mantle.public.SiteServices.store#Profile',
+        fields: [
+            'siteId',
+            'handle',
+            'displayName',
+            'avatarId',
+            'bio',
+            'discoverability',
+            'locale',
+            'timeZone',
+            'expectedRevision',
+        ],
+    },
+    getProfile: {
+        service: 'mantle.public.SiteServices.get#Profile',
+        fields: ['siteId', 'handle'],
+    },
+    getSitePage: {
+        service: 'mantle.public.SiteServices.get#SitePage',
+        fields: ['siteId', 'pageRole'],
+    },
+    checkReadiness: {
+        service: 'mantle.public.SiteServices.check#Readiness',
+        fields: ['siteId'],
+    },
+    storeMounts: {
+        service: 'mantle.public.SiteServices.store#Mounts',
+        fields: ['siteId', 'mounts', 'hosts', 'expectedRevision'],
+    },
+    updateMembershipPolicy: {
+        service: 'mantle.public.SiteServices.update#MembershipPolicy',
+        fields: [
+            'siteId',
+            'registrationMode',
+            'approvalRequired',
+            'expectedRevision',
+        ],
+    },
+    createInvitation: {
+        service: 'mantle.public.SiteServices.create#Invitation',
+        fields: ['siteId', 'emailAddress', 'expiresAt', 'operationId'],
+    },
+    inspectInvitation: {
+        service: 'mantle.public.SiteServices.inspect#Invitation',
+        fields: ['siteId', 'token', 'emailAddress'],
+    },
+    redeemInvitation: {
+        service: 'mantle.public.SiteServices.redeem#Invitation',
+        fields: ['siteId', 'token'],
+    },
+    revokeInvitation: {
+        service: 'mantle.public.SiteServices.revoke#Invitation',
+        fields: ['siteId', 'invitationId'],
+    },
+    findCategories: {
+        service: 'mantle.forum.ForumServices.find#Categories',
+        fields: ['siteId', 'limit', 'cursor'],
+    },
+    getCategory: {
+        service: 'mantle.forum.ForumServices.get#Category',
+        fields: ['siteId', 'contactListId'],
+    },
+    storeCategory: {
+        service: 'mantle.forum.ForumServices.store#Category',
+        fields: [
+            'siteId',
+            'contactListId',
+            'parentContactListId',
+            'name',
+            'slug',
+            'sequenceNum',
+            'rules',
+            'expectedRevision',
+            'confirmAudience',
+            'operationId',
+        ],
+    },
+    previewCategoryAccess: {
+        service: 'mantle.forum.ForumServices.preview#CategoryAccess',
+        fields: ['siteId', 'contactListId', 'visibility'],
+    },
+    setCategoryAccess: {
+        service: 'mantle.forum.ForumServices.set#CategoryAccess',
+        fields: [
+            'siteId',
+            'contactListId',
+            'visibility',
+            'publicationState',
+            'expectedRevision',
+            'confirm',
+        ],
+    },
+    findTopics: {
+        service: 'mantle.forum.ForumServices.find#Topics',
+        fields: ['siteId', 'contactListId', 'query', 'limit', 'cursor', 'view'],
+    },
+    getTopic: {
+        service: 'mantle.forum.ForumServices.get#Topic',
+        fields: ['siteId', 'rootCommEventId'],
+    },
+    getPosts: {
+        service: 'mantle.forum.ForumServices.get#Posts',
+        fields: [
+            'siteId',
+            'rootCommEventId',
+            'limit',
+            'cursor',
+            'before',
+            'after',
+            'around',
+        ],
+    },
+    searchForum: {
+        service: 'mantle.forum.ForumServices.search#Forum',
+        fields: ['siteId', 'contactListId', 'query', 'limit', 'cursor'],
+    },
+    storeDraft: {
+        service: 'mantle.forum.ForumServices.store#Draft',
+        fields: [
+            'siteId',
+            'draftId',
+            'mode',
+            'contactListId',
+            'rootCommEventId',
+            'parentCommEventId',
+            'title',
+            'body',
+            'expectedRevision',
+            'postId',
+            'postRevision',
+        ],
+    },
+    findDrafts: {
+        service: 'mantle.forum.ForumServices.find#Drafts',
+        fields: ['siteId', 'limit', 'cursor'],
+    },
+    discardDraft: {
+        service: 'mantle.forum.ForumServices.discard#Draft',
+        fields: ['siteId', 'draftId', 'expectedRevision'],
+    },
+    previewPost: {
+        service: 'mantle.forum.ForumServices.preview#Post',
+        fields: ['siteId', 'body'],
+    },
+    publishPost: {
+        service: 'mantle.forum.ForumServices.publish#Post',
+        fields: [
+            'siteId',
+            'contactListId',
+            'rootCommEventId',
+            'parentCommEventId',
+            'title',
+            'body',
+            'operationId',
+            'attachmentIds',
+            'draftId',
+        ],
+    },
+    updatePost: {
+        service: 'mantle.forum.ForumServices.update#Post',
+        fields: [
+            'siteId',
+            'postId',
+            'body',
+            'expectedRevision',
+            'reason',
+            'draftId',
+            'attachmentIds',
+        ],
+    },
+    markRead: {
+        service: 'mantle.forum.ForumServices.mark#Read',
+        fields: [
+            'siteId',
+            'rootCommEventId',
+            'ordinal',
+            'expectedRevision',
+            'markUnread',
+            'renderedPostIds',
+            'jump',
+        ],
+    },
+    flagPost: {
+        service: 'mantle.forum.ModerationServices.flag#Post',
+        fields: ['siteId', 'postId', 'reason', 'operationId'],
+    },
+    findReviews: {
+        service: 'mantle.forum.ModerationServices.find#Reviews',
+        fields: ['siteId', 'contactListId', 'limit', 'cursor'],
+    },
+    getReview: {
+        service: 'mantle.forum.ModerationServices.get#Review',
+        fields: ['siteId', 'reviewId'],
+    },
+    claimReview: {
+        service: 'mantle.forum.ModerationServices.claim#Review',
+        fields: ['siteId', 'reviewId', 'expectedRevision'],
+    },
+    decideReview: {
+        service: 'mantle.forum.ModerationServices.decide#Review',
+        fields: [
+            'siteId',
+            'reviewId',
+            'expectedRevision',
+            'decision',
+            'reason',
+        ],
+    },
+    applyTopicAction: {
+        service: 'mantle.forum.ModerationServices.apply#TopicAction',
+        fields: [
+            'siteId',
+            'rootCommEventId',
+            'action',
+            'title',
+            'expectedRevision',
+            'reason',
+            'targetContactListId',
+            'confirmAudience',
+            'expectedGeneration',
+        ],
+    },
+    findActions: {
+        service: 'mantle.forum.ModerationServices.find#Actions',
+        fields: ['siteId', 'contactListId', 'limit', 'cursor'],
+    },
+    setSanction: {
+        service: 'mantle.forum.ModerationServices.set#Sanction',
+        fields: [
+            'siteId',
+            'contactListId',
+            'targetPartyId',
+            'kind',
+            'thruDate',
+            'reason',
+            'operationId',
+        ],
+    },
+    getMember: {
+        service: 'mantle.forum.ModerationServices.get#Member',
+        fields: ['siteId', 'contactListId', 'targetPartyId'],
+    },
+    getPreferences: {
+        service: 'mantle.forum.DeliveryServices.get#Preferences',
+        fields: ['siteId', 'scopeType', 'scopeId'],
+    },
+    setPreferences: {
+        service: 'mantle.forum.DeliveryServices.set#Preferences',
+        fields: [
+            'siteId',
+            'scopeType',
+            'scopeId',
+            'watchLevel',
+            'emailMode',
+            'expectedRevision',
+        ],
+    },
+    findDeliveries: {
+        service: 'mantle.forum.DeliveryServices.find#Deliveries',
+        fields: ['siteId', 'limit', 'cursor'],
+    },
+    storeMailSettings: {
+        service: 'mantle.forum.DeliveryServices.store#MailSettings',
+        fields: [
+            'siteId',
+            'senderAddress',
+            'senderName',
+            'templateId',
+            'expectedRevision',
+        ],
+    },
+    inspectOptOut: {
+        service: 'mantle.forum.DeliveryServices.inspect#OptOut',
+        fields: ['siteId', 'token'],
+    },
+    applyOptOut: {
+        service: 'mantle.forum.DeliveryServices.apply#OptOut',
+        fields: ['siteId', 'token'],
+    },
+    getHealth: {
+        service: 'mantle.forum.OperationServices.get#Health',
+        fields: ['siteId', 'cursor', 'limit'],
+    },
+    stageAttachment: {
+        service: 'mantle.forum.ForumServices.stage#Attachment',
+        fields: [
+            'siteId',
+            'contactListId',
+            'draftId',
+            'file',
+            'altText',
+            'purpose',
+        ],
+    },
+    removeStagedAttachment: {
+        service: 'mantle.forum.ForumServices.remove#StagedAttachment',
+        fields: ['siteId', 'attachmentId'],
+    },
+    getAttachment: {
+        service: 'mantle.forum.ForumServices.get#Attachment',
+        fields: ['siteId', 'attachmentId', 'variant'],
+    },
+    findNotifications: {
+        service: 'mantle.forum.DeliveryServices.find#Notifications',
+        fields: ['siteId', 'cursor', 'limit'],
+    },
+    markNotifications: {
+        service: 'mantle.forum.DeliveryServices.mark#Notifications',
+        fields: ['siteId', 'deliveryIds'],
+    },
+    storePolicy: {
+        service: 'mantle.forum.ModerationServices.store#Policy',
+        fields: ['siteId', 'config', 'expectedRevision'],
+    },
+    getPolicy: {
+        service: 'mantle.forum.ModerationServices.get#Policy',
+        fields: ['siteId'],
+    },
+    getSiteInfo: {
+        service: 'mantle.public.SiteServices.get#SiteInfo',
+        fields: ['siteId', 'hostname'],
+    },
+    getDraft: {
+        service: 'mantle.forum.ForumServices.get#Draft',
+        fields: ['siteId', 'draftId'],
+    },
+    joinCategory: {
+        service: 'mantle.forum.ForumServices.join#Category',
+        fields: ['siteId', 'contactListId'],
+    },
+    leaveCategory: {
+        service: 'mantle.forum.ForumServices.leave#Category',
+        fields: ['siteId', 'contactListId'],
+    },
+    findCategoryMembers: {
+        service: 'mantle.forum.ForumServices.find#CategoryMembers',
+        fields: ['siteId', 'contactListId', 'cursor', 'limit'],
+    },
+    setCategoryMember: {
+        service: 'mantle.forum.ForumServices.set#CategoryMember',
+        fields: [
+            'siteId',
+            'contactListId',
+            'targetPartyId',
+            'state',
+            'roleTypeId',
+            'expectedRevision',
+            'reason',
+            'password',
+            'code',
+        ],
+    },
+    bindMailbox: {
+        service: 'mantle.forum.ForumServices.bind#Mailbox',
+        fields: ['siteId', 'contactListId', 'operationId', 'confirm'],
+    },
+    findRuns: {
+        service: 'mantle.forum.OperationServices.find#Runs',
+        fields: ['siteId', 'cursor', 'limit'],
+    },
+    publishSitePage: {
+        service: 'mantle.public.SiteServices.publish#SitePage',
+        fields: [
+            'siteId',
+            'pageRole',
+            'wikiPageId',
+            'versionName',
+            'expectedRevision',
+        ],
+    },
+    getFeed: {
+        service: 'mantle.forum.ForumServices.get#Feed',
+        fields: ['siteId', 'format'],
+    },
+    getPostLocation: {
+        service: 'mantle.forum.ForumServices.get#PostLocation',
+        fields: ['siteId', 'postId'],
+    },
+    getEditablePost: {
+        service: 'mantle.forum.ForumServices.get#EditablePost',
+        fields: ['siteId', 'postId'],
+    },
+    previewTopicAction: {
+        service: 'mantle.forum.ModerationServices.preview#TopicAction',
+        fields: ['siteId', 'rootCommEventId', 'targetContactListId'],
+    },
+    resolveDelivery: {
+        service: 'mantle.forum.DeliveryServices.resolve#Delivery',
+        fields: [
+            'siteId',
+            'deliveryId',
+            'expectedRevision',
+            'decision',
+            'reason',
+        ],
+    },
+    addReviewNote: {
+        service: 'mantle.forum.ModerationServices.add#ReviewNote',
+        fields: ['siteId', 'reviewId', 'body', 'operationId'],
+    },
+    manageRun: {
+        service: 'mantle.forum.OperationServices.manage#Run',
+        fields: ['siteId', 'runId', 'action', 'reason'],
+    },
+    endSanction: {
+        service: 'mantle.forum.ModerationServices.end#Sanction',
+        fields: ['siteId', 'sanctionId', 'expectedRevision', 'reason'],
+    },
+})

@@ -112,6 +112,19 @@ along with this software (see the LICENSE.md file). If not, see
                 const asList = (value) => (value == null ? [] : (typeof value === 'string' ? value.split(',') : Array.from(value)))
                         .map((id) => String(id).trim()).filter((id) => id)
                 recipientList = []
+                forumDelegated = false
+                const bound = contactListId ? ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',contactListId).one() : null
+                if (bound && communicationEventTypeId === 'Message') {
+                    if (fromPartyId !== ec.user.userAccount?.partyId) { ec.message.addError('A bound forum post must use the current author'); return }
+                    const published = ec.service.sync().name('mantle.forum.ForumServices.publish#Post').parameters({input:{
+                        siteId:bound.siteId,contactListId:contactListId,rootCommEventId:rootCommEventId || null,
+                        parentCommEventId:parentCommEventId || null,title:subject || '',body:body || '',operationId:ec.user.randomString(32)}}).call().result
+                    communicationEventId = published.postId
+                    rootCommEventId = published.rootCommEventId
+                    newMailUserIds = []
+                    forumDelegated = true
+                    return
+                }
                 const toIds = []
                 const ccIds = []
                 for (const id of (toPartyId ? [toPartyId] : []).concat(asList(toPartyIdList))) if (!toIds.includes(id)) toIds.push(id)
@@ -175,17 +188,19 @@ along with this software (see the LICENSE.md file). If not, see
                                 for (const id of participants) if (id !== fromPartyId && !roles.has(id)) roles.set(id, 'MessageMailbox')
                             }
                         }
-                        for (const row of ec.entity.find('mantle.marketing.contact.ContactListParty').condition('contactListId', contactListId)
-                                .condition('statusId', 'CLPT_ACCEPTED').condition(ec.entity.conditionFactory.makeConditionDate('fromDate', 'thruDate', null))
-                                .orderBy('fromDate').list()) {
-                            if (row.partyId !== fromPartyId && !roles.has(row.partyId)) roles.set(row.partyId, 'MessageMailbox')
+                        const tracking = ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js')
+                        for (const partyId of tracking.internalMemberIds(contactListId)) {
+                            if (partyId !== fromPartyId && !roles.has(partyId)) roles.set(partyId, 'MessageMailbox')
                         }
+                        // Public members, named recipients and mentions use topic markers, including unbound lists.
+                        for (const partyId of Array.from(roles.keys())) if (!tracking.internalParty(partyId)) roles.delete(partyId)
                     }
                 }
                 recipientList = Array.from(roles.entries()).map(([partyId, roleTypeId]) => ({partyId: partyId, roleTypeId: roleTypeId}))
             ]]></script>
-            <if condition="ec.message.hasError()"><return/></if>
+            <if condition="ec.message.hasError() || forumDelegated"><return/></if>
             <service-call name="create#mantle.party.communication.CommunicationEvent" in-map="context" out-map="context"/>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').recordMailboxPost(communicationEventId)</script>
             <if condition="purposeEnumId">
                 <service-call name="create#mantle.party.communication.CommunicationEventPurpose" in-map="context"/>
             </if>
@@ -370,6 +385,15 @@ along with this software (see the LICENSE.md file). If not, see
                 const mine = (event) => event.fromPartyId === partyId || event.toPartyId === partyId || myRows.has(event.communicationEventId)
                 const takesPart = messages.some(mine)
                 const visible = messages.filter((event) => {
+                    if (event.contactListId) {
+                        const binding = ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',event.contactListId).one()
+                        if (binding) {
+                            const forum = ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js')
+                            const access = forum.categoryAccess(event.contactListId)
+                            const state = ec.entity.find('mantle.forum.ForumPostState').condition('communicationEventId',event.communicationEventId).one()
+                            if (!access || !(access.canRead || access.canReadOwn || access.canModerate) || !state || !forum.postVisible(state,event,access)) return false
+                        }
+                    }
                     if (mine(event)) return true
                     if (!event.contactListId) return false
                     const access = accessOf(event.contactListId)
@@ -377,6 +401,13 @@ along with this software (see the LICENSE.md file). If not, see
                 })
                 if (visible.length === 0) continue
                 const root = messages.find((event) => event.communicationEventId === threadId) || null
+                if (root?.contactListId) {
+                    const bound = ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',root.contactListId).one()
+                    if (bound) {
+                        try { ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').topic(threadId,bound.siteId) }
+                        catch(error) { if(error.moquiErrorKind==='NotFound') continue; throw error }
+                    }
+                }
                 const listId = root?.contactListId || null
                 const access = listId ? accessOf(listId) : null
                 const isMailbox = !!access?.isMailbox
@@ -385,10 +416,12 @@ along with this software (see the LICENSE.md file). If not, see
                     isClosed: isMailbox && root?.statusId === 'CeResolved', takesPart: takesPart,
                     canReadAll: isMailbox ? access.canReadAll : null, canPost: isMailbox ? access.canPost : null,
                     canModerate: isMailbox ? access.canModerate : false,
-                    messageList: visible.map((event) => Object.assign({}, event, {myRowList: myRows.get(event.communicationEventId) || [],
+                    messageList: visible.map((event) => {
+                        const publicState=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').legacyReading(event,partyId)
+                        return Object.assign({}, event, {publicState:publicState,myRowList:publicState ? [] : myRows.get(event.communicationEventId) || [],
                         toPartyIdList: recipients.get(event.communicationEventId)?.to ?? [],
                         ccPartyIdList: recipients.get(event.communicationEventId)?.cc ?? [],
-                        attachmentList: attachments.get(event.communicationEventId) || []}))}
+                        attachmentList: attachments.get(event.communicationEventId) || []})})}
             }
         ]]></script></actions>
     </service>
@@ -702,8 +735,10 @@ along with this software (see the LICENSE.md file). If not, see
             const summarize = (thread, sortDate) => {
                 const messages = thread.messageList
                 const deliveryRows = messages.flatMap((message) => message.myRowList.filter((row) => DELIVERY.includes(row.roleTypeId)))
-                const unreadCount = messages.filter((message) => message.myRowList.some((row) => DELIVERY.includes(row.roleTypeId) && row.readDate == null)).length
-                const isArchived = deliveryRows.length > 0 && deliveryRows.every((row) => row.archivedDate != null)
+                const unreadCount = messages.filter((message) => message.publicState ? message.publicState.isUnread : message.myRowList.some((row) => DELIVERY.includes(row.roleTypeId) && row.readDate == null)).length
+                const isArchived = messages.some((message) => message.publicState)
+                    ? messages.filter((message) => message.publicState).every((message) => !!message.publicState.archivedAt)
+                    : deliveryRows.length > 0 && deliveryRows.every((row) => row.archivedDate != null)
                 if (view === 'archived' && !isArchived) return null
                 if (unreadOnly && unreadCount === 0) return null
                 const snoozes = deliveryRows.filter((row) => row.archivedDate == null).map((row) => toMillis(row.snoozedThruDate))
@@ -813,7 +848,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <parameter name="toPartyId"/><parameter name="toPartyIdList" type="List"/><parameter name="ccPartyIdList" type="List"/>
                 <parameter name="entryDate"/><parameter name="subject"/><parameter name="body"/><parameter name="contentType"/>
                 <parameter name="contactListId"/><parameter name="attachmentList" type="List"/><parameter name="myState" type="Map"/>
-                <parameter name="isUnread" type="Boolean"/>
+                <parameter name="isUnread" type="Boolean"/><parameter name="publicState" type="Map"/>
             </parameter></parameter>
             <parameter name="participantList" type="List"/>
             <parameter name="labelList" type="List"><description>Labels this user put on any message of the thread: {emailLabelId, labelName, color}</description></parameter>
@@ -848,7 +883,7 @@ along with this software (see the LICENSE.md file). If not, see
             for (const message of thread.messageList) {
                 const rows = message.myRowList
                 const row = rows.find((candidate) => DELIVERY.includes(candidate.roleTypeId)) || rows[0] || null
-                const isUnread = rows.some((candidate) => DELIVERY.includes(candidate.roleTypeId) && candidate.readDate == null)
+                const isUnread = message.publicState ? message.publicState.isUnread : rows.some((candidate) => DELIVERY.includes(candidate.roleTypeId) && candidate.readDate == null)
                 if (isUnread) unreadCount++
                 messageList.push({communicationEventId: message.communicationEventId, parentCommEventId: message.parentCommEventId ?? null,
                     rootCommEventId: message.rootCommEventId ?? null, communicationEventTypeId: message.communicationEventTypeId ?? null,
@@ -858,7 +893,7 @@ along with this software (see the LICENSE.md file). If not, see
                     contactListId: message.contactListId ?? null, attachmentList: message.attachmentList,
                     myState: row == null ? null : {roleTypeId: row.roleTypeId, readDate: row.readDate, isFlagged: row.isFlagged,
                         archivedDate: row.archivedDate, snoozedThruDate: row.snoozedThruDate},
-                    isUnread: isUnread})
+                    publicState:message.publicState || null, isUnread: isUnread})
                 for (const id of [message.fromPartyId].concat(message.toPartyIdList, message.ccPartyIdList, [message.toPartyId])) {
                     if (id && !participants.includes(id)) participants.push(id)
                 }
@@ -898,6 +933,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="communicationEventId"/>
             <parameter name="rootCommEventId"><description>The whole thread</description></parameter>
+            <parameter name="expectedMarkerRevision" type="Long"><description>Public mailbox marker revision; required to mark unread.</description></parameter>
             <parameter name="read" type="Boolean"/>
             <parameter name="flagged" type="Boolean"/>
             <parameter name="archived" type="Boolean"/>
@@ -916,6 +952,19 @@ along with this software (see the LICENSE.md file). If not, see
             if (!partyId) { ec.message.addError('Internal messages need a user with a party'); return }
             if (!communicationEventId && !rootCommEventId) { ec.message.addError('A communicationEventId or rootCommEventId is required'); return }
             const wanted = rootCommEventId || communicationEventId
+            const wantedEvent = ec.entity.find('mantle.party.communication.CommunicationEvent').condition('communicationEventId',wanted).one()
+            const tracking = ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js')
+            if (wantedEvent?.contactListId && !tracking.internalParty(partyId)) {
+                const access = ec.service.sync().name('mantle.marketing.ContactListServices.get#ContactListAccess').parameter('contactListId',wantedEvent.contactListId).call()
+                if (access.isMailbox) {
+                    if (!(access.canReadAll || access.canReadOwn && wantedEvent.fromPartyId===partyId)) { ec.message.addError('Communication event '+wanted+' not found'); return }
+                    if(flagged!=null || snoozedThruDate!=null || unsnooze===true){ec.message.addError('Public mailbox markers support read and archive state');return}
+                    const marked = tracking.legacyMarker(wantedEvent,partyId,{read:read,archived:archived},expectedMarkerRevision)
+                    updatedCount = 1
+                    communicationEventIdList = [wanted]
+                    return
+                }
+            }
             let scopeIds
             if (rootCommEventId) {
                 scopeIds = Array.from(ec.entity.find('mantle.party.communication.CommunicationEvent')
@@ -1070,6 +1119,15 @@ along with this software (see the LICENSE.md file). If not, see
             if (!access.canModerate) {
                 ec.message.addError(access.canReadOwn ? `Only an owner or moderator of ${access.contactList?.contactListName || root.contactListId} may close a thread`
                         : `Communication event ${communicationEventId} not found`)
+                return
+            }
+            const bound = ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',root.contactListId).one()
+            if (bound) {
+                const metadata=ec.entity.find('mantle.forum.ForumTopic').condition('rootCommEventId',rootCommEventId).one()
+                if(!metadata){ec.message.addError('Forum tracking conversion is required');return}
+                ec.service.sync().name('mantle.forum.ModerationServices.apply#TopicAction').parameters({input:{siteId:bound.siteId,rootCommEventId:rootCommEventId,
+                    action:reopen?'reopen':'close',expectedRevision:Number(metadata.revision),reason:'Thread state changed from internal Comms'}}).call()
+                statusId=reopen?'CeReceived':'CeResolved'
                 return
             }
             // the first post's status, set directly: the status flow has no way back from Resolved

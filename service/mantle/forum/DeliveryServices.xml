@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+  <service verb="get" noun="Preferences" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("getPreferences", input)</script>
+    </actions>
+  </service>
+  <service verb="set" noun="Preferences" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("setPreferences", input)</script>
+    </actions>
+  </service>
+  <service verb="find" noun="Deliveries" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("findDeliveries", input)</script>
+    </actions>
+  </service>
+  <service verb="store" noun="MailSettings" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("storeMailSettings", input)</script>
+    </actions>
+  </service>
+  <service verb="inspect" noun="OptOut" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("inspectOptOut", input)</script>
+    </actions>
+  </service>
+  <service verb="apply" noun="OptOut" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("applyOptOut", input)</script>
+    </actions>
+  </service>
+  <service verb="find" noun="Notifications" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("findNotifications", input || {})</script>
+    </actions>
+  </service>
+  <service verb="mark" noun="Notifications" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("markNotifications", input || {})</script>
+    </actions>
+  </service>
+  <service verb="resolve" noun="Delivery" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('resolveDelivery',input || {})</script>
+    </actions>
+  </service>
+</services>

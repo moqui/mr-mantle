@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- No site or category is published by setup. Workers have no public HTTP routes. -->
+<entity-facade-xml type="seed-initial">
+  <moqui.service.job.ServiceJob jobName="pass_dispatch_outbox" description="Prepare and deliver authorized forum notifications" serviceName="mantle.forum.DeliveryWorkerServices.dispatch#Outbox" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+  <moqui.service.job.ServiceJob jobName="pass_convert_mailboxes" description="Checkpointed disabled-category metadata conversion" serviceName="mantle.forum.BootstrapServices.dispatch#Conversions" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+  <moqui.service.job.ServiceJob jobName="pass_cleanup_staged_media" description="Remove expired unreferenced forum uploads" serviceName="mantle.forum.MediaWorkerServices.cleanup#StagedAttachments" cronExpression="0 0 * * * ?" paused="N" errorHistoryOnly="Y"/>
+  <moqui.service.job.ServiceJob jobName="pass_convert_tracking_modes" description="Checkpoint public and internal read-state transitions" serviceName="mantle.forum.TrackingServices.dispatch#Conversions" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+  <moqui.service.job.ServiceJob jobName="pass_cleanup_cursors" description="Remove expired opaque forum cursors" serviceName="mantle.forum.OperationServices.cleanup#Cursors" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+</entity-facade-xml>

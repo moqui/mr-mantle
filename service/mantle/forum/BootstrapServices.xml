@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+  <service verb="convert" noun="Root" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="runId" required="true"/>
+      <parameter name="rootCommEventId" required="true"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Bootstrap.js').execute('root',{runId,rootCommEventId})</script>
+    </actions>
+  </service>
+  <service verb="dispatch" noun="Conversions" authenticate="false" allow-remote="false">
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Bootstrap.js').execute('dispatch',{})</script>
+    </actions>
+  </service>
+  <service verb="start" noun="Mailbox" authenticate="true" allow-remote="false">
+    <in-parameters>
+      <parameter name="contactListId" required="true"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="runId"/>
+    </out-parameters>
+    <actions>
+      <script><![CDATA[
+            if(!ec.user.isInGroup('ADMIN')){const error=new Error('Operator access required');error.moquiErrorKind='Unauthorized';throw error}
+            const old=ec.artifactExecution.disableAuthz()
+            try{const list=ec.entity.find('mantle.marketing.contact.ContactList').condition('contactListId',contactListId).one();if(!list || list.contactListTypeEnumId!=='MAILBOX')throw new Error('Mailbox not found');const category=ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',contactListId).one();if(category?.publicationState==='published')throw new Error('Disable publication before conversion');runId=ec.user.randomString(32);const run=ec.entity.makeValue('mantle.forum.ForumJobRun');run.setFields({runId,siteId:category?.siteId || null,jobType:'bootstrap',state:'pending',checkpoint:JSON.stringify({contactListId}),createdAt:ec.user.nowTimestamp,successCount:0,failedCount:0},true,null,null);run.create()}finally{if(!old)ec.artifactExecution.enableAuthz()}
+        ]]></script>
+    </actions>
+  </service>
+</services>

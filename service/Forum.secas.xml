@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+  <seca id="ForumUpdateContactListVisibility" service="mantle.marketing.ContactListServices.update#ContactList" when="tx-commit" run-on-error="false">
+    <condition><expression>contactListId != null</expression></condition>
+    <actions><service-call name="mantle.forum.OperationServices.bump#MailboxVisibility" in-map="{contactListId:contactListId}"/></actions>
+  </seca>
+  <seca id="ForumJoinContactListVisibility" service="mantle.marketing.ContactListServices.join#ContactList" when="tx-commit" run-on-error="false">
+    <condition><expression>contactListId != null</expression></condition>
+    <actions><service-call name="mantle.forum.OperationServices.bump#MailboxVisibility" in-map="{contactListId:contactListId}"/></actions>
+  </seca>
+  <seca id="ForumLeaveContactListVisibility" service="mantle.marketing.ContactListServices.leave#ContactList" when="tx-commit" run-on-error="false">
+    <condition><expression>contactListId != null</expression></condition>
+    <actions><service-call name="mantle.forum.OperationServices.bump#MailboxVisibility" in-map="{contactListId:contactListId}"/></actions>
+  </seca>
+  <seca id="ForumEndContactListPartyVisibility" service="mantle.marketing.ContactListServices.end#ContactListParty" when="tx-commit" run-on-error="false">
+    <condition><expression>contactListId != null</expression></condition>
+    <actions><service-call name="mantle.forum.OperationServices.bump#MailboxVisibility" in-map="{contactListId:contactListId}"/></actions>
+  </seca>
+  <seca id="ForumAddContactListPartyVisibility" service="mantle.marketing.ContactListServices.add#ContactListParty" when="tx-commit" run-on-error="false">
+    <condition><expression>contactListId != null</expression></condition>
+    <actions><service-call name="mantle.forum.OperationServices.bump#MailboxVisibility" in-map="{contactListId:contactListId}"/></actions>
+  </seca>
+  <seca id="ForumRemoveContactListPartyVisibility" service="mantle.marketing.ContactListServices.remove#ContactListParty" when="tx-commit" run-on-error="false">
+    <condition><expression>contactListId != null</expression></condition>
+    <actions><service-call name="mantle.forum.OperationServices.bump#MailboxVisibility" in-map="{contactListId:contactListId}"/></actions>
+  </seca>
+  <seca id="ForumDeclineContactListPartyVisibility" service="mantle.marketing.ContactListServices.decline#ContactListParty" when="tx-commit" run-on-error="false">
+    <condition><expression>contactListId != null</expression></condition>
+    <actions><service-call name="mantle.forum.OperationServices.bump#MailboxVisibility" in-map="{contactListId:contactListId}"/></actions>
+  </seca>
+</secas>

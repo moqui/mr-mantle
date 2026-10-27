@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+  <service verb="find" noun="Sites" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("findSites", input)</script>
+    </actions>
+  </service>
+  <service verb="create" noun="Site" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("createSite", input)</script>
+    </actions>
+  </service>
+  <service verb="update" noun="Site" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("updateSite", input)</script>
+    </actions>
+  </service>
+  <service verb="get" noun="Membership" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("getMembership", input)</script>
+    </actions>
+  </service>
+  <service verb="join" noun="Site" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("joinSite", input)</script>
+    </actions>
+  </service>
+  <service verb="leave" noun="Site" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("leaveSite", input)</script>
+    </actions>
+  </service>
+  <service verb="set" noun="Membership" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("setMembership", input)</script>
+    </actions>
+  </service>
+  <service verb="set" noun="SiteRole" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("setSiteRole", input)</script>
+    </actions>
+  </service>
+  <service verb="find" noun="Members" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("findMembers", input)</script>
+    </actions>
+  </service>
+  <service verb="store" noun="Profile" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("storeProfile", input)</script>
+    </actions>
+  </service>
+  <service verb="get" noun="Profile" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("getProfile", input)</script>
+    </actions>
+  </service>
+  <service verb="get" noun="SitePage" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("getSitePage", input)</script>
+    </actions>
+  </service>
+  <service verb="check" noun="Readiness" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("checkReadiness", input)</script>
+    </actions>
+  </service>
+  <service verb="store" noun="Mounts" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("storeMounts", input)</script>
+    </actions>
+  </service>
+  <service verb="update" noun="MembershipPolicy" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("updateMembershipPolicy", input)</script>
+    </actions>
+  </service>
+  <service verb="create" noun="Invitation" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("createInvitation", input)</script>
+    </actions>
+  </service>
+  <service verb="inspect" noun="Invitation" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("inspectInvitation", input)</script>
+    </actions>
+  </service>
+  <service verb="redeem" noun="Invitation" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("redeemInvitation", input)</script>
+    </actions>
+  </service>
+  <service verb="revoke" noun="Invitation" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("revokeInvitation", input)</script>
+    </actions>
+  </service>
+  <service verb="get" noun="SiteInfo" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script("component://mr-mantle/service/mantle/forum/Forum.js").execute("getSiteInfo", input || {})</script>
+    </actions>
+  </service>
+  <service verb="publish" noun="SitePage" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('publishSitePage',input || {})</script>
+    </actions>
+  </service>
+</services>

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+  <service verb="remove" noun="ExpiredAttachment" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="attachmentId" required="true"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="removed" type="Boolean"/>
+    </out-parameters>
+    <actions>
+      <script><![CDATA[
+            const old=ec.artifactExecution.disableAuthz()
+            try{
+                const row=ec.entity.find('mantle.forum.ForumAttachment').condition({attachmentId,communicationEventId:null}).forUpdate(true).one()
+                removed=false
+                if(row && row.expiresAt && ec.user.timestampMillis(row.expiresAt)<=ec.user.timestampMillis(ec.user.nowTimestamp)){
+                    ec.resource.getLocationReference(row.location).delete();row.delete();removed=true
+                }
+            }finally{if(!old)ec.artifactExecution.enableAuthz()}
+        ]]></script>
+    </actions>
+  </service>
+  <service verb="cleanup" noun="StagedAttachments" authenticate="false" allow-remote="false">
+    <out-parameters>
+      <parameter name="removedCount" type="Integer"/>
+      <parameter name="failedAttachmentIds" type="List"/>
+    </out-parameters>
+    <actions>
+      <script><![CDATA[
+            const old=ec.artifactExecution.disableAuthz()
+            try{
+                const expired=ec.entity.find('mantle.forum.ForumAttachment').condition('communicationEventId',null).condition('expiresAt','less-equals',ec.user.nowTimestamp).orderBy('expiresAt,attachmentId').limit(100).list()
+                removedCount=0;failedAttachmentIds=[]
+                for(const item of expired){
+                    try{const out=ec.service.sync().throwOnError(true).name('mantle.forum.MediaWorkerServices.remove#ExpiredAttachment').parameters({attachmentId:item.attachmentId}).requireNewTransaction(true).call();if(out.removed)removedCount++}
+                    catch(error){ec.message.clearErrors();ec.logger.error('Forum staged attachment '+item.attachmentId+' could not be removed');failedAttachmentIds.push(item.attachmentId)}
+                }
+            }finally{if(!old)ec.artifactExecution.enableAuthz()}
+        ]]></script>
+    </actions>
+  </service>
+</services>

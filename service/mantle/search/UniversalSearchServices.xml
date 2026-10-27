@@ -228,6 +228,11 @@ along with this software (see the LICENSE.md file). If not, see
             }
             if (highlight) request.highlight = Array.from(highlightFields)
 
+            // A bound mailbox may change publication, moderation or audience after indexing. Never use
+            // its stored body or index-derived counts as an authority projection.
+            const boundMailboxes = new Set(Array.from(ec.entity.find('mantle.forum.ForumCategory')
+                    .disableAuthz().selectField('contactListId').list()).map(row => row.contactListId))
+            const liveMailboxCounts = types.includes('MantleCommunicationEvent') && boundMailboxes.size > 0
             const page = ec.search.search(request)
             total = page.total
             totalRelation = page.totalRelation || 'eq'
@@ -241,7 +246,27 @@ along with this software (see the LICENSE.md file). If not, see
                 const key = {}
                 const idParts = String(hit.id).split('::')
                 keyNames.forEach((name, index) => { key[name] = body[name] != null ? body[name] : idParts[index] })
-                if (ec.entity.find(document.primaryEntityName).condition(key).one() == null) continue
+                const current = ec.entity.find(document.primaryEntityName).condition(key).one()
+                if (current == null) continue
+                if (hit.documentId === 'MantleCommunicationEvent' && boundMailboxes.has(current.contactListId)) {
+                    const was = ec.artifactExecution.disableAuthz()
+                    try {
+                        const forum = ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js')
+                        const binding = ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',current.contactListId).one()
+                        const state = ec.entity.find('mantle.forum.ForumPostState').condition(key).one()
+                        if (!state) continue
+                        let access
+                        try { access = forum.topic(state.rootCommEventId,binding.siteId).a }
+                        catch (error) { if (error.moquiErrorKind === 'NotFound') continue; throw error }
+                        if (!forum.postVisible(state,current,access) || state.visibility === 'deleted') continue
+                        results.push({entityType:hit.documentId,entityTypeName:document.name,key,id:hit.id,
+                            title:current.subject,subtitle:null,code:null,category:null,
+                            snippet:StringUtilities.cleanHtml(current.body || '').replace(/<[^>]*>/g,' ').slice(0,240),
+                            highlights:{},score:hit.score,url:null,linkLabel:null,
+                            attributes:{contactListId:current.contactListId,rootCommEventId:state.rootCommEventId}})
+                        continue
+                    } finally { if (!was) ec.artifactExecution.enableAuthz() }
+                }
 
                 const role = (name) => document.roles[name] ? body[document.roles[name]] : null
                 const highlights = hit.highlights || {}
@@ -260,9 +285,12 @@ along with this software (see the LICENSE.md file). If not, see
                     attributes: attributes})
             }
 
+            // The index cannot count current bound-post visibility. Report only the authorized page
+            // and omit aggregate facets instead of disclosing stale concealed matches.
+            if (liveMailboxCounts) { total = results.length; totalRelation = 'gte' }
             // facets over the whole authorized match, not the page
             const facetList = facets ?? []
-            if (facetList.length) {
+            if (facetList.length && !liveMailboxCounts) {
                 const facetFilter = {bool: {all: [request.query === 'match_all' || request.query == null ? 'match_all' : lexicalQuery, filter]}}
                 if (facetList.includes('entityType')) {
                     const counts = ec.search.aggregate({documentType: types, filter: facetFilter, aggs: {types: {terms: {field: '_document', size: types.length}}}})

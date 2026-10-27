@@ -22,6 +22,8 @@ spec({
     setupSpec() {
         login("john.doe")
         ec.user.setEffectiveTime(effectiveTime)
+        const wasDisabled = ec.artifactExecution.disableAuthz()
+        try { call('create#moqui.security.UserGroup', {userGroupId:'MBX_INTERNAL', description:'Internal mailbox test actors'}) } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
     },
     setup() { ec.artifactExecution.disableAuthz() },
     cleanup() {
@@ -63,6 +65,8 @@ feature("seven users", {
             party[first] = call("mantle.party.PartyServices.create#Person", { firstName: first, lastName: "Mailbox" }).partyId
             call("mantle.party.PartyServices.create#PartyUserAccount", { partyId: party[first], emailAddress: `${username}@example.com`,
                     username, newPassword: "moqui1!!", newPasswordVerify: "moqui1!!" })
+            const user = ec.entity.find('moqui.security.UserAccount').condition('username', username).one()
+            call('create#moqui.security.UserGroupMember', {userId:user.userId, userGroupId:'MBX_INTERNAL', fromDate:effectiveTime - minute})
         }
         return {}
     },
@@ -469,4 +473,81 @@ feature("remove#ContactListParty and update#ContactList: a moderator removes a m
         news.description == "Company news"
         news.archivedDate != null
     },
+})
+feature('ALL_USERS-only mailbox members and mentions use markers in an unbound mailbox',{
+    when(){
+        at(45)
+        party.Public=call('mantle.party.PartyServices.create#Person',{firstName:'Public',lastName:'Mailbox'}).partyId
+        call('mantle.party.PartyServices.create#PartyUserAccount',{partyId:party.Public,username:'mb.public',emailAddress:'mb.public@example.test',newPassword:'moqui1!!',newPasswordVerify:'moqui1!!'})
+        const listId=asCall('Olga',`${LISTS}.create#ContactList`,{contactListTypeEnumId:'MAILBOX',contactListName:'Public marker test',isPublic:'Y',memberPartyIdList:[party.Public]}).contactListId
+        const postId=post('Olga',{contactListId:listId,subject:'Public recipient state',body:'One marker per topic',mentionPartyIdList:[party.Public]})
+        const before=rowCount(postId,party.Public)
+        asCall('Public',`${COMM}.set#InternalMessageState`,{communicationEventId:postId,read:true})
+        const marker=ec.entity.find('mantle.forum.ForumTopicUser').condition({rootCommEventId:postId,partyId:party.Public}).one()
+        const after=rowCount(postId,party.Public)
+        const direct=post('Olga',{toPartyId:party.Public,subject:'Direct semantics',body:'Still delivered directly'})
+        return {before,after,consumed:Number(marker.consumedOrdinal),direct:rowCount(direct,party.Public)}
+    },
+    then({before,after,consumed,direct}){before===0;after===0;consumed===1;direct===1}
+})
+feature('tracking mode conversions preserve unread boundaries without historic recipient fan-out',{
+    when(){
+        at(50)
+        const listId=asCall('Olga',`${LISTS}.create#ContactList`,{contactListTypeEnumId:'MAILBOX',contactListName:'Mode conversion',isPublic:'Y',memberPartyIdList:[party.Public]}).contactListId
+        const first=post('Olga',{contactListId:listId,subject:'Before internal',body:'Public history'})
+        const user=ec.entity.find('moqui.security.UserAccount').condition('partyId',party.Public).one()
+        const group=call('create#moqui.security.UserGroupMember',{userId:user.userId,userGroupId:'MBX_INTERNAL',fromDate:ec.user.nowTimestamp})
+        const internal=ec.entity.find('mantle.forum.ForumTrackingMode').condition('partyId',party.Public).one().mode
+        const reply=post('Olga',{contactListId:listId,rootCommEventId:first,parentCommEventId:first,body:'Unread internal reply'})
+        const future=rowCount(reply,party.Public),historic=rowCount(first,party.Public)
+        call('delete#moqui.security.UserGroupMember',{userId:user.userId,userGroupId:'MBX_INTERNAL',fromDate:group.fromDate || ec.user.nowTimestamp})
+        // Explicit refresh is idempotent; the ECA also runs for normal group changes.
+        call('mantle.forum.TrackingServices.refresh#Mode',{userId:user.userId})
+        call('mantle.forum.TrackingServices.dispatch#Conversions',{})
+        call('mantle.forum.TrackingServices.dispatch#Conversions',{})
+        const marker=ec.entity.find('mantle.forum.ForumTopicUser').condition({rootCommEventId:first,partyId:party.Public}).one()
+        const mode=ec.entity.find('mantle.forum.ForumTrackingMode').condition('partyId',party.Public).one().mode
+        const replyOrdinal=ec.entity.find('mantle.forum.ForumPostState').condition('communicationEventId',reply).one().ordinal
+        return {internal,mode,historic,future,boundary:Number(marker?.consumedOrdinal),replyOrdinal:Number(replyOrdinal)}
+    },
+    then({internal,mode,historic,future,boundary,replyOrdinal}){internal==='internal';mode==='public';historic===0;future===1;boundary<replyOrdinal}
+})
+feature('new public posts remain unread while an internal-to-public conversion is pending',{
+    when(){
+        at(55)
+        const listId=asCall('Olga',`${LISTS}.create#ContactList`,{contactListTypeEnumId:'MAILBOX',contactListName:'Pending mode boundary',isPublic:'Y',memberPartyIdList:[party.Public]}).contactListId
+        const user=ec.entity.find('moqui.security.UserAccount').condition('partyId',party.Public).one(),fromDate=ec.user.nowTimestamp
+        call('create#moqui.security.UserGroupMember',{userId:user.userId,userGroupId:'MBX_INTERNAL',fromDate})
+        const root=post('Olga',{contactListId:listId,subject:'Internal history',body:'Read exactly'})
+        asCall('Public',`${COMM}.set#InternalMessageState`,{communicationEventId:root,read:true})
+        at(56);call('delete#moqui.security.UserGroupMember',{userId:user.userId,userGroupId:'MBX_INTERNAL',fromDate})
+        at(57);const later=post('Olga',{contactListId:listId,rootCommEventId:root,parentCommEventId:root,body:'New public unread post'})
+        at(58);call('mantle.forum.TrackingServices.dispatch#Conversions',{});call('mantle.forum.TrackingServices.dispatch#Conversions',{})
+        const marker=ec.entity.find('mantle.forum.ForumTopicUser').condition({rootCommEventId:root,partyId:party.Public}).one(),state=ec.entity.find('mantle.forum.ForumPostState').condition('communicationEventId',later).one()
+        return {consumed:Number(marker.consumedOrdinal),ordinal:Number(state.ordinal),rows:rowCount(later,party.Public)}
+    },
+    then({consumed,ordinal,rows}){consumed===1;ordinal===2;rows===0}
+})
+
+feature('public legacy mailbox summaries read markers and never expose internal receipt state',{
+    when(){
+        at(60)
+        const listId=asCall('Olga',`${LISTS}.create#ContactList`,{contactListTypeEnumId:'MAILBOX',contactListName:'Public unread summaries',isPublic:'Y',memberPartyIdList:[party.Public]}).contactListId
+        at(61)
+        const root=post('Olga',{contactListId:listId,subject:'Marker unread summaries',body:'First'}),
+            reply=post('Olga',{contactListId:listId,rootCommEventId:root,parentCommEventId:root,body:'Second'})
+        const before=asCall('Public',`${COMM}.get#InternalThread`,{rootCommEventId:root}),
+            listBefore=asCall('Public',`${LISTS}.find#ContactLists`,{contactListTypeEnumId:'MAILBOX'}).contactListList.find(list=>list.contactListId===listId)
+        asCall('Public',`${COMM}.set#InternalMessageState`,{communicationEventId:root,read:true})
+        const after=asCall('Public',`${COMM}.get#InternalThread`,{rootCommEventId:root}),
+            listAfter=asCall('Public',`${LISTS}.find#ContactLists`,{contactListTypeEnumId:'MAILBOX'}).contactListList.find(list=>list.contactListId===listId)
+        return {before,after,listBefore,listAfter,receipts:rowCount(root,party.Public)+rowCount(reply,party.Public)}
+    },
+    then({before,after,listBefore,listAfter,receipts}){
+        before.unreadCount===2;listBefore.unreadCount===2
+        after.unreadCount===1;listAfter.unreadCount===1
+        after.messageList.every(message=>message.myState==null)
+        after.messageList[0].publicState.markerRevision===1
+        receipts===0
+    }
 })
