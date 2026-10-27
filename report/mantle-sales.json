@@ -1,0 +1,125 @@
+{
+  "id": "mantle-sales",
+  "type": "dashboard",
+  "title": "Sales",
+  "body": {
+    "panels": {
+      "monthly": {
+        "title": "Sales by month",
+        "visualization": "bar",
+        "queries": [
+          {
+            "datasetId": "mantle-sales-items",
+            "aggregations": [
+              {
+                "id": "month",
+                "type": "date_histogram",
+                "role": "x-axis",
+                "params": {
+                  "field": "placedDate",
+                  "calendar_interval": "1M"
+                }
+              },
+              {
+                "id": "sales",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "itemSaleTotal"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "title": "Orders by status",
+        "visualization": "bar",
+        "queries": [
+          {
+            "datasetId": "mantle-sales-orders",
+            "aggregations": [
+              {
+                "id": "status",
+                "type": "terms",
+                "role": "x-axis",
+                "params": {
+                  "field": "partStatusId",
+                  "size": 30
+                }
+              },
+              {
+                "id": "orders",
+                "type": "cardinality",
+                "role": "metric",
+                "params": {
+                  "field": "orderId"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "products": {
+        "title": "Top products",
+        "visualization": "table",
+        "queries": [
+          {
+            "datasetId": "mantle-sales-items",
+            "aggregations": [
+              {
+                "id": "product",
+                "type": "terms",
+                "role": "split-rows",
+                "params": {
+                  "field": "productId",
+                  "size": 20
+                }
+              },
+              {
+                "id": "sales",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "itemSaleTotal"
+                }
+              },
+              {
+                "id": "quantity",
+                "type": "sum",
+                "role": "metric",
+                "params": {
+                  "field": "orderQuantity"
+                }
+              }
+            ],
+            "transformations": [
+              {
+                "type": "organize",
+                "hide": [
+                  "count"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "mantle-sales-items",
+  "type": "dataset",
+  "title": "Sales items",
+  "body": {
+    "documentType": "MantleSalesOrderItem",
+    "timeField": "placedDate",
+    "signal": "business"
+  }
+}

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-facade-xml type="seed">
+    <!-- The shipped sales dashboard executes through the authorized reporting boundary. -->
+    <moqui.entity.document.DataDocumentUserGroup dataDocumentId="MantleSalesOrderItem" userGroupId="ADMIN"/>
+    <moqui.entity.document.DataDocumentUserGroup dataDocumentId="MantleSalesOrderPart" userGroupId="ADMIN"/>
+</entity-facade-xml>
