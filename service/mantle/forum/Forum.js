@@ -27,6 +27,7 @@ const {
     invalid,
     requireUser,
     active,
+    grantActive,
     member,
     isOperator,
     site,
@@ -220,6 +221,9 @@ const methods = {}
 const moderation = ec.resource.script(
     'component://mr-mantle/service/mantle/forum/ForumModeration.js',
 )(core, methods)
+const integration = ec.resource.script(
+    'component://mr-mantle/service/mantle/forum/ForumIntegration.js',
+)(core, methods)
 methods.findSites = (p) => {
     if (p.siteId) site(p.siteId, true)
     const pg = page(p, 'sites:' + (p.siteId || 'operator')),
@@ -294,9 +298,16 @@ methods.updateSite = (p) => {
     revision(s, p.expectedRevision)
     if (p.state && !['disabled', 'published'].includes(p.state))
         invalid('Invalid publication state')
+    if (
+        p.subscriptionUrl &&
+        !/^(https:\/\/[^\s<>"]+|\/(?!\/)[^\s<>"]*)$/.test(p.subscriptionUrl)
+    )
+        invalid(
+            'The subscription page must be an https address or a local path',
+        )
     update(s, {
         ...Object.fromEntries(
-            ['name', 'locale', 'timeZone']
+            ['name', 'locale', 'timeZone', 'subscriptionUrl']
                 .filter((k) => p[k] != null)
                 .map((k) => [k, p[k]]),
         ),
@@ -314,13 +325,21 @@ methods.getMembership = (p) => {
             member(p.siteId),
             'state role joinedAt fromDate thruDate revision',
         ),
+        entitlements: integration.memberEntitlements(p.siteId, me()),
+        subscriptionUrl:
+            one(S + 'PublicSite', { siteId: p.siteId })?.subscriptionUrl ||
+            null,
     }
 }
 methods.joinSite = (p) => {
     const s = site(p.siteId)
     ensureParty()
     const partyId = requireUser()
-    if (s.registrationMode !== 'open')
+    // A current access grant, such as a paid subscription, qualifies the party to join a site with closed registration.
+    if (
+        s.registrationMode !== 'open' &&
+        !integration.hasSiteGrant(p.siteId, partyId)
+    )
         fail('Unauthorized', 'An invitation is required')
     const ua = ec.user.userAccount
     if (
@@ -648,7 +667,7 @@ function categoryProjection(a) {
     return {
         ...pick(
             a.category,
-            'contactListId parentContactListId sequenceNum slug rules visibility publicationState policyRevision mode',
+            'contactListId parentContactListId sequenceNum slug rules visibility publicationState policyRevision mode qualifyingSources',
         ),
         name: l?.contactListName || '',
         description: l?.description || '',
@@ -743,6 +762,16 @@ methods.previewCategoryAccess = (p) => {
     return {
         category: categoryProjection(a),
         proposedVisibility: p.visibility,
+        proposedQualifyingSources: p.qualifyingSources ?? null,
+        activeGrantCount: rows(
+            S + 'PublicAccessGrant',
+            {
+                siteId: p.siteId,
+                targetType: 'category',
+                targetId: p.contactListId,
+            },
+            1000,
+        ).filter(grantActive).length,
         topicCount: find(E + 'CommunicationEvent', {
             contactListId: p.contactListId,
         })
@@ -772,10 +801,21 @@ methods.setCategoryAccess = (p) => {
         !['disabled', 'published'].includes(p.publicationState)
     )
         invalid('Invalid category access')
+    if (
+        p.qualifyingSources != null &&
+        (!p.qualifyingSources.length ||
+            p.qualifyingSources.some(
+                (source) => !['manual', 'subscription'].includes(source),
+            ))
+    )
+        invalid('Qualifying sources are manual and subscription')
     if (p.confirm !== true) invalid('Confirm the audience preview')
     update(c, {
         visibility: p.visibility,
         publicationState: p.publicationState,
+        ...(p.qualifyingSources != null
+            ? { qualifyingSources: [...new Set(p.qualifyingSources)].join(',') }
+            : {}),
         policyRevision: Number(c.policyRevision) + 1,
     })
     bump(p.siteId)
@@ -5237,6 +5277,7 @@ function execute(operation, p) {
         'participantHandles',
         'targetHandles',
         'ownerHandles',
+        'qualifyingSources',
     ])
         if (
             p?.[key] != null &&
@@ -5284,6 +5325,7 @@ function execute(operation, p) {
         'participantHandles',
         'targetHandles',
         'ownerHandles',
+        'qualifyingSources',
     ])
     for (const [key, value] of Object.entries(p || {})) {
         if (value == null) continue
@@ -5297,7 +5339,11 @@ function execute(operation, p) {
             if (typeof value !== 'boolean')
                 invalid('Invalid Boolean field: ' + key)
         } else if (listFields.has(key)) continue
-        else if (['expiresAt', 'thruDate', 'remindAt', 'dueAt'].includes(key)) {
+        else if (
+            ['expiresAt', 'fromDate', 'thruDate', 'remindAt', 'dueAt'].includes(
+                key,
+            )
+        ) {
             if (!['number', 'string'].includes(typeof value))
                 invalid('Invalid date field: ' + key)
         } else if (key === 'poll') {
@@ -5376,4 +5422,5 @@ function execute(operation, p) {
     processInbound,
     postInbound,
     replyAddress,
+    applySubscription: integration.applySubscription,
 })

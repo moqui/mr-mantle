@@ -17,6 +17,7 @@
             'locale',
             'timeZone',
             'state',
+            'subscriptionUrl',
         ],
     },
     getMembership: {
@@ -138,7 +139,7 @@
     },
     previewCategoryAccess: {
         service: 'mantle.forum.ForumServices.preview#CategoryAccess',
-        fields: ['siteId', 'contactListId', 'visibility'],
+        fields: ['siteId', 'contactListId', 'visibility', 'qualifyingSources'],
     },
     setCategoryAccess: {
         service: 'mantle.forum.ForumServices.set#CategoryAccess',
@@ -149,6 +150,7 @@
             'publicationState',
             'expectedRevision',
             'confirm',
+            'qualifyingSources',
         ],
     },
     findTopics: {
@@ -704,5 +706,40 @@
     retryInbound: {
         service: 'mantle.forum.DeliveryServices.retry#Inbound',
         fields: ['siteId', 'receiptId'],
+    },
+    setAccessGrant: {
+        service: 'mantle.public.SiteServices.set#AccessGrant',
+        fields: [
+            'siteId',
+            'handle',
+            'targetType',
+            'contactListId',
+            'fromDate',
+            'thruDate',
+            'reason',
+            'operationId',
+        ],
+    },
+    endAccessGrant: {
+        service: 'mantle.public.SiteServices.end#AccessGrant',
+        fields: ['siteId', 'grantId', 'expectedRevision', 'reason'],
+    },
+    findAccessGrants: {
+        service: 'mantle.public.SiteServices.find#AccessGrants',
+        fields: ['siteId', 'contactListId', 'handle', 'limit', 'cursor'],
+    },
+    storeSubscriptionBinding: {
+        service: 'mantle.public.SiteServices.store#SubscriptionBinding',
+        fields: [
+            'siteId',
+            'subscriptionResourceId',
+            'targetType',
+            'contactListId',
+            'reason',
+        ],
+    },
+    findSubscriptionBindings: {
+        service: 'mantle.public.SiteServices.find#SubscriptionBindings',
+        fields: ['siteId'],
     },
 })

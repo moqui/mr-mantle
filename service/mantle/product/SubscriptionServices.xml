@@ -196,4 +196,71 @@ along with this software (see the LICENSE.md file). If not, see
             </else></if>
         </actions>
     </service>
+
+    <service verb="expire" noun="SubscriptionAccess" authenticate="false">
+        <description>
+            Scheduled (expire_SubscriptionAccess). For each Subscription past its thruDate plus the resource's
+            revokeAccessTime, calls revokeAccessServiceName once; past thruDate plus destroyTime, calls destroyServiceName
+            once. A later Subscription for the same subscriber, resource and instance continues the access, so the earlier
+            one is marked handled without a call. Each subscription runs in its own transaction; a failure is logged with
+            its ID and the rest continue.
+        </description>
+        <actions>
+            <script><![CDATA[
+            const cf = ec.entity.conditionFactory
+            const pending = ec.entity.find('mantle.product.subscription.Subscription')
+                .condition('thruDate', 'less-equals', ec.user.nowTimestamp)
+                .condition(cf.makeCondition([cf.makeCondition('accessRevokedDate', 'equals', null),
+                    cf.makeCondition('destroyedDate', 'equals', null)], 'or'))
+                .orderBy('thruDate,subscriptionId').limit(500).disableAuthz().list()
+            for (const sub of pending) {
+                try {
+                    ec.service.sync().name('mantle.product.SubscriptionServices.expire#Subscription')
+                        .parameters({subscriptionId: sub.subscriptionId}).requireNewTransaction(true).call()
+                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                } catch (error) {
+                    ec.message.clearErrors()
+                    ec.logger.error('Subscription access expiry failed for ' + sub.subscriptionId + ': ' +
+                        String(error?.message || error).split('\n')[0])
+                }
+            }
+            ]]></script>
+        </actions>
+    </service>
+    <service verb="expire" noun="Subscription" authenticate="false" allow-remote="false">
+        <description>One subscription's revoke and destroy steps for expire#SubscriptionAccess.</description>
+        <in-parameters><parameter name="subscriptionId" required="true"/></in-parameters>
+        <actions>
+            <script><![CDATA[
+            const sub = ec.entity.find('mantle.product.subscription.Subscription').condition('subscriptionId', subscriptionId)
+                .forUpdate(true).disableAuthz().one()
+            if (sub && sub.thruDate) {
+                const resource = ec.entity.find('mantle.product.subscription.SubscriptionResource')
+                    .condition('subscriptionResourceId', sub.subscriptionResourceId).disableAuthz().one()
+                const unitMillis = {TF_ms:1, TF_s:1000, TF_min:60000, TF_hr:3600000, TF_day:86400000, TF_wk:604800000,
+                    TF_mon:2629746000, TF_yr:31556952000}
+                const after = (time, uomId) => ec.user.timestampMillis(sub.thruDate) +
+                    Number(time || 0) * (unitMillis[uomId || 'TF_day'] ?? 86400000)
+                const nowMillis = ec.user.timestampMillis(ec.user.nowTimestamp)
+                const later = ec.entity.find('mantle.product.subscription.Subscription')
+                    .condition('subscriptionResourceId', sub.subscriptionResourceId)
+                    .condition('subscriberPartyId', sub.subscriberPartyId)
+                    .condition('resourceInstanceId', sub.resourceInstanceId || null)
+                    .condition('thruDate', 'greater', sub.thruDate).disableAuthz().count() > 0
+                if (!sub.accessRevokedDate && nowMillis >= after(resource?.revokeAccessTime, resource?.revokeAccessTimeUomId)) {
+                    if (!later && resource?.revokeAccessServiceName)
+                        ec.service.sync().name(resource.revokeAccessServiceName).parameters({subscriptionId}).call()
+                    sub.set('accessRevokedDate', ec.user.nowTimestamp)
+                }
+                if (!sub.destroyedDate && sub.accessRevokedDate &&
+                        (!resource?.destroyServiceName || nowMillis >= after(resource.destroyTime, resource.destroyTimeUomId))) {
+                    if (!later && resource?.destroyServiceName)
+                        ec.service.sync().name(resource.destroyServiceName).parameters({subscriptionId}).call()
+                    sub.set('destroyedDate', ec.user.nowTimestamp)
+                }
+                sub.update()
+            }
+            ]]></script>
+        </actions>
+    </service>
 </services>

@@ -124,4 +124,9 @@
     ['GET', 'mail/inbound', 'findInboundReceipts'],
     ['POST', 'mail/routes/{routeId}/test', 'testRoute'],
     ['POST', 'mail/inbound/{receiptId}/retry', 'retryInbound'],
+    ['GET', 'access-grants', 'findAccessGrants'],
+    ['POST', 'access-grants', 'setAccessGrant'],
+    ['POST', 'access-grants/{grantId}/end', 'endAccessGrant'],
+    ['GET', 'subscription-bindings', 'findSubscriptionBindings'],
+    ['POST', 'subscription-bindings', 'storeSubscriptionBinding'],
 ]

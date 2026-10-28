@@ -12,6 +12,7 @@
     <field name="mode" type="id"/>
     <field name="rules" type="text-long"/>
     <field name="joinApprovalRequired" type="text-indicator"/>
+    <field name="qualifyingSources" type="text-medium"><description>Comma-separated grant sources that give category access: manual, subscription. Empty means manual.</description></field>
     <field name="policyRevision" type="number-integer"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.marketing.contact.ContactList"/>

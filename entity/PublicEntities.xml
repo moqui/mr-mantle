@@ -12,6 +12,7 @@
     <field name="registrationMode" type="id"/>
     <field name="approvalRequired" type="text-indicator"/>
     <field name="generation" type="number-integer"/>
+    <field name="subscriptionUrl" type="text-medium"><description>Registered page where members manage a paid subscription; Forum links to it and implements no checkout.</description></field>
   </entity>
   <entity entity-name="PublicSiteHost" package="mantle.public">
     <field name="hostname" type="text-medium" is-pk="true"/>
@@ -104,6 +105,10 @@
     <field name="fromDate" type="date-time"/>
     <field name="thruDate" type="date-time"/>
     <field name="revokedAt" type="date-time"/>
+    <field name="reason" type="text-medium"/>
+    <field name="grantedByPartyId" type="id"><description>Staff member for a manual grant; empty for a grant a subscription lifecycle made.</description></field>
+    <field name="createdAt" type="date-time"/>
+    <field name="revision" type="number-integer"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.party.Party"/>
     <index name="PASS_GRANT_SOURCE" unique="true">
@@ -114,5 +119,22 @@
       <index-field name="sourceType"/>
       <index-field name="sourceId"/>
     </index>
+    <index name="PASS_GRANT_SITE">
+      <index-field name="siteId"/>
+      <index-field name="targetType"/>
+      <index-field name="targetId"/>
+      <index-field name="thruDate"/>
+    </index>
+  </entity>
+  <entity entity-name="PublicSubscriptionBinding" package="mantle.public">
+    <description>The site or category scope a subscription resource grants. Its handlers write source-bound PublicAccessGrant rows.</description>
+    <field name="subscriptionResourceId" type="id" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="targetType" type="id"/>
+    <field name="targetId" type="id"/>
+    <field name="createdAt" type="date-time"/>
+    <field name="revision" type="number-integer"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <relationship type="one" related="mantle.product.subscription.SubscriptionResource"/>
   </entity>
 </entities>

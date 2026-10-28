@@ -40,6 +40,7 @@
         protectOwner,
         review,
         audit,
+        systemAudit,
         staff,
         allocateInternal,
         plainText,
@@ -1279,27 +1280,6 @@
         return { trustLevel: p.trustLevel, revision: before + 1 }
     }
     /* ---- Flag hiding and automatic review ---- */
-    function systemAudit(
-        siteId,
-        contactListId,
-        targetType,
-        targetId,
-        action,
-        reason,
-        staffPartyId,
-    ) {
-        create(F + 'ForumModerationAction', {
-            actionId: id(),
-            siteId,
-            contactListId,
-            staffPartyId: staffPartyId || null,
-            targetType,
-            targetId,
-            action,
-            reason: reason || '',
-            createdAt: now(),
-        })
-    }
     /* Enough distinct basic-or-higher reporters hide a post until staff decide; the author's own and repeat reports do not count. */
     function hideIfFlagged(siteId, st, event, reviewId) {
         if (st.visibility !== 'approved') return false

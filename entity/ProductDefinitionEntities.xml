@@ -1311,6 +1311,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="useTime" type="number-integer"/>
         <field name="useTimeUomId" type="id"/>
         <field name="useCountLimit" type="number-integer"/>
+        <field name="accessRevokedDate" type="date-time"><description>When expire#SubscriptionAccess handled the end of
+            this subscription's access: it called the resource's revoke service, unless a later subscription for the same
+            subscriber and resource continued the access.</description></field>
+        <field name="destroyedDate" type="date-time"><description>When expire#SubscriptionAccess handled the destroy time,
+            calling the resource's destroy service unless a later subscription continued it or none is configured.</description></field>
         <relationship type="one" title="SubscriptionType" related="moqui.basic.Enumeration" short-alias="type">
             <key-map field-name="subscriptionTypeEnumId"/></relationship>
         <relationship type="one" related="mantle.product.subscription.SubscriptionResource" short-alias="resource">

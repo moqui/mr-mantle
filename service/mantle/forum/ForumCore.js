@@ -56,6 +56,8 @@ const active = (row) =>
     row &&
     (!row.fromDate || millis(row.fromDate) <= millis(now())) &&
     (!row.thruDate || millis(row.thruDate) > millis(now()))
+/* A source grant in its effective dates and not revoked. */
+const grantActive = (g) => active(g) && !g.revokedAt
 const member = (siteId, partyId = me()) =>
     partyId ? one(S + 'PublicSiteParty', { siteId, partyId }) : null
 const isOperator = () => ec.user.isInGroup('ADMIN')
@@ -180,19 +182,28 @@ function evaluateCategoryAccess(contactListId, actor, seen) {
         ['ListOwner', 'ListModerator'].includes(lm.roleTypeId) &&
         !sanctioned(c.siteId, actor, contactListId, 'suspend')
     let moderate = staff || categoryStaff || (actor === me() && isOperator())
-    const grants = actor
-        ? rows(
-              S + 'PublicAccessGrant',
-              {
+    // Source grants for this category or the whole site count only from the sources the category qualifies.
+    const qualifying = String(c.qualifyingSources || 'manual').split(',')
+    const grant = actor
+        ? [
+              ...rows(S + 'PublicAccessGrant', {
                   siteId: c.siteId,
                   partyId: actor,
                   targetType: 'category',
                   targetId: contactListId,
-              },
-              100,
+              }),
+              ...rows(S + 'PublicAccessGrant', {
+                  siteId: c.siteId,
+                  partyId: actor,
+                  targetType: 'site',
+              }),
+          ].find(
+              (g) =>
+                  grantActive(g) &&
+                  qualifying.includes(g.sourceType || 'manual'),
           )
-        : []
-    const granted = grants.some((g) => active(g) && !g.revokedAt)
+        : null
+    const granted = !!grant
     const published =
         s?.state === 'published' && c.publicationState === 'published'
     let read =
@@ -219,11 +230,16 @@ function evaluateCategoryAccess(contactListId, actor, seen) {
         !sanctioned(c.siteId, actor, contactListId, 'silence') &&
         (read || own) &&
         (list?.postingEnumId === 'ClpAnyUser' ||
-            (list?.postingEnumId === 'ClpModerators' ? moderate : !!lm))
+            (list?.postingEnumId === 'ClpModerators'
+                ? moderate
+                : !!lm || granted))
     return {
         category: c,
         site: s,
         isOwner: owner,
+        entitlement: grant
+            ? pick(grant, 'grantId targetType sourceType fromDate thruDate')
+            : null,
         canDiscover: read,
         canRead: read,
         canReadOwn: own,
@@ -468,6 +484,28 @@ function audit(
         reason: reason || '',
         beforeRevision: before,
         afterRevision: after,
+        createdAt: now(),
+    })
+}
+/* An audit entry for automatic work, such as entitlement and trust changes, with no acting staff member. */
+function systemAudit(
+    siteId,
+    contactListId,
+    targetType,
+    targetId,
+    action,
+    reason,
+    staffPartyId,
+) {
+    create(F + 'ForumModerationAction', {
+        actionId: id(),
+        siteId,
+        contactListId,
+        staffPartyId: staffPartyId || null,
+        targetType,
+        targetId,
+        action,
+        reason: reason || '',
         createdAt: now(),
     })
 }
@@ -844,6 +882,7 @@ function privateTopic(t) {
     invalid,
     requireUser,
     active,
+    grantActive,
     member,
     isOperator,
     site,
@@ -866,6 +905,7 @@ function privateTopic(t) {
     protectOwner,
     review,
     audit,
+    systemAudit,
     refreshReviews,
     staff,
     allocateInternal,
