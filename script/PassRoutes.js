@@ -119,4 +119,9 @@
     ['POST', 'conversations/{rootCommEventId}/state', 'setConversationState'],
     ['PATCH', 'me/member-preferences', 'setMemberPreference'],
     ['POST', 'reviews/{reviewId}/escalation', 'escalateReview'],
+    ['GET', 'mail/routes', 'findRoutes'],
+    ['POST', 'mail/routes', 'storeRoute'],
+    ['GET', 'mail/inbound', 'findInboundReceipts'],
+    ['POST', 'mail/routes/{routeId}/test', 'testRoute'],
+    ['POST', 'mail/inbound/{receiptId}/retry', 'retryInbound'],
 ]

@@ -7083,6 +7083,617 @@ methods.escalateReview = (p) => {
     )
     return { revision: Number(r.revision), escalation: detail.escalation }
 }
+/* ---- Stage 2 email participation: routes, reply tokens and the inbound handler ---- */
+/* A route address is lower case with no plus tag; its domain must be one the operator registered. */
+function routeAddress(address) {
+    const value = String(address || '')
+        .trim()
+        .toLowerCase()
+    const m = /^([a-z0-9._-]{1,64})@([a-z0-9.-]{1,190})$/.exec(value)
+    if (!m) invalid('A route address is local@domain without a plus tag')
+    const domains = String(System.getProperty('pass_route_domains') || '')
+        .split(',')
+        .map((d) => d.trim().toLowerCase())
+        .filter(Boolean)
+    if (!domains.includes(m[2]))
+        invalid('The route domain is not registered for this deployment')
+    return value
+}
+methods.storeRoute = (p) =>
+    receipt(p, 'storeRoute', () => {
+        site(p.siteId, true)
+        const address = routeAddress(p.address)
+        if (p.contactListId) {
+            const c = one(F + 'ForumCategory', {
+                contactListId: p.contactListId,
+            })
+            if (!c || c.siteId !== p.siteId) missing()
+        }
+        let r = p.routeId
+            ? one(F + 'ForumMailRoute', { routeId: p.routeId }, true)
+            : null
+        if (p.routeId && (!r || r.siteId !== p.siteId)) missing()
+        if (r) revision(r, p.expectedRevision)
+        const clash = one(F + 'ForumMailRoute', { address })
+        if (clash && clash.routeId !== r?.routeId)
+            fail('Conflict', 'That address is already routed')
+        const fields = {
+            address,
+            contactListId: p.contactListId || null,
+            enabled: p.active === false ? 'N' : 'Y',
+            revision: Number(r?.revision || 0) + 1,
+        }
+        r = r
+            ? update(r, fields)
+            : create(F + 'ForumMailRoute', {
+                  routeId: id(),
+                  siteId: p.siteId,
+                  createdAt: now(),
+                  ...fields,
+              })
+        audit(
+            p.siteId,
+            fields.contactListId,
+            'route',
+            r.routeId,
+            'store',
+            address,
+            fields.revision - 1,
+            fields.revision,
+        )
+        return { routeId: r.routeId, revision: fields.revision }
+    })
+methods.findRoutes = (p) => {
+    site(p.siteId, true)
+    return {
+        routeList: rows(F + 'ForumMailRoute', { siteId: p.siteId }, 200).map(
+            (r) => pick(r, 'routeId address contactListId enabled revision'),
+        ),
+    }
+}
+/* Inbound outcomes for staff: addresses masked, no message text. */
+methods.findInboundReceipts = (p) => {
+    site(p.siteId, true)
+    const pg = page(p, 'inbound:' + p.siteId)
+    const list = Array.from(
+        find(F + 'ForumInboundReceipt', { siteId: p.siteId })
+            .orderBy('-createdAt,receiptId')
+            .offset(pg.offset)
+            .limit(pg.limit + 1)
+            .list(),
+    )
+    return {
+        receiptList: list.slice(0, pg.limit).map((r) => ({
+            ...pick(
+                r,
+                'receiptId routeId result reason postId attempts createdAt revision',
+            ),
+            sender: String(r.senderAddress || '').replace(
+                /^(.).*(@.*)$/,
+                '$1…$2',
+            ),
+        })),
+        nextCursor:
+            list.length > pg.limit ? pg.next(pg.offset + pg.limit) : null,
+    }
+}
+/* A bounded test: one notice to the actor's own verified address, replying to the route. */
+methods.testRoute = (p) => {
+    site(p.siteId, true)
+    const r = one(F + 'ForumMailRoute', { routeId: p.routeId })
+    if (!r || r.siteId !== p.siteId) missing()
+    const settings = one(F + 'ForumMailSettings', { siteId: p.siteId }),
+        ua = ec.user.userAccount
+    if (!settings) fail('Conflict', 'Configure outbound mail first')
+    if (
+        !ua?.emailAddress ||
+        !one('moqui.security.public.VerifiedAddress', {
+            userId: ua.userId,
+            emailAddress: ua.emailAddress,
+        })
+    )
+        fail('Conflict', 'Your own address must be verified')
+    const out = ec.service
+        .sync()
+        .throwOnError(true)
+        .name('org.moqui.impl.EmailServices.send#EmailTemplate')
+        .parameters({
+            emailTemplateId: settings.templateId,
+            toAddresses: ua.emailAddress,
+            replyToAddresses: r.address,
+            bodyParameters: {
+                title: 'Forum mail route test: replies go to ' + r.address,
+                siteId: p.siteId,
+                unsubscribeUrl: '',
+            },
+        })
+        .call()
+    return { sent: !!out.messageId, messageId: out.messageId || null }
+}
+/* The scoped reply address for one recipient of one thread, minted when the notice is sent. */
+function replyAddress(siteId, rootCommEventId, contactListId, partyId) {
+    // The category's first route, else a site-wide route; the oldest wins so the address is stable.
+    const first = (fields) =>
+        Array.from(
+            find(F + 'ForumMailRoute', { siteId, enabled: 'Y', ...fields })
+                .orderBy('createdAt,routeId')
+                .limit(1)
+                .list(),
+        )[0]
+    const route =
+        (contactListId && first({ contactListId })) ||
+        first({ contactListId: null })
+    if (!route) return null
+    const token = ec.user.randomString(32)
+    create(F + 'ForumReplyToken', {
+        tokenHash: hash(token),
+        siteId,
+        routeId: route.routeId,
+        rootCommEventId,
+        partyId,
+        expiresAt: millis(now()) + 90 * 86400000,
+    })
+    const [local, domain] = route.address.split('@')
+    return local + '+' + token + '@' + domain
+}
+const headerValues = (headers, name) => {
+    const v = headers?.[name]
+    return v == null ? [] : Array.isArray(v) ? v.map(String) : [String(v)]
+}
+/* The address in a header value; a reply token in its plus tag keeps its case. */
+const bareAddress = (text) =>
+    (
+        /<([^<>@\s]+@[^<>\s]+)>/.exec(String(text || ''))?.[1] ||
+        /([^<>"\s,;]+@[^<>"\s,;]+)/.exec(String(text || ''))?.[1] ||
+        ''
+    ).trim()
+const messageIds = (text) =>
+    String(text || '').match(/<[^<>\s]+@[^<>\s]+>/g) || []
+/* Conservative reply text: drop quoted lines, the attribution before them and anything after a signature marker. */
+function replyText(text) {
+    const out = []
+    for (const line of String(text || '')
+        .replace(/\r\n?/g, '\n')
+        .split('\n')) {
+        if (/^-- ?$/.test(line) || /^-{2,}\s*Original Message/i.test(line))
+            break
+        if (/^On .+wrote:\s*$/i.test(line)) break
+        if (/^\s*>/.test(line)) continue
+        out.push(line)
+    }
+    return out.join('\n').trim()
+}
+const textHtml = (text) =>
+    text
+        .split(/\n{2,}/)
+        .map(
+            (para) =>
+                '<p>' +
+                WebUtilities.encodeHtml(para).replace(/\n/g, '<br>') +
+                '</p>',
+        )
+        .join('')
+/* The handler for one stored inbound email (an email ECA). It never creates accounts, trusts only the gateway's kept
+   Authentication-Results, posts through the same publish gate as the web as the verified sender, and records one
+   receipt per message identity so alias copies and replays do not post twice. Not forum mail is left alone. */
+function processInbound(ctx) {
+    const headers = ctx.headers || {},
+        fields = ctx.fields || {}
+    const recipients = [
+        ...headerValues(headers, 'delivered-to'),
+        ...headerValues(headers, 'original-recipient').map((v) =>
+            v.replace(/^rfc822;/i, ''),
+        ),
+    ]
+        .map(bareAddress)
+        .filter(Boolean)
+    // Without envelope evidence (an IMAP-synced copy), the visible recipients identify the route only.
+    if (!recipients.length)
+        for (const v of [...(fields.toList || []), ...(fields.ccList || [])])
+            recipients.push(bareAddress(v))
+    let route = null,
+        tag = null
+    for (const address of recipients) {
+        const m = /^([^@+]+)(?:\+([^@]+))?@(.+)$/.exec(address)
+        if (!m) continue
+        const r = one(F + 'ForumMailRoute', {
+            address: (m[1] + '@' + m[3]).toLowerCase(),
+        })
+        if (r && r.enabled === 'Y') {
+            route = r
+            tag = m[2] || null
+            break
+        }
+    }
+    if (!route) return { handled: false }
+    const siteId = route.siteId,
+        sender = bareAddress(fields.from).toLowerCase(),
+        messageId =
+            headerValues(headers, 'message-id')[0] ||
+            ctx.message?.messageId ||
+            '',
+        parts = ctx.bodyPartList || [],
+        textPart = parts.find(
+            (b) => /^text\/plain/i.test(b.contentType || '') && !b.filename,
+        ),
+        htmlPart = parts.find(
+            (b) => /^text\/html/i.test(b.contentType || '') && !b.filename,
+        ),
+        rawText = textPart
+            ? textPart.contentText
+            : plainText(htmlPart?.contentText || ''),
+        subject = String(fields.subject || '').trim(),
+        fingerprint = hash(
+            subject + '\n' + String(rawText || '').slice(0, 20000),
+        )
+    const receiptId = hash(
+        siteId + '|' + (messageId || fingerprint) + '|' + sender,
+    )
+    const old = one(F + 'ForumInboundReceipt', { receiptId }, true)
+    if (old && !['failed'].includes(old.result)) {
+        if (old.fingerprint !== fingerprint)
+            ec.logger.warn(
+                'Forum inbound ' +
+                    receiptId +
+                    ' reused a message identity with different content; ignored',
+            )
+        return { handled: true, result: 'duplicate', receiptId }
+    }
+    const record = (result, reason, postId) => {
+        const values = {
+            siteId,
+            routeId: route.routeId,
+            messageId: String(messageId).slice(0, 250),
+            senderAddress: sender.slice(0, 250),
+            fingerprint,
+            emailMessageId: ctx.emailMessageId || null,
+            result,
+            reason: reason || null,
+            postId: postId || null,
+            attempts: Number(old?.attempts || 0) + 1,
+        }
+        if (old)
+            update(old, { ...values, revision: Number(old.revision || 1) + 1 })
+        else
+            create(F + 'ForumInboundReceipt', {
+                receiptId,
+                createdAt: now(),
+                revision: 1,
+                ...values,
+            })
+        return { handled: true, result, reason, postId, receiptId }
+    }
+    // Reports, auto-replies and our own mail are never posts.
+    const contentType = headerValues(headers, 'content-type').join(' ')
+    if (
+        /multipart\/report/i.test(contentType) ||
+        /^(mailer-daemon|postmaster)@/i.test(sender)
+    )
+        return record('bounce', bounce(siteId, parts) || 'Delivery report')
+    const auto = headerValues(headers, 'auto-submitted')[0]
+    if (
+        (auto && !/^no$/i.test(auto.trim())) ||
+        /^(bulk|junk|list|auto_reply)$/i.test(
+            headerValues(headers, 'precedence')[0] || '',
+        ) ||
+        headerValues(headers, 'x-autoreply').length ||
+        headerValues(headers, 'x-autorespond').length
+    )
+        return record('ignored', 'Automatic message')
+    const settings = one(F + 'ForumMailSettings', { siteId })
+    if (
+        settings &&
+        sender === String(settings.senderAddress || '').toLowerCase()
+    )
+        return record('ignored', 'Message from this forum')
+    // The sender must be a verified account address, and the trusted gateway must have authenticated the domain.
+    const account = Array.from(
+        find('moqui.security.UserAccount', {})
+            .condition('emailAddress', 'equals', sender)
+            .limit(2)
+            .list(),
+    ).filter((u) => u.disabled !== 'Y')
+    const ua = account.length === 1 ? account[0] : null
+    if (
+        !ua ||
+        !ua.partyId ||
+        !one('moqui.security.public.VerifiedAddress', {
+            userId: ua.userId,
+            emailAddress: ua.emailAddress,
+        })
+    )
+        return record('held', 'Sender is not a verified account address')
+    const domain = sender.split('@')[1]
+    const authenticated = headerValues(headers, 'authentication-results').some(
+        (v) =>
+            /\bdmarc=pass\b/i.test(v) ||
+            (/\bdkim=pass\b/i.test(v) &&
+                new RegExp(
+                    'header\\.(d|i)=@?' + escapeRegex(domain) + '\\b',
+                    'i',
+                ).test(v)),
+    )
+    if (!authenticated)
+        return record(
+            'held',
+            'Sender domain was not authenticated by the mail gateway',
+        )
+    // The target: a reply token issued to this sender, else a thread this sender was mailed, else a new topic.
+    let root = null
+    if (tag) {
+        const t = one(F + 'ForumReplyToken', { tokenHash: hash(tag) })
+        if (
+            !t ||
+            t.siteId !== siteId ||
+            t.revokedAt ||
+            millis(t.expiresAt) <= millis(now())
+        )
+            return record('rejected', 'The reply address has expired')
+        if (t.partyId !== ua.partyId)
+            return record(
+                'held',
+                'The reply address was issued to another member',
+            )
+        root = t.rootCommEventId
+    } else {
+        for (const ref of [
+            ...messageIds(headerValues(headers, 'in-reply-to').join(' ')),
+            ...messageIds(
+                headerValues(headers, 'references').join(' '),
+            ).reverse(),
+        ]) {
+            const d = Array.from(
+                find(F + 'ForumDelivery', {
+                    siteId,
+                    partyId: ua.partyId,
+                    channel: 'email',
+                    providerId: ref,
+                })
+                    .limit(1)
+                    .list(),
+            )[0]
+            const box = d
+                ? one(F + 'ForumOutbox', { outboxId: d.outboxId })
+                : null
+            const st = box
+                ? one(F + 'ForumPostState', {
+                      communicationEventId: box.communicationEventId,
+                  })
+                : null
+            if (st) {
+                root = st.rootCommEventId
+                break
+            }
+        }
+        if (!root && !route.contactListId)
+            return record(
+                'rejected',
+                'Reply to a forum email or write to a category address',
+            )
+    }
+    const body = replyText(rawText)
+    if (!body) return record('rejected', 'The message has no new text')
+    const files = parts.filter((b) => b.filename && b.contentBytes).slice(0, 10)
+    try {
+        // Its own transaction: a refusal rolls back every write of the attempt, and this receipt still records it.
+        const out = ec.service
+            .sync()
+            .requireNewTransaction(true)
+            .throwOnError(true)
+            .name('mantle.forum.DeliveryServices.post#Inbound')
+            .parameters({
+                input: {
+                    siteId,
+                    username: ua.username,
+                    rootCommEventId: root,
+                    contactListId: root ? null : route.contactListId,
+                    title:
+                        subject
+                            .replace(/^((re|fwd?|aw):\s*)+/i, '')
+                            .slice(0, 250) || 'Message by email',
+                    body: textHtml(body),
+                    files: files.map((b) => ({
+                        filename: b.filename,
+                        contentType: String(b.contentType || '')
+                            .split(';')[0]
+                            .trim(),
+                        contentBytes: b.contentBytes,
+                    })),
+                    operationId: hash(receiptId)
+                        .replace(/[^A-Za-z0-9_-]/g, '')
+                        .slice(0, 60),
+                },
+            })
+            .call().result
+        const result = record(
+            out.state === 'pending' ? 'pending' : 'posted',
+            out.held ? 'Some attachments were held for scanning' : null,
+            out.postId,
+        )
+        feedback(
+            siteId,
+            ua,
+            out.state === 'pending'
+                ? 'Your email was received and is waiting for review.'
+                : null,
+        )
+        return result
+    } catch (e) {
+        ec.message.clearErrors()
+        const kind = e?.moquiErrorKind
+        const reason = String(e?.message || e)
+            .split('\n')[0]
+            .replace(/^(Error: )+/, '')
+            .slice(0, 300)
+        // Refusals by policy are final and told to the member; a posting interval or outage is kept for a retry.
+        if (
+            ['Unauthorized', 'Unprocessable', 'NotFound', 'Conflict'].includes(
+                kind,
+            )
+        ) {
+            feedback(
+                siteId,
+                ua,
+                'Your email was not posted: ' +
+                    (kind === 'NotFound'
+                        ? 'the discussion is not available'
+                        : reason),
+            )
+            return record('rejected', reason)
+        }
+        ec.logger.error('Forum inbound ' + receiptId + ' failed: ' + reason)
+        return record('failed', reason)
+    }
+}
+/* Worker step: post one inbound email as its verified sender through the web's own gate, staging its files first. */
+function postInbound(p) {
+    const previous = ec.user.username
+    ec.user.internalLoginUser(p.username)
+    try {
+        const scope = p.rootCommEventId
+            ? { rootCommEventId: p.rootCommEventId }
+            : { contactListId: p.contactListId }
+        const attachmentIds = []
+        let held = false
+        for (const b of p.files || []) {
+            const bytes = b.contentBytes
+            const staged = methods.stageAttachment({
+                siteId: p.siteId,
+                ...scope,
+                file: {
+                    name: b.filename,
+                    size: bytes.length ?? bytes.byteLength ?? 0,
+                    contentType: b.contentType,
+                    write: (location) =>
+                        ec.resource
+                            .getLocationReference(location)
+                            .putBytes(bytes),
+                },
+            }).attachment
+            if (staged.scanState === 'clean')
+                attachmentIds.push(staged.attachmentId)
+            else held = true
+        }
+        const out = methods.publishPost({
+            siteId: p.siteId,
+            ...scope,
+            ...(p.rootCommEventId ? {} : { title: p.title }),
+            body: p.body,
+            attachmentIds,
+            operationId: p.operationId,
+        })
+        return { postId: out.postId, state: out.state, held }
+    } finally {
+        ec.user.logoutUser()
+        if (previous) ec.user.internalLoginUser(previous)
+    }
+}
+/* A safe outcome notice to a verified member: what happened, never another thread's content. */
+function feedback(siteId, ua, text) {
+    if (!text) return
+    const settings = one(F + 'ForumMailSettings', { siteId })
+    if (!settings) return
+    try {
+        ec.service
+            .sync()
+            .requireNewTransaction(true)
+            .throwOnError(true)
+            .name('org.moqui.impl.EmailServices.send#EmailTemplate')
+            .parameters({
+                emailTemplateId: settings.templateId,
+                toAddresses: ua.emailAddress,
+                bodyParameters: { title: text, siteId, unsubscribeUrl: '' },
+            })
+            .call()
+    } catch (e) {
+        ec.message.clearErrors()
+        ec.logger.warn(
+            'Forum inbound feedback to a member failed: ' +
+                String(e?.message || e).split('\n')[0],
+        )
+    }
+}
+/* A delivery report for one of our messages: a permanent failure stops email to that member until they choose again. */
+function bounce(siteId, parts) {
+    const text = parts.map((b) => b.contentText || '').join('\n')
+    const permanent = /^Status:\s*5\.\d+\.\d+/im.test(text)
+    for (const ref of messageIds(text)) {
+        const d = Array.from(
+            find(F + 'ForumDelivery', {
+                siteId,
+                channel: 'email',
+                providerId: ref,
+            })
+                .limit(1)
+                .list(),
+        )[0]
+        if (!d) continue
+        if (!permanent) return 'Temporary delivery report for ' + d.deliveryId
+        update(d, {
+            state: 'failed',
+            lastError: 'Hard bounce reported',
+            revision: Number(d.revision || 0) + 1,
+        })
+        const key = {
+            siteId,
+            partyId: d.partyId,
+            scopeType: 'site',
+            scopeId: '_SITE_',
+        }
+        const pref = one(F + 'ForumDeliveryPreference', key, true)
+        const values = {
+            ...key,
+            emailMode: 'None',
+            suppressed: 'Y',
+            optOutAt: now(),
+            revision: Number(pref?.revision || 0) + 1,
+        }
+        pref
+            ? update(pref, values)
+            : create(F + 'ForumDeliveryPreference', values)
+        return 'Hard bounce for delivery ' + d.deliveryId
+    }
+    return null
+}
+/* Staff retry of a failed receipt from the stored email; the stored message is never deleted by the handler. */
+methods.retryInbound = (p) => {
+    site(p.siteId, true)
+    const r = one(F + 'ForumInboundReceipt', { receiptId: p.receiptId })
+    if (!r || r.siteId !== p.siteId) missing()
+    if (r.result !== 'failed')
+        fail('Conflict', 'Only a failed message is retried')
+    const email = one('moqui.basic.email.EmailMessage', {
+        emailMessageId: r.emailMessageId,
+    })
+    if (!email) fail('Conflict', 'The stored email is no longer available')
+    const headers = {}
+    for (const line of String(email.headersString || '').split(/\r?\n/)) {
+        const m = /^([A-Za-z0-9-]+):\s*(.*)$/.exec(line)
+        if (m) {
+            const key = m[1].toLowerCase()
+            headers[key] = headers[key] ? [].concat(headers[key], m[2]) : m[2]
+        }
+    }
+    if (email.messageId && !headers['message-id'])
+        headers['message-id'] = email.messageId
+    if (email.inReplyTo && !headers['in-reply-to'])
+        headers['in-reply-to'] = email.inReplyTo
+    return processInbound({
+        emailMessageId: email.emailMessageId,
+        headers,
+        fields: {
+            from: email.fromAddress,
+            subject: email.subject,
+            toList: String(email.toAddresses || '').split(','),
+        },
+        bodyPartList: [
+            {
+                contentType: 'text/plain',
+                contentText: email.bodyText || plainText(email.body || ''),
+            },
+        ],
+    })
+}
 /* Policy revisions only grow, so their sum over the site and both category chains changes whenever either audience can. */
 function audienceRevision(siteId, source, target) {
     let total = Number(one(S + 'PublicSite', { siteId })?.policyRevision || 0)
@@ -7273,4 +7884,7 @@ function execute(operation, p) {
     policy,
     mentionHandles,
     plainText,
+    processInbound,
+    postInbound,
+    replyAddress,
 })

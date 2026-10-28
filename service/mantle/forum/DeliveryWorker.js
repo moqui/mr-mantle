@@ -400,6 +400,13 @@ function deliver(p) {
                 ? sentId(event.parentCommEventId)
                 : null
     return mail(v, allowed.scope, (urls) => ({
+        // A scoped reply address, when the site routes mail: replying posts as this member in this thread.
+        replyTo: policy().replyAddress(
+            v.siteId,
+            st.rootCommEventId,
+            event.contactListId,
+            v.partyId,
+        ),
         inReplyTo: parentRef || rootRef,
         references: [rootRef, parentRef].filter(Boolean).join(' '),
         bodyParameters: {

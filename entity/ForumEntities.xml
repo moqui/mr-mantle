@@ -421,6 +421,52 @@
     <field name="attempts" type="number-integer"/>
     <relationship type="one" related="mantle.forum.ForumJobRun"/>
   </entity>
+  <entity entity-name="ForumMailRoute" package="mantle.forum">
+    <field name="routeId" type="id" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="address" type="text-medium"/>
+    <field name="contactListId" type="id"/>
+    <field name="enabled" type="text-indicator"/>
+    <field name="revision" type="number-integer"/>
+    <field name="createdAt" type="date-time"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <index name="FORUM_ROUTE_ADDRESS" unique="true">
+      <index-field name="address"/>
+    </index>
+  </entity>
+  <entity entity-name="ForumReplyToken" package="mantle.forum">
+    <field name="tokenHash" type="text-medium" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="routeId" type="id"/>
+    <field name="rootCommEventId" type="id"/>
+    <field name="partyId" type="id"/>
+    <field name="expiresAt" type="date-time"/>
+    <field name="revokedAt" type="date-time"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <index name="FORUM_REPLY_TOKEN_EXPIRY">
+      <index-field name="expiresAt"/>
+    </index>
+  </entity>
+  <entity entity-name="ForumInboundReceipt" package="mantle.forum">
+    <field name="receiptId" type="text-medium" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="routeId" type="id"/>
+    <field name="messageId" type="text-medium"/>
+    <field name="senderAddress" type="text-medium"/>
+    <field name="fingerprint" type="text-medium"/>
+    <field name="emailMessageId" type="id"/>
+    <field name="result" type="id"/>
+    <field name="reason" type="text-long"/>
+    <field name="postId" type="id"/>
+    <field name="attempts" type="number-integer"/>
+    <field name="createdAt" type="date-time"/>
+    <field name="revision" type="number-integer"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <index name="FORUM_INBOUND_SITE">
+      <index-field name="siteId"/>
+      <index-field name="createdAt"/>
+    </index>
+  </entity>
   <entity entity-name="ForumDigestState" package="mantle.forum">
     <field name="siteId" type="id" is-pk="true"/>
     <field name="partyId" type="id" is-pk="true"/>

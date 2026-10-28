@@ -677,4 +677,32 @@
         service: 'mantle.forum.ModerationServices.escalate#Review',
         fields: ['siteId', 'reviewId', 'reason', 'active'],
     },
+    storeRoute: {
+        service: 'mantle.forum.DeliveryServices.store#Route',
+        fields: [
+            'siteId',
+            'routeId',
+            'address',
+            'contactListId',
+            'active',
+            'expectedRevision',
+            'operationId',
+        ],
+    },
+    findRoutes: {
+        service: 'mantle.forum.DeliveryServices.find#Routes',
+        fields: ['siteId'],
+    },
+    findInboundReceipts: {
+        service: 'mantle.forum.DeliveryServices.find#InboundReceipts',
+        fields: ['siteId', 'limit', 'cursor'],
+    },
+    testRoute: {
+        service: 'mantle.forum.DeliveryServices.test#Route',
+        fields: ['siteId', 'routeId'],
+    },
+    retryInbound: {
+        service: 'mantle.forum.DeliveryServices.retry#Inbound',
+        fields: ['siteId', 'receiptId'],
+    },
 })
