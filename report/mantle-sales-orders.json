@@ -36,6 +36,7 @@
       },
       "grandTotal": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "newStatusId": {
@@ -49,6 +50,7 @@
       },
       "partTotal": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "productStoreId": {

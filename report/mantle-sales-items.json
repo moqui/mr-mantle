@@ -9,6 +9,7 @@
     "fieldDefaults": {
       "acquireCost": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "applTypeEnumId": {
@@ -53,30 +54,37 @@
       },
       "issuedCostTotal": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "issuedMargin": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "issuedMarginTotal": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "issuedSaleTotal": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "itemCostTotal": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "itemMarginTotal": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "itemSaleTotal": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "itemTypeEnumId": {
@@ -120,6 +128,7 @@
       },
       "selectedAmount": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "shipmentMethodEnumId": {
@@ -137,10 +146,12 @@
       },
       "unitAmount": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       },
       "unitListPrice": {
         "unit": "USD",
+        "unitField": "currencyUomId",
         "decimals": 2
       }
     }
