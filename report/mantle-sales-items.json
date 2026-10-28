@@ -5,6 +5,144 @@
   "body": {
     "documentType": "MantleSalesOrderItem",
     "timeField": "placedDate",
-    "signal": "business"
+    "signal": "business",
+    "fieldDefaults": {
+      "acquireCost": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "applTypeEnumId": {
+        "enumTypeId": "ProductFeatureApplType"
+      },
+      "assetClassEnumId": {
+        "enumTypeId": "AssetClass"
+      },
+      "assetTypeEnumId": {
+        "enumTypeId": "AssetType"
+      },
+      "classificationTypeEnumId": {
+        "enumTypeId": "PartyClassificationType"
+      },
+      "countryGeoId": {
+        "lookup": {
+          "entityName": "moqui.basic.Geo",
+          "keyField": "geoId",
+          "displayField": "geoName"
+        }
+      },
+      "currencyUomId": {
+        "lookup": {
+          "entityName": "moqui.basic.Uom",
+          "keyField": "uomId",
+          "displayField": "description"
+        }
+      },
+      "customerClassId": {
+        "lookup": {
+          "entityName": "mantle.party.PartyClassification",
+          "keyField": "partyClassificationId",
+          "displayField": "description"
+        }
+      },
+      "facilityId": {
+        "lookup": {
+          "entityName": "mantle.facility.Facility",
+          "keyField": "facilityId",
+          "displayField": "facilityName"
+        }
+      },
+      "issuedCostTotal": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "issuedMargin": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "issuedMarginTotal": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "issuedSaleTotal": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "itemCostTotal": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "itemMarginTotal": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "itemSaleTotal": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "itemTypeEnumId": {
+        "enumTypeId": "ItemType"
+      },
+      "partStatusId": {
+        "statusTypeId": "OrderHeader"
+      },
+      "partyClassificationId": {
+        "lookup": {
+          "entityName": "mantle.party.PartyClassification",
+          "keyField": "partyClassificationId",
+          "displayField": "description"
+        }
+      },
+      "productClassEnumId": {
+        "enumTypeId": "ProductClass"
+      },
+      "productFeatureTypeEnumId": {
+        "enumTypeId": "ProductFeatureType"
+      },
+      "productId": {
+        "lookup": {
+          "entityName": "mantle.product.Product",
+          "keyField": "productId",
+          "displayField": "productName"
+        }
+      },
+      "productStoreId": {
+        "lookup": {
+          "entityName": "mantle.product.store.ProductStore",
+          "keyField": "productStoreId",
+          "displayField": "storeName"
+        }
+      },
+      "productTypeEnumId": {
+        "enumTypeId": "ProductType"
+      },
+      "salesChannelEnumId": {
+        "enumTypeId": "SalesChannel"
+      },
+      "selectedAmount": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "shipmentMethodEnumId": {
+        "enumTypeId": "ShipmentMethod"
+      },
+      "stateProvinceGeoId": {
+        "lookup": {
+          "entityName": "moqui.basic.Geo",
+          "keyField": "geoId",
+          "displayField": "geoName"
+        }
+      },
+      "statusId": {
+        "statusTypeId": "OrderHeader"
+      },
+      "unitAmount": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "unitListPrice": {
+        "unit": "USD",
+        "decimals": 2
+      }
+    }
   }
 }

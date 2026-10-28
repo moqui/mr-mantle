@@ -1,0 +1,46 @@
+{
+  "id": "mantle-sales-daily-floor",
+  "type": "alert",
+  "title": "Daily sales below floor",
+  "body": {
+    "description": "Fires when yesterday's sales total is under the floor. Save a copy, then set the threshold and contact points.",
+    "query": {
+      "datasetId": "mantle-sales-items",
+      "from": "now-1d/d",
+      "thru": "now/d",
+      "aggregations": [
+        {
+          "id": "sales",
+          "type": "sum",
+          "role": "metric",
+          "params": {
+            "field": "itemSaleTotal"
+          }
+        }
+      ]
+    },
+    "field": "sales",
+    "reduce": "last",
+    "condition": {
+      "type": "below",
+      "threshold": 1000
+    },
+    "intervalSeconds": 3600,
+    "pendingSeconds": 0,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "sales",
+      "severity": "warning"
+    },
+    "contactPoints": [
+      {
+        "id": "sales-header",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 86400
+      }
+    ]
+  }
+}

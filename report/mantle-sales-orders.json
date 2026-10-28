@@ -5,6 +5,75 @@
   "body": {
     "documentType": "MantleSalesOrderPart",
     "timeField": "placedDate",
-    "signal": "business"
+    "signal": "business",
+    "fieldDefaults": {
+      "approvedHours": {
+        "decimals": 1
+      },
+      "completedHours": {
+        "decimals": 1
+      },
+      "countryGeoId": {
+        "lookup": {
+          "entityName": "moqui.basic.Geo",
+          "keyField": "geoId",
+          "displayField": "geoName"
+        }
+      },
+      "currencyUomId": {
+        "lookup": {
+          "entityName": "moqui.basic.Uom",
+          "keyField": "uomId",
+          "displayField": "description"
+        }
+      },
+      "facilityId": {
+        "lookup": {
+          "entityName": "mantle.facility.Facility",
+          "keyField": "facilityId",
+          "displayField": "facilityName"
+        }
+      },
+      "grandTotal": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "newStatusId": {
+        "statusTypeId": "OrderHeader"
+      },
+      "oldStatusId": {
+        "statusTypeId": "OrderHeader"
+      },
+      "partStatusId": {
+        "statusTypeId": "OrderHeader"
+      },
+      "partTotal": {
+        "unit": "USD",
+        "decimals": 2
+      },
+      "productStoreId": {
+        "lookup": {
+          "entityName": "mantle.product.store.ProductStore",
+          "keyField": "productStoreId",
+          "displayField": "storeName"
+        }
+      },
+      "salesChannelEnumId": {
+        "enumTypeId": "SalesChannel"
+      },
+      "shipmentMethodEnumId": {
+        "enumTypeId": "ShipmentMethod"
+      },
+      "stateProvinceGeoId": {
+        "lookup": {
+          "entityName": "moqui.basic.Geo",
+          "keyField": "geoId",
+          "displayField": "geoName"
+        }
+      },
+      "statusId": {
+        "statusTypeId": "OrderHeader"
+      }
+    }
   }
 }
