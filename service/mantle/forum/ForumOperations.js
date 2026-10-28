@@ -168,13 +168,43 @@
                     'less',
                     cutoff,
                 )
-            case 'deletedPostDays':
+            case 'deletedPostDays': {
+                // A deleted post counts from its deletion, a rejected one from when it was written.
+                const cf = ec.entity.conditionFactory
                 return find(F + 'ForumPostSearch', { siteId })
-                    .condition('visibility', 'in', ['deleted', 'rejected'])
                     .condition('textRemovedAt', null)
-                    .condition('entryDate', 'less', cutoff)
+                    .condition(
+                        cf.makeCondition(
+                            [
+                                cf.makeCondition(
+                                    [
+                                        cf.makeCondition('visibility', 'equals', 'deleted'),
+                                        cf.makeCondition('deletedAt', 'less', cutoff),
+                                    ],
+                                    'and',
+                                ),
+                                cf.makeCondition(
+                                    [
+                                        cf.makeCondition('visibility', 'equals', 'rejected'),
+                                        cf.makeCondition('entryDate', 'less', cutoff),
+                                    ],
+                                    'and',
+                                ),
+                            ],
+                            'or',
+                        ),
+                    )
+            }
             case 'jobDays':
                 return find(F + 'ForumJobRun', { siteId })
+                    .condition('jobType', 'in', [
+                        'op-rebuild-counters',
+                        'op-retry-deliveries',
+                        'op-retention',
+                        'op-export-site',
+                        'op-export-personal',
+                        'op-erasure',
+                    ])
                     .condition('state', 'in', [
                         'complete',
                         'failed',
@@ -297,8 +327,7 @@
             config.classIndex = 0
         }
         if (p.operation === 'export-site') {
-            storageRoot()
-            config.exportId = id()
+            config.exportId = pendingExport(p.siteId, 'site', p.contactListId)
         }
         const runId = startRun(p.siteId, jobType, config)
         audit(
@@ -441,6 +470,12 @@
                 true,
             )
             if (!st || !['deleted', 'rejected'].includes(st.visibility)) return
+            if (
+                find(F + 'ForumReviewItem', { siteId, targetType: 'post', targetId: key })
+                    .condition('state', 'in', ['pending', 'claimed'])
+                    .count()
+            )
+                throw new Error('Post ' + key + ' has an open review or appeal')
             const event = one(E + 'CommunicationEvent', {
                 communicationEventId: key,
             })
@@ -459,6 +494,24 @@
         }
     }
 
+    /* The export row exists from the start, pending and expiring, so the cleanup removes the files of an export that
+       failed or was cancelled; only a finished archive becomes downloadable. */
+    function pendingExport(siteId, kind, contactListId) {
+        const exportId = id()
+        create(F + 'ForumExport', {
+            exportId,
+            siteId,
+            partyId: requireUser(),
+            kind,
+            contactListId: contactListId || null,
+            location: storageRoot() + '/exports/' + exportId + '.zip',
+            schemaVersion: SCHEMA_VERSION,
+            state: 'pending',
+            createdAt: now(),
+            expiresAt: stamp(millis(now()) + EXPORT_DAYS * DAY),
+        })
+        return exportId
+    }
     /* ---- Site export ---- */
     const exportDir = (exportId) => storageRoot() + '/exports/' + exportId
     const handleOf = (siteId, partyId) =>
@@ -471,11 +524,11 @@
         const root = one(E + 'CommunicationEvent', {
             communicationEventId: rootCommEventId,
         })
-        const posts = Array.from(
-            find(F + 'ForumPostState', { rootCommEventId })
-                .orderBy('ordinal')
-                .limit(20000)
-                .list(),
+        // Every post of the topic: a topic past the cap fails, named, rather than exporting in part.
+        const posts = pagedRows(
+            () => find(F + 'ForumPostState', { rootCommEventId }),
+            'ordinal',
+            100000,
         ).map((st) => {
             const event = one(E + 'CommunicationEvent', {
                 communicationEventId: st.communicationEventId,
@@ -491,10 +544,12 @@
                 revision: Number(st.revision || 1),
                 wiki: st.wiki === 'Y',
                 body: event?.body || '',
-                revisions: rows(
-                    F + 'ForumPostRevision',
-                    { communicationEventId: st.communicationEventId },
-                    1000,
+                revisions: Array.from(
+                    find(F + 'ForumPostRevision', {
+                        communicationEventId: st.communicationEventId,
+                    })
+                        .orderBy('revision')
+                        .list(),
                 ).map((r) => ({
                     revision: Number(r.revision),
                     editorPartyId: r.editorPartyId || null,
@@ -503,10 +558,10 @@
                     sourceText: r.sourceText || '',
                     reason: r.reason || null,
                 })),
-                attachments: rows(
-                    F + 'ForumAttachment',
-                    { communicationEventId: st.communicationEventId },
-                    100,
+                attachments: Array.from(
+                    find(F + 'ForumAttachment', {
+                        communicationEventId: st.communicationEventId,
+                    }).list(),
                 ).map((a) =>
                     pick(a, 'attachmentId filename mimeType byteSize altText'),
                 ),
@@ -521,7 +576,7 @@
                 ),
                 title: root?.subject || '',
                 closed: root?.statusId === 'CeResolved',
-                tags: rows(F + 'ForumTopicTag', { rootCommEventId }, 100).map(
+                tags: Array.from(find(F + 'ForumTopicTag', { rootCommEventId }).list()).map(
                     (v) => v.tagId,
                 ),
                 posts,
@@ -603,12 +658,7 @@
         const location = storageRoot() + '/exports/' + exportId + '.zip'
         ec.resource.writeZip(location, files)
         const ref = ec.resource.getLocationReference(location)
-        create(F + 'ForumExport', {
-            exportId,
-            siteId: run.siteId,
-            partyId: run.partyId,
-            kind,
-            contactListId: config.contactListId || null,
+        const fields = {
             runId: run.runId,
             location,
             filename,
@@ -617,11 +667,32 @@
             byteSize: Number(ref.size ?? 0),
             schemaVersion: SCHEMA_VERSION,
             state: 'complete',
-            createdAt: now(),
             expiresAt: stamp(millis(now()) + EXPORT_DAYS * DAY),
-        })
+        }
+        const pending = one(F + 'ForumExport', { exportId }, true)
+        if (pending) update(pending, fields)
+        else
+            create(F + 'ForumExport', {
+                exportId,
+                siteId: run.siteId,
+                partyId: run.partyId,
+                kind,
+                contactListId: config.contactListId || null,
+                createdAt: now(),
+                ...fields,
+            })
     }
 
+    /* Every row of a find, a page at a time; past the cap the export names what it left out rather than hiding it. */
+    function pagedRows(makeFind, orderBy, cap = 200000) {
+        const out = []
+        for (let offset = 0; ; offset += 1000) {
+            const page = Array.from(makeFind().orderBy(orderBy).offset(offset).limit(1000).list())
+            out.push(...page)
+            if (page.length < 1000) return out
+            if (out.length >= cap) throw new Error('More than ' + cap + ' rows; export them in parts')
+        }
+    }
     /* ---- Personal data ---- */
     function exportPersonal(siteId, config, section) {
         const partyId = config.partyId,
@@ -665,11 +736,10 @@
             }
         else if (section === 'posts')
             // The member's own posts; other members' posts and staff evidence are not personal data of this member.
-            value = Array.from(
-                find(F + 'ForumPostSearch', { siteId, fromPartyId: partyId })
-                    .orderBy('entryDate')
-                    .limit(5000)
-                    .list(),
+            value = pagedRows(
+                () =>
+                    find(F + 'ForumPostSearch', { siteId, fromPartyId: partyId }),
+                'entryDate,communicationEventId',
             ).map((v) => ({
                 postId: v.communicationEventId,
                 rootCommEventId: v.rootCommEventId,
@@ -680,14 +750,14 @@
                 body: v.body || '',
             }))
         else if (section === 'drafts')
-            value = rows(F + 'ForumDraft', { siteId, partyId }, 500).map((d) =>
+            value = pagedRows(() => find(F + 'ForumDraft', { siteId, partyId }), 'draftId').map((d) =>
                 pick(
                     d,
                     'draftId mode rootCommEventId contactListId title sourceFormat sourceText',
                 ),
             )
         else if (section === 'bookmarks')
-            value = rows(F + 'ForumBookmark', { siteId, partyId }, 2000).map(
+            value = pagedRows(() => find(F + 'ForumBookmark', { siteId, partyId }), 'bookmarkId').map(
                 (b) =>
                     pick(
                         b,
@@ -765,28 +835,29 @@
                     ...fields,
                     revision: 1,
                 })
-            for (const d of rows(
-                F + 'ForumDelivery',
-                { siteId, partyId },
-                5000,
-            ).filter((d) => ['pending', 'retry'].includes(d.state)))
-                update(d, { state: 'suppressed', reason: 'erasure' })
+            find(F + 'ForumDelivery', { siteId, partyId })
+                .condition('state', 'in', ['pending', 'retry'])
+                .updateAll({ state: 'suppressed', reason: 'erasure' })
         } else if (step === 'drafts')
             find(F + 'ForumDraft', { siteId, partyId }).deleteAll()
         else if (step === 'bookmarks')
             find(F + 'ForumBookmark', { siteId, partyId }).deleteAll()
         else if (step === 'memberships') {
+            // The last owner check runs again here with the site's owner rows locked, so two owners erased at once
+            // leave one.
+            find(S + 'PublicSiteParty', { siteId, role: 'owner', state: 'active' }).forUpdate(true).list()
             const m = member(siteId, partyId)
+            if (m?.role === 'owner' && m.state === 'active') protectOwner(siteId, partyId)
             if (m)
                 update(m, {
                     state: 'ended',
                     thruDate: now(),
                     revision: Number(m.revision || 0) + 1,
                 })
-            for (const lp of rows(
-                'mantle.marketing.contact.ContactListParty',
-                { partyId },
-                500,
+            for (const lp of Array.from(
+                find('mantle.marketing.contact.ContactListParty', {
+                    partyId,
+                }).list(),
             ))
                 if (
                     active(lp) &&
@@ -831,8 +902,7 @@
             revision: 1,
         }
         if (p.kind === 'export') {
-            storageRoot()
-            const exportId = id()
+            const exportId = pendingExport(p.siteId, 'personal', null)
             const runId = startRun(p.siteId, 'op-export-personal', {
                 requestId,
                 partyId,
@@ -990,6 +1060,8 @@
                             firstLine(error),
                     )
                     update(run, { state: 'failed' })
+                    for (const r of rows(F + 'ForumDataRequest', { runId }))
+                        update(r, { state: 'failed', revision: Number(r.revision || 1) + 1 })
                 }
                 break
             }
@@ -1069,17 +1141,22 @@
                     .list(),
             )) {
                 try {
-                    processed +=
-                        ec.service
-                            .sync()
-                            .throwOnError(true)
-                            .name('mantle.forum.OperationServices.advance#Run')
-                            .parameters({
-                                runId: run.runId,
-                                budget: Number(p?.budget || 50),
-                            })
-                            .requireNewTransaction(true)
-                            .call().processed || 0
+                    // Small transactions, so a cancel waits for at most one chunk of items.
+                    const budget = Number(p?.budget || 50)
+                    for (let done = 0; done < budget; ) {
+                        const chunk = Math.min(10, budget - done)
+                        const n =
+                            ec.service
+                                .sync()
+                                .throwOnError(true)
+                                .name('mantle.forum.OperationServices.advance#Run')
+                                .parameters({ runId: run.runId, budget: chunk })
+                                .requireNewTransaction(true)
+                                .call().processed || 0
+                        processed += n
+                        done += chunk
+                        if (n < chunk) break
+                    }
                 } catch (error) {
                     ec.message.clearErrors()
                     ec.logger.error(
@@ -1147,7 +1224,11 @@
         const partyId = requireUser()
         return {
             exportList: Array.from(
-                find(F + 'ForumExport', { siteId: p.siteId, partyId })
+                find(F + 'ForumExport', {
+                    siteId: p.siteId,
+                    partyId,
+                    state: 'complete',
+                })
                     .condition('expiresAt', 'greater', now())
                     .orderBy('-createdAt')
                     .limit(50)
@@ -1453,6 +1534,7 @@
         const exportId = id()
         const location = storageRoot() + '/exports/' + exportId + '.csv'
         ec.resource.getLocationReference(location).putText(csv(header, lines))
+        const byteSize = Number(ec.resource.getLocationReference(location).size ?? 0)
         create(F + 'ForumExport', {
             exportId,
             siteId: p.siteId,
@@ -1463,7 +1545,7 @@
             filename: p.report + '-' + p.siteId + '.csv',
             mimeType: 'text/csv',
             checksum: ec.resource.digest(location, 'sha256'),
-            byteSize: lines.length,
+            byteSize,
             schemaVersion: SCHEMA_VERSION,
             state: 'complete',
             createdAt: now(),

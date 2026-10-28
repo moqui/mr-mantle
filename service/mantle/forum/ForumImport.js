@@ -138,6 +138,8 @@
             update(old, { importId, payload, checksum })
         else if (old.checksum !== checksum)
             update(old, { importId, changedPayload: payload, state: 'changed' })
+        // A row seen again carries this import, so one no longer in the source can be found after staging.
+        else if (old.importId !== importId) update(old, { importId })
         // Indexes the importer looks up: a post by its id, an upload by its SHA-1.
         if (table === 'posts') stageIndex(siteId, 'post_ids', row.id, sourceId)
         if (table === 'uploads' && row.sha1)
@@ -206,21 +208,71 @@
     /* The operator's latest decision for a source item across this site's imports, so a replay or final delta keeps
        the decisions already made. */
     function decision(siteId, mappingType, sourceId) {
-        const imports = new Set(
-            rows(F + 'ForumImportRun', { siteId }, 200).map((v) => v.importId),
+        const imports = rows(F + 'ForumImportRun', { siteId }, 200).map(
+            (v) => v.importId,
         )
+        if (!imports.length) return null
         return (
             Array.from(
                 find(F + 'ForumImportMapping', {
                     mappingType,
                     sourceId: String(sourceId),
                 })
+                    .condition('importId', 'in', imports)
                     .orderBy('-decidedAt')
-                    .limit(50)
+                    .limit(1)
                     .list(),
-            ).find((m) => imports.has(m.importId)) || null
+            )[0] || null
         )
     }
+    /* The account holding an address, whatever its case. */
+    function accountByEmail(email) {
+        if (!email) return null
+        return find('moqui.security.UserAccount', {})
+            .condition(
+                ec.entity.conditionFactory
+                    .makeCondition('emailAddress', 'equals', String(email))
+                    .ignoreCase(),
+            )
+            .one()
+    }
+    /* Source system users (ids at or below zero) and deleted authors (null) become one placeholder member, so their
+       posts keep their place without an account anyone could recover. */
+    function placeholder(siteId) {
+        const key = { siteId, sourceType: 'placeholder', sourceId: 'former' }
+        const old = one(M, key)
+        if (old?.targetId) return old.targetId
+        const partyId = ec.service
+            .sync()
+            .throwOnError(true)
+            .name('mantle.party.PartyServices.create#Person')
+            .parameters({ firstName: 'Former', lastName: 'member' })
+            .call().partyId
+        create(S + 'PublicSiteParty', {
+            siteId,
+            partyId,
+            state: 'active',
+            role: 'member',
+            joinedAt: now(),
+            revision: 1,
+        })
+        create(S + 'PublicSiteProfile', {
+            siteId,
+            partyId,
+            handle: uniqueHandle(siteId, 'former-member', 'x'),
+            displayName: 'Former member',
+            discoverability: 'hidden',
+            revision: 1,
+        })
+        old
+            ? update(old, { targetId: partyId, state: 'index' })
+            : create(M, { ...key, targetId: partyId, state: 'index' })
+        return partyId
+    }
+    const authorOf = (siteId, userId) =>
+        userId == null || Number(userId) <= 0
+            ? placeholder(siteId)
+            : imported(siteId, 'users', userId)
     /* ---- Registration and preflight ---- */
     function operatorOnly(siteId) {
         site(siteId, true)
@@ -251,6 +303,11 @@
                 .orderBy('sourceId')
                 .limit(limit)
                 .list(),
+        )
+    /* Link rows still in the source: a row a later snapshot dropped grants nothing. */
+    const liveMaps = (siteId, sourceType, prefix, limit) =>
+        mapsOf(siteId, sourceType, prefix, limit).filter(
+            (v) => !['removed', 'skipped'].includes(v.state),
         )
     methods.registerImport = (p) => {
         operatorOnly(p.siteId)
@@ -385,9 +442,12 @@
                 })
             const email = payloadOf(siteId, 'user_emails', u.id)?.email
             if (email && !decided('identity', u.id)) {
-                const existing = one('moqui.security.UserAccount', { emailAddress: email })
+                const existing = accountByEmail(email)
                 // The account this import already made for the member is not a conflict.
-                if (existing && existing.partyId !== target(siteId, 'users', u.id))
+                if (
+                    existing &&
+                    existing.partyId !== target(siteId, 'users', u.id)
+                )
                     blockers.push({
                         type: 'identity',
                         sourceId: u.id,
@@ -400,7 +460,7 @@
         for (const v of mapsOf(siteId, 'categories')) {
             const c = JSON.parse(v.payload)
             if (c.read_restricted !== 't') continue
-            for (const cg of mapsOf(siteId, 'category_groups', c.id + ':')) {
+            for (const cg of liveMaps(siteId, 'category_groups', c.id + ':')) {
                 const groupId = JSON.parse(cg.payload).group_id
                 if (groupId !== '0' && !decided('group', groupId))
                     blockers.push({
@@ -474,8 +534,17 @@
     }
     function uploadLocation(root, upload) {
         if (!root) return null
-        const m = /\/(original\/\d+X\/.*)$/.exec(upload.url || '')
-        if (!m) return null
+        // The archive path from the dump's URL: plain names under original/ only, nothing that could leave the tree.
+        const m = /\/(original\/\d+X\/[A-Za-z0-9._\/-]+)$/.exec(
+            upload.url || '',
+        )
+        if (
+            !m ||
+            m[1]
+                .split('/')
+                .some((part) => part === '..' || part === '.' || !part)
+        )
+            return null
         const location = root + '/' + m[1]
         return ec.resource.getLocationReference(location).exists
             ? location
@@ -505,16 +574,19 @@
                     'user_emails',
                     m.sourceId,
                 )?.email
-                const account = email
-                    ? one('moqui.security.UserAccount', { emailAddress: email })
-                    : null
+                const account = accountByEmail(email)
                 if (
                     !account ||
                     account.partyId !== m.targetId ||
-                    !one('moqui.security.public.VerifiedAddress', {
+                    !find('moqui.security.public.VerifiedAddress', {
                         userId: account.userId,
-                        emailAddress: email,
                     })
+                        .condition(
+                            ec.entity.conditionFactory
+                                .makeCondition('emailAddress', 'equals', email)
+                                .ignoreCase(),
+                        )
+                        .count()
                 )
                     invalid(
                         'A source identity maps only to the account with the same verified address',
@@ -546,8 +618,16 @@
             imp,
             stageRun ? JSON.parse(stageRun.checkpoint || '{}') : null,
         )
+        // A decision after reconciliation changes what was approved: reconcile and approve again.
         update(imp, {
             preflightJson: JSON.stringify(report),
+            ...(imp.stage === 'reconciled'
+                ? {
+                      stage: 'imported',
+                      operatorRevision: null,
+                      ownerRevision: null,
+                  }
+                : {}),
             revision: Number(imp.revision) + 1,
         })
         audit(
@@ -562,8 +642,59 @@
         )
         return { blockers: report.blockers.length }
     }
-    /* A source row that changed after it was imported: keep the imported version, or apply the change. A changed post
-       gets the new text as another revision; other rows keep their imported records and take the new staged row. */
+    /* Rows a re-staged snapshot no longer has: access they granted, and records they made, wait for a decision. */
+    const REMOVABLE = [
+        'group_users',
+        'category_groups',
+        'topic_allowed_users',
+        'topic_allowed_groups',
+        'categories',
+        'topics',
+        'posts',
+    ]
+    function markRemoved(siteId, importId) {
+        for (const sourceType of REMOVABLE)
+            for (const v of Array.from(
+                find(M, { siteId, sourceType })
+                    .condition('importId', 'not-equals', importId)
+                    .condition('state', 'in', [
+                        'staged',
+                        'failed',
+                        'imported',
+                        'changed',
+                    ])
+                    .limit(100000)
+                    .list(),
+            )) {
+                const link = !['categories', 'topics', 'posts'].includes(
+                    sourceType,
+                )
+                if (v.state === 'imported' || v.state === 'changed' || link)
+                    update(v, { state: 'removed' })
+                else
+                    find(M, {
+                        siteId,
+                        sourceType,
+                        sourceId: v.sourceId,
+                    }).deleteAll()
+            }
+    }
+    /* Revokes the grants an imported group gave, for one member or for one category. */
+    function revokeGroupGrants(siteId, groupId, fields) {
+        for (const g of rows(
+            S + 'PublicAccessGrant',
+            { siteId, sourceType: 'manual', sourceId: 'import', ...fields },
+            10000,
+        ))
+            if (g.reason === 'Imported group ' + groupId && !g.revokedAt)
+                update(g, {
+                    revokedAt: now(),
+                    revision: Number(g.revision || 1) + 1,
+                })
+    }
+    /* A source row that changed or disappeared after it was imported: keep the imported version, or apply the source.
+       Applying carries what decides who sees what (deletion, hiding, listing, category, restriction, membership),
+       not just the text. */
     function resolveChange(siteId, key, choice) {
         const at = key.indexOf(':')
         const map = one(
@@ -575,10 +706,73 @@
             },
             true,
         )
-        if (!map || map.state !== 'changed')
-            invalid('Choose a source row that changed: table:id')
-        if (choice === 'apply' && map.sourceType === 'posts' && map.targetId) {
-            const row = JSON.parse(map.changedPayload)
+        if (!map || !['changed', 'removed'].includes(map.state))
+            invalid('Choose a source row that changed or was removed: table:id')
+        if (choice === 'keep') {
+            update(map, { state: 'imported', changedPayload: null })
+            return
+        }
+        if (map.state === 'removed') {
+            const row = map.payload ? JSON.parse(map.payload) : {}
+            if (map.sourceType === 'group_users')
+                revokeGroupGrants(siteId, row.group_id, {
+                    partyId: imported(siteId, 'users', row.user_id) || '_NONE_',
+                })
+            else if (map.sourceType === 'category_groups')
+                revokeGroupGrants(siteId, row.group_id, {
+                    targetType: 'category',
+                    targetId:
+                        imported(siteId, 'categories', row.category_id) ||
+                        '_NONE_',
+                })
+            else if (map.sourceType === 'topic_allowed_users') {
+                const root = imported(siteId, 'topics', row.topic_id)
+                const partyId = imported(siteId, 'users', row.user_id)
+                const pt =
+                    root && partyId
+                        ? one(
+                              F + 'ForumParticipant',
+                              { rootCommEventId: root, partyId },
+                              true,
+                          )
+                        : null
+                if (pt && !pt.endedAt) update(pt, { endedAt: now() })
+            } else if (map.sourceType === 'topic_allowed_groups')
+                invalid(
+                    'A group removed from a private message needs a participant review: keep it, then edit the participants',
+                )
+            else if (map.sourceType === 'categories') {
+                const c = map.targetId
+                    ? one(
+                          F + 'ForumCategory',
+                          { contactListId: map.targetId },
+                          true,
+                      )
+                    : null
+                if (c)
+                    update(c, {
+                        publicationState: 'disabled',
+                        policyRevision: Number(c.policyRevision || 0) + 1,
+                    })
+            } else if (map.targetId) {
+                const st = one(
+                    F + 'ForumPostState',
+                    { communicationEventId: map.targetId },
+                    true,
+                )
+                if (st && st.visibility !== 'deleted')
+                    update(st, {
+                        visibility: 'deleted',
+                        deletedAt: now(),
+                        deleteReason: 'Removed from the source before cutover',
+                    })
+            }
+            bump(siteId)
+            update(map, { state: 'skipped' })
+            return
+        }
+        const row = JSON.parse(map.changedPayload)
+        if (map.sourceType === 'posts' && map.targetId) {
             const st = one(
                 F + 'ForumPostState',
                 { communicationEventId: map.targetId },
@@ -603,20 +797,111 @@
                 publicHistoryAllowed: 'N',
             })
             update(event, { body })
+            const visibility = visibilityOf(row)
             update(st, {
                 revision: next,
+                visibility,
                 approvedRevision:
-                    st.visibility === 'approved' ? next : st.approvedRevision,
+                    visibility === 'approved' ? next : st.approvedRevision,
+                ...(visibility === 'deleted' && !st.deletedAt
+                    ? {
+                          deletedAt: now(),
+                          deleteReason: 'Deleted in the source before cutover',
+                      }
+                    : {}),
             })
+        } else if (map.sourceType === 'topics' && map.targetId) {
+            const old = JSON.parse(map.payload)
+            if (old.archetype !== row.archetype)
+                invalid(
+                    'A topic that became or stopped being a private message needs a fresh import',
+                )
+            const t = one(
+                F + 'ForumTopic',
+                { rootCommEventId: map.targetId },
+                true,
+            )
+            const fields = {
+                unlisted: row.visible === 'f' ? 'Y' : 'N',
+                revision: Number(t.revision) + 1,
+            }
+            if (
+                row.category_id !== old.category_id &&
+                row.archetype !== 'private_message'
+            ) {
+                const contactListId = imported(
+                    siteId,
+                    'categories',
+                    row.category_id,
+                )
+                if (!contactListId)
+                    invalid(
+                        'The topic moved to a category that was not imported',
+                    )
+                fields.contactListId = contactListId
+                const cf = ec.entity.conditionFactory
+                for (const e of Array.from(
+                    find(E + 'CommunicationEvent', {})
+                        .condition(
+                            cf.makeCondition(
+                                [
+                                    cf.makeCondition(
+                                        'communicationEventId',
+                                        'equals',
+                                        map.targetId,
+                                    ),
+                                    cf.makeCondition(
+                                        'rootCommEventId',
+                                        'equals',
+                                        map.targetId,
+                                    ),
+                                ],
+                                'or',
+                            ),
+                        )
+                        .limit(20000)
+                        .list(),
+                ))
+                    update(e, { contactListId })
+            }
+            update(t, fields)
+            const st = one(
+                F + 'ForumPostState',
+                { communicationEventId: map.targetId },
+                true,
+            )
+            if (row.deleted_at && st.visibility !== 'deleted')
+                update(st, {
+                    visibility: 'deleted',
+                    deletedAt: now(),
+                    deleteReason: 'Deleted in the source before cutover',
+                })
+            bump(siteId)
+        } else if (map.sourceType === 'categories' && map.targetId) {
+            const c = one(
+                F + 'ForumCategory',
+                { contactListId: map.targetId },
+                true,
+            )
+            const restricted = row.read_restricted === 't'
+            update(c, {
+                visibility: restricted ? 'category' : 'public',
+                policyRevision: Number(c.policyRevision || 0) + 1,
+            })
+            update(
+                one('mantle.marketing.contact.ContactList', {
+                    contactListId: map.targetId,
+                }),
+                {
+                    postingEnumId: restricted ? 'ClpMembers' : 'ClpAnyUser',
+                },
+            )
+            bump(siteId)
         }
         update(map, {
             state: 'imported',
-            ...(choice === 'apply'
-                ? {
-                      payload: map.changedPayload,
-                      checksum: rowHash(map.changedPayload),
-                  }
-                : {}),
+            payload: map.changedPayload,
+            checksum: rowHash(map.changedPayload),
             changedPayload: null,
         })
     }
@@ -709,6 +994,9 @@
         return { runId }
     }
     function importNext(run, config) {
+        // A cancelled, reconciled or active import takes no more rows; run the import again to continue.
+        const imp = one(F + 'ForumImportRun', { importId: config.importId })
+        if (!imp || !['importing', 'imported'].includes(imp.stage)) return null
         // A retry (which clears the checkpoint) starts the phases again; finished rows are skipped by their state.
         if (config.after === undefined && config.phase >= PHASES.length)
             config.phase = 0
@@ -902,10 +1190,11 @@
         })
         return postId
     }
+    /* Deleted posts stay deleted; whispers and posts the source hid for flags stay hidden from readers. */
     const visibilityOf = (row) =>
         row.deleted_at
             ? 'deleted'
-            : row.post_type === '4'
+            : row.post_type === '4' || row.hidden === 't'
               ? 'hidden'
               : 'approved'
     const legacy = (ctx, path, targetType, targetId) => {
@@ -923,9 +1212,9 @@
             const siteId = ctx.siteId
             const email = payloadOf(siteId, 'user_emails', u.id)?.email || null
             const decision = decisionOf(ctx, 'identity', u.id)?.decision
-            const existing = email
-                ? one('moqui.security.UserAccount', { emailAddress: email })
-                : null
+            // System users and bots share the placeholder; they get no account.
+            if (Number(u.id) <= 0) return placeholder(siteId)
+            const existing = accountByEmail(email)
             let partyId
             if (decision === 'map')
                 partyId = decisionOf(ctx, 'identity', u.id).targetId
@@ -940,7 +1229,14 @@
                     })
                     .call().partyId
                 // An address an existing account holds stays with that account until the operator decides.
-                if (email && !existing && decision !== 'inactive')
+                // Unconfirmed and staged source accounts get no login anyone could recover.
+                if (
+                    email &&
+                    !existing &&
+                    decision !== 'inactive' &&
+                    u.active !== 'f' &&
+                    u.staged !== 't'
+                )
                     create('moqui.security.UserAccount', {
                         userId: id(),
                         username: email,
@@ -1042,7 +1338,7 @@
                     'The first post of topic ' + t.id + ' is missing',
                 )
             const post = JSON.parse(first.payload)
-            const author = imported(siteId, 'users', t.user_id)
+            const author = authorOf(siteId, t.user_id)
             if (!author)
                 throw new Error(
                     'The author of topic ' + t.id + ' was not imported',
@@ -1100,7 +1396,7 @@
                     })
                 }
                 add(author)
-                for (const v of mapsOf(
+                for (const v of liveMaps(
                     siteId,
                     'topic_allowed_users',
                     t.id + ':',
@@ -1113,7 +1409,7 @@
                         ),
                     )
                 // A group's members join only from a reviewed snapshot of its membership; otherwise nobody is added.
-                for (const v of mapsOf(
+                for (const v of liveMaps(
                     siteId,
                     'topic_allowed_groups',
                     t.id + ':',
@@ -1124,7 +1420,7 @@
                         'snapshot'
                     )
                         continue
-                    for (const g of mapsOf(
+                    for (const g of liveMaps(
                         siteId,
                         'group_users',
                         groupId + ':',
@@ -1154,7 +1450,7 @@
                         post.id +
                         ' was not imported',
                 )
-            const author = imported(siteId, 'users', post.user_id)
+            const author = authorOf(siteId, post.user_id)
             if (!author)
                 throw new Error(
                     'The author of post ' + post.id + ' was not imported',
@@ -1210,7 +1506,7 @@
                     'Upload ' + upload.id + ' is not in the archive',
                 )
             if (
-                upload.sha1 &&
+                !/^[0-9a-f]{40}$/.test(upload.sha1 || '') ||
                 ec.resource.digest(location, 'sha1') !== upload.sha1
             )
                 throw new Error(
@@ -1386,18 +1682,20 @@
                 communicationEventId: postId,
                 rootCommEventId: st.rootCommEventId,
                 question: poll.title || poll.name || 'Poll',
+                // Discourse poll enums: type 1 multiple; results 0 always, 1 on vote, 2 on close, 3 staff only;
+                // visibility 1 everyone. Staff-only results show only when the poll closes.
                 maxChoices:
-                    poll.type === 'multiple'
+                    String(poll.type) === '1'
                         ? Number(poll.max || options.length || 1)
                         : 1,
                 closesAt: poll.close_at ? when(poll.close_at) : null,
                 resultsPolicy:
-                    poll.results === 'always'
+                    String(poll.results) === '0'
                         ? 'always'
-                        : poll.results === 'on_close'
-                          ? 'closed'
-                          : 'voted',
-                revealVoters: poll.visibility === 'everyone' ? 'Y' : 'N',
+                        : String(poll.results) === '1'
+                          ? 'voted'
+                          : 'closed',
+                revealVoters: String(poll.visibility) === '1' ? 'Y' : 'N',
                 allowChange: 'N',
                 voterCount: 0,
                 revision: 1,
@@ -1593,7 +1891,7 @@
                 { postingEnumId: 'ClpAnyUser' },
             )
         if (restricted)
-            for (const cg of mapsOf(siteId, 'category_groups', c.id + ':')) {
+            for (const cg of liveMaps(siteId, 'category_groups', c.id + ':')) {
                 const groupId = JSON.parse(cg.payload).group_id
                 if (
                     !['grant', 'snapshot'].includes(
@@ -1601,7 +1899,11 @@
                     )
                 )
                     continue
-                for (const g of mapsOf(siteId, 'group_users', groupId + ':')) {
+                for (const g of liveMaps(
+                    siteId,
+                    'group_users',
+                    groupId + ':',
+                )) {
                     const partyId = imported(
                         siteId,
                         'users',
@@ -1649,18 +1951,43 @@
         return postId
     }
     operations.registerJob('op-import-stage', {
-        next: (run, config) =>
-            config.done ? null : 'o' + (config.offset || 0),
+        next(run, config) {
+            // A retry (which clears the failure count) resumes at the piece that failed.
+            if (
+                config.done &&
+                config.failedOffset != null &&
+                Number(run.failedCount || 0) === 0
+            ) {
+                config.done = false
+                config.offset = config.failedOffset
+                config.failedOffset = null
+            }
+            const imp = one(F + 'ForumImportRun', { importId: config.importId })
+            if (
+                !imp ||
+                !['staging', 'registered', 'staged'].includes(imp.stage)
+            )
+                return null
+            return config.done ? null : 'o' + (config.offset || 0)
+        },
         item: stageItem,
-        // A piece that cannot be staged ends the staging run as failed rather than repeating.
-        onFailure: () => ({ done: true }),
+        // A piece that cannot be staged stops the run as failed; a retry starts again from it.
+        onFailure: (config) => ({
+            done: true,
+            failedOffset: config.offset || 0,
+        }),
         finish(run, config, failed) {
             const imp = one(
                 F + 'ForumImportRun',
                 { importId: config.importId },
                 true,
             )
-            if (!imp) return
+            if (
+                !imp ||
+                !['staging', 'registered', 'staged'].includes(imp.stage)
+            )
+                return
+            if (!failed) markRemoved(imp.siteId, imp.importId)
             const report = preflight(imp, config)
             update(imp, {
                 stage: failed ? 'registered' : 'staged',
@@ -1697,7 +2024,7 @@
                 { importId: config.importId },
                 true,
             )
-            if (imp)
+            if (imp && ['importing', 'imported'].includes(imp.stage))
                 update(imp, {
                     stage: 'imported',
                     revision: Number(imp.revision) + 1,
@@ -1829,6 +2156,15 @@
                     sourceId: t + ':' + v.sourceId,
                     detail: 'Changed in the source after import: keep or apply',
                 })
+        for (const t of REMOVABLE)
+            for (const v of mapsOf(siteId, t).filter(
+                (v) => v.state === 'removed',
+            ))
+                blockers.push({
+                    type: 'removed',
+                    sourceId: t + ':' + v.sourceId,
+                    detail: 'No longer in the source: keep or apply (apply revokes the access or removes the record)',
+                })
         if (sourcePrivate !== importedPrivate)
             blockers.push({
                 type: 'private',
@@ -1949,6 +2285,22 @@
             { revision: Number(imp.reconciliationRevision || 0) },
             p.expectedRevision,
         )
+        // The operator and the site owner are two people.
+        const other =
+            p.role === 'operator' ? imp.ownerPartyId : imp.operatorPartyId
+        if (
+            other &&
+            other === me() &&
+            Number(
+                p.role === 'operator'
+                    ? imp.ownerRevision
+                    : imp.operatorRevision,
+            ) === Number(imp.reconciliationRevision)
+        )
+            fail(
+                'Conflict',
+                'The operator and the site owner approvals come from two people',
+            )
         if (p.role === 'operator') {
             if (!isOperator())
                 fail('Unauthorized', 'An operator approves for operations')
@@ -2083,7 +2435,8 @@
                 : null
         const root = st ? st.rootCommEventId : found.targetId
         const { t } = topic(root, p.siteId)
-        let postId = st?.communicationEventId || null
+        let postId =
+            st?.visibility === 'approved' ? st.communicationEventId : null
         if (ordinal && ordinal > 1) {
             const target = one(F + 'ForumPostState', {
                 rootCommEventId: t.rootCommEventId,

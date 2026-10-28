@@ -88,7 +88,7 @@ along with this software (see the LICENSE.md file). If not, see
                                     in-map="{orderId:orderItem.orderId, orderItemSeqId:orderItem.orderItemSeqId,
                                         productId:orderItem.productId,
                                         subscriptionResourceId:productSubscriptionResource.subscriptionResourceId,
-                                        fromDate:productSubscriptionResource.fromDate}"/>
+                                        psrFromDate:productSubscriptionResource.fromDate}"/>
                             <script>fulfilledOrderItemList.push(orderItem)</script>
                         </if>
                     </iterate>
@@ -122,12 +122,25 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="orderItemSeqId" required="true"/>
             <parameter name="productId" required="true"/>
             <parameter name="subscriptionResourceId" required="true"/>
-            <parameter name="fromDate" type="Timestamp" required="false"/>
+            <parameter name="fromDate" type="Timestamp" required="false"><description>When the subscription starts; by default
+                when the customer's latest subscription to the resource ends, or now.</description></parameter>
+            <parameter name="psrFromDate" type="Timestamp"><description>The fromDate key of the ProductSubscriptionResource,
+                which is when that product began to grant the resource, not when this subscription starts; by default the
+                one in effect now.</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="subscriptionId"/></out-parameters>
         <actions>
             <entity-find-one entity-name="mantle.product.subscription.SubscriptionResource" value-field="subscriptionResource"/>
-            <entity-find-one entity-name="mantle.product.subscription.ProductSubscriptionResource" value-field="psr"/>
+            <if condition="psrFromDate != null"><then>
+                <entity-find-one entity-name="mantle.product.subscription.ProductSubscriptionResource" value-field="psr">
+                    <field-map field-name="productId"/><field-map field-name="subscriptionResourceId"/>
+                    <field-map field-name="fromDate" from="psrFromDate"/></entity-find-one>
+            </then><else>
+                <entity-find entity-name="mantle.product.subscription.ProductSubscriptionResource" list="psrList">
+                    <date-filter/><econdition field-name="productId"/><econdition field-name="subscriptionResourceId"/>
+                    <order-by field-name="-fromDate"/></entity-find>
+                <set field="psr" from="psrList?.[0]"/>
+            </else></if>
             <entity-find-one entity-name="mantle.order.OrderItem" value-field="orderItem"/>
             <set field="orderPart" from="orderItem['mantle.order.OrderPart']"/>
             <set field="customerPartyId" from="orderPart.customerPartyId"/>
@@ -140,8 +153,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <econdition field-name="resourceInstanceId" ignore-if-empty="true"/>
                 <order-by field-name="-thruDate"/>
             </entity-find>
+            <!-- a renewal starts where the latest subscription ends, or now when that is already past -->
             <if condition="fromDate == null">
-                <set field="fromDate" from="existingSubscriptionList?.[0]?.thruDate || ec.user.nowTimestamp"/></if>
+                <set field="lastThru" from="existingSubscriptionList?.[0]?.thruDate"/>
+                <set field="fromDate" from="lastThru &amp;&amp; ec.user.timestampMillis(lastThru) &gt; ec.user.timestampMillis(ec.user.nowTimestamp) ? lastThru : ec.user.nowTimestamp"/></if>
             <if condition="!resourceInstanceId &amp;&amp; (existingSubscriptionList?.length > 0)">
                 <set field="resourceInstanceId" from="existingSubscriptionList[0].resourceInstanceId"/></if>
 
@@ -201,28 +216,54 @@ along with this software (see the LICENSE.md file). If not, see
         <description>
             Scheduled (expire_SubscriptionAccess). For each Subscription past its thruDate plus the resource's
             revokeAccessTime, calls revokeAccessServiceName once; past thruDate plus destroyTime, calls destroyServiceName
-            once. A later Subscription for the same subscriber, resource and instance continues the access, so the earlier
-            one is marked handled without a call. Each subscription runs in its own transaction; a failure is logged with
-            its ID and the rest continue.
+            once. A later Subscription for the same subscriber, resource and instance that starts by the end of this one
+            continues the access, so this one is marked handled without a call. Subscriptions not yet due are passed over
+            without a transaction; each due one runs in its own, and a failure is logged with its ID and the rest continue.
         </description>
         <actions>
             <script><![CDATA[
             const cf = ec.entity.conditionFactory
-            const pending = ec.entity.find('mantle.product.subscription.Subscription')
-                .condition('thruDate', 'less-equals', ec.user.nowTimestamp)
-                .condition(cf.makeCondition([cf.makeCondition('accessRevokedDate', 'equals', null),
-                    cf.makeCondition('destroyedDate', 'equals', null)], 'or'))
-                .orderBy('thruDate,subscriptionId').limit(500).disableAuthz().list()
-            for (const sub of pending) {
-                try {
-                    ec.service.sync().name('mantle.product.SubscriptionServices.expire#Subscription')
-                        .parameters({subscriptionId: sub.subscriptionId}).requireNewTransaction(true).call()
-                    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
-                } catch (error) {
-                    ec.message.clearErrors()
-                    ec.logger.error('Subscription access expiry failed for ' + sub.subscriptionId + ': ' +
-                        String(error?.message || error).split('\n')[0])
+            const unitMillis = {TF_ms:1, TF_s:1000, TF_min:60000, TF_hr:3600000, TF_day:86400000, TF_wk:604800000,
+                TF_mon:2629746000, TF_yr:31556952000}
+            const nowMillis = ec.user.timestampMillis(ec.user.nowTimestamp)
+            const resources = new Map()
+            const resourceOf = (id) => {
+                if (!resources.has(id)) resources.set(id, ec.entity.find('mantle.product.subscription.SubscriptionResource')
+                    .condition('subscriptionResourceId', id).disableAuthz().one())
+                return resources.get(id)
+            }
+            const after = (sub, time, uomId) => ec.user.timestampMillis(sub.thruDate) +
+                Number(time || 0) * (unitMillis[uomId || 'TF_day'] ?? 86400000)
+            const due = (sub) => {
+                const r = resourceOf(sub.subscriptionResourceId)
+                if (!sub.accessRevokedDate) return nowMillis >= after(sub, r?.revokeAccessTime, r?.revokeAccessTimeUomId)
+                return !r?.destroyServiceName || nowMillis >= after(sub, r.destroyTime, r.destroyTimeUomId)
+            }
+            // Page by thruDate; rows not due yet are passed over, so they never hold back later ones.
+            for (let offset = 0, seen = 0; seen < 20000; offset += 500) {
+                const page = Array.from(ec.entity.find('mantle.product.subscription.Subscription')
+                    .condition('thruDate', 'less-equals', ec.user.nowTimestamp)
+                    .condition(cf.makeCondition([cf.makeCondition('accessRevokedDate', 'equals', null),
+                        cf.makeCondition('destroyedDate', 'equals', null)], 'or'))
+                    .orderBy('thruDate,subscriptionId').offset(offset).limit(500).disableAuthz().list())
+                seen += page.length
+                let handled = 0
+                for (const sub of page) {
+                    if (!due(sub)) continue
+                    try {
+                        ec.service.sync().name('mantle.product.SubscriptionServices.expire#Subscription')
+                            .parameters({subscriptionId: sub.subscriptionId}).requireNewTransaction(true).call()
+                        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                        handled++
+                    } catch (error) {
+                        ec.message.clearErrors()
+                        ec.logger.error('Subscription access expiry failed for ' + sub.subscriptionId + ': ' +
+                            String(error?.message || error).split('\n')[0])
+                    }
                 }
+                if (page.length < 500) break
+                // Rows handled completely leave the query, so the next page starts that much earlier.
+                offset -= handled
             }
             ]]></script>
         </actions>
@@ -242,11 +283,19 @@ along with this software (see the LICENSE.md file). If not, see
                 const after = (time, uomId) => ec.user.timestampMillis(sub.thruDate) +
                     Number(time || 0) * (unitMillis[uomId || 'TF_day'] ?? 86400000)
                 const nowMillis = ec.user.timestampMillis(ec.user.nowTimestamp)
+                // A later subscription continues the access when it starts by this one's end and has not ended (an open
+                // thru date counts); one after a gap does not, so access is revoked through the gap.
+                const cf = ec.entity.conditionFactory
                 const later = ec.entity.find('mantle.product.subscription.Subscription')
                     .condition('subscriptionResourceId', sub.subscriptionResourceId)
                     .condition('subscriberPartyId', sub.subscriberPartyId)
                     .condition('resourceInstanceId', sub.resourceInstanceId || null)
-                    .condition('thruDate', 'greater', sub.thruDate).disableAuthz().count() > 0
+                    .condition('subscriptionId', 'not-equals', sub.subscriptionId)
+                    .condition('fromDate', 'less-equals', sub.thruDate)
+                    .condition('accessRevokedDate', 'equals', null)
+                    .condition(cf.makeCondition([cf.makeCondition('thruDate', 'equals', null),
+                        cf.makeCondition('thruDate', 'greater', sub.thruDate)], 'or'))
+                    .disableAuthz().count() > 0
                 if (!sub.accessRevokedDate && nowMillis >= after(resource?.revokeAccessTime, resource?.revokeAccessTimeUomId)) {
                     if (!later && resource?.revokeAccessServiceName)
                         ec.service.sync().name(resource.revokeAccessServiceName).parameters({subscriptionId}).call()

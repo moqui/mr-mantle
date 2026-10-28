@@ -637,6 +637,9 @@
             } else {
                 if (!['deleted', 'hidden', 'rejected'].includes(st.visibility))
                     fail('Conflict', 'Post is not removed')
+                // Retention replaced its text with a tombstone: there is nothing left to restore.
+                if (st.textRemovedAt)
+                    fail('Conflict', 'Retention removed this post\'s text; it cannot be restored')
                 update(st, {
                     visibility: 'approved',
                     approvedRevision: st.revision,
@@ -994,7 +997,15 @@
                 state: 'failed',
             }).updateAll({ state: 'pending' })
             const config = JSON.parse(run.checkpoint)
-            delete config.after
+            const op = String(run.jobType || '').startsWith('op-')
+            // Import runs change a staging site's data: an operator recovers them.
+            if (String(run.jobType).startsWith('op-import') && !isOperator())
+                fail('Unauthorized', 'An operator recovers import runs')
+            // A resumed operation run continues from its checkpoint; a retry, or any other job, starts its pass again.
+            if (!(op && p.action === 'resume')) {
+                delete config.after
+                if (run.jobType === 'op-retention') config.classIndex = 0
+            }
             if (run.jobType === 'tracking') {
                 config.phase = 'markers'
                 config.after = ''
@@ -1003,8 +1014,15 @@
                 state: 'pending',
                 checkpoint: JSON.stringify(config),
                 failedCount: 0,
+                ...(op && p.action === 'retry' ? { successCount: 0 } : {}),
             })
         } else fail('Conflict', 'Job state changed')
+        // A member's export or erasure request follows its run, so a cancelled one can be asked for again.
+        for (const r of rows(F + 'ForumDataRequest', { runId: p.runId }))
+            update(r, {
+                state: p.action === 'cancel' ? 'cancelled' : 'running',
+                revision: Number(r.revision || 1) + 1,
+            })
         audit(p.siteId, null, 'job', p.runId, p.action, p.reason, null, null)
         return { state: run.state }
     }

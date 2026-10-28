@@ -200,7 +200,9 @@ function evaluateCategoryAccess(contactListId, actor, seen) {
           ].find(
               (g) =>
                   grantActive(g) &&
-                  qualifying.includes(g.sourceType || 'manual'),
+                  qualifying.includes(g.sourceType || 'manual') &&
+                  // A grant for the whole site opens only categories that chose their qualifying sources.
+                  (g.targetType === 'category' || !!c.qualifyingSources),
           )
         : null
     const granted = !!grant
@@ -289,11 +291,17 @@ function articleReadable(siteId, wikiPageId, partyId) {
 function sourceGate(rootCommEventId, partyId = me()) {
     for (const link of rows(S + 'PublicDiscussionLink', {
         rootCommEventId,
-        gate: 'narrow',
+        sourceType: 'article',
         detachedAt: null,
     }))
+        // A paid article's discussion is always gated by the article, whatever gate the link was given.
         if (
-            link.sourceType === 'article' &&
+            (link.gate === 'narrow' ||
+                one(S + 'PublicSubscriptionBinding', {
+                    siteId: link.siteId,
+                    targetType: 'article',
+                    targetId: link.sourceId,
+                })) &&
             !articleReadable(link.siteId, link.sourceId, partyId)
         )
             return false

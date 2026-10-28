@@ -44,21 +44,22 @@ feature("a product with a subscription resource: approving an order starts a sub
         list[0].orderId == first
         list[0].subscriptionResourceId == "SUBTEST1"
         list[0].subscriptionTypeEnumId == "StProduct"
-        // the subscription starts at the product resource's from date, and two units of three months each end six months later
-        String(list[0].fromDate) == String(effectiveTime - 86400000)
-        String(list[0].thruDate) == String(sixMonthsAfter(effectiveTime - 86400000))
+        // the subscription starts when the order is approved (the product resource's from date is when the product began
+        // to grant it), and two units of three months each end six months later
+        String(list[0].fromDate) == String(effectiveTime)
+        String(list[0].thruDate) == String(sixMonthsAfter(effectiveTime))
     },
 })
 
-feature("a second order makes a second subscription, again from the product resource's from date", {
+feature("a second order makes a second subscription that starts where the first ends", {
     when() {
         second = approvedOrder(1)
         return { list: subscriptions() }
     },
     then({ list }) {
         list.length == 2
-        // approving passes the product resource's from date, so the renewal chaining (from the last thru date) applies only when none is given
-        String(list[1].fromDate) == String(effectiveTime - 86400000)
+        // a renewal starts where the earlier subscription ends
+        String(list[1].fromDate) == String(list[0].thruDate)
         list[1].orderId == second
         list[1].thruDate != null
     },

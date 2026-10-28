@@ -196,6 +196,9 @@ along with this software (see the LICENSE.md file). If not, see
                             if (root.contactListId !== contactListId) {
                                 ec.message.addError(`Communication event ${rootCommEventId} is not a post in mailbox ${listName}`); return }
                             if (root.statusId === 'CeResolved') { ec.message.addError(`This thread in mailbox ${listName} is closed`); return }
+                            // A forum discussion gated by its source (a withdrawn article) takes no posts from Comms either.
+                            if (!ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').sourceGate(rootCommEventId, fromPartyId)) {
+                                ec.message.addError(`Communication event ${rootCommEventId} not found`); return }
                             const cf = ec.entity.conditionFactory
                             threadEvents = Array.from(ec.entity.find('mantle.party.communication.CommunicationEvent')
                                     .condition(cf.makeCondition([cf.makeCondition('communicationEventId', 'equals', rootCommEventId),

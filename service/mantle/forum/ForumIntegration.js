@@ -409,7 +409,10 @@
                         })?.productName || '',
                     published,
                 })
-            } else if (link.sourceType === 'article') {
+            } else if (
+                link.sourceType === 'article' ||
+                link.sourceType === 'article-source'
+            ) {
                 const page = one('moqui.resource.wiki.WikiPage', {
                     wikiPageId: link.sourceId,
                 })
@@ -574,7 +577,15 @@
             }).length
         )
             missing()
-        const body = StringUtilities.cleanHtml(p.body || '')
+        // Exactly what publishing produces: sanitized, then the community's word rules.
+        const ruled = core.applyRules(
+            p.siteId,
+            event.contactListId,
+            StringUtilities.cleanHtml(p.body || ''),
+        )
+        if (ruled.block)
+            invalid('This reply contains content the community does not allow')
+        const body = ruled.body
         if (!body.trim()) invalid('The reply is empty')
         const c = one(F + 'ForumCategory', {
             contactListId: event.contactListId,
@@ -639,8 +650,16 @@
             )
                 missing()
             // An article's comments follow the article unless the owner links it without a gate.
+            const bound =
+                p.sourceType === 'article' &&
+                !!one(S + 'PublicSubscriptionBinding', {
+                    siteId: p.siteId,
+                    targetType: 'article',
+                    targetId: p.sourceId,
+                })
+            // An article's comments follow the article unless the owner links a free one without a gate.
             const gate =
-                p.sourceType === 'article' && p.gate !== 'none'
+                p.sourceType === 'article' && (p.gate !== 'none' || bound)
                     ? 'narrow'
                     : 'none'
             const c = one(F + 'ForumCategory', {
@@ -761,6 +780,17 @@
                 .trim()
                 .slice(0, 120)
             if (!title) invalid('A title is required')
+            // A draft is a new page: a page of that title (perhaps a published article) is never overwritten.
+            if (
+                one('moqui.resource.wiki.WikiPage', {
+                    wikiSpaceId: s.publishingWikiSpaceId,
+                    pagePath: title,
+                })
+            )
+                fail(
+                    'Conflict',
+                    'A page with that title already exists; choose another title',
+                )
             const page = serviceCall(
                 'org.moqui.impl.WikiServices.update#WikiPage',
                 {
@@ -784,11 +814,12 @@
                 'Unauthorized',
             )
             const linkId = id()
-            // The topic is the article's source, not its comment thread: no gate.
+            // The topic is the article's source, not its comment thread: a provenance link, no gate, and the article
+            // can still get its own discussion.
             create(S + 'PublicDiscussionLink', {
                 linkId,
                 siteId: p.siteId,
-                sourceType: 'article',
+                sourceType: 'article-source',
                 sourceId: page.wikiPageId,
                 rootCommEventId: t.rootCommEventId,
                 gate: 'none',
@@ -808,9 +839,22 @@
             )
             return { wikiPageId: page.wikiPageId, linkId }
         })
-    /* Whether a party holds any current grant on a site, which lets them join a site whose registration is closed. */
+    /* Whether a party holds a current grant for the site, or for a category that qualifies its source, which lets them
+       join a site whose registration is closed. */
     const hasSiteGrant = (siteId, partyId) =>
         !!partyId &&
-        rows(S + 'PublicAccessGrant', { siteId, partyId }).some(grantActive)
+        rows(S + 'PublicAccessGrant', { siteId, partyId }).some(
+            (g) =>
+                grantActive(g) &&
+                (g.targetType === 'site' ||
+                    (g.targetType === 'category' &&
+                        String(
+                            one(F + 'ForumCategory', {
+                                contactListId: g.targetId,
+                            })?.qualifyingSources || 'manual',
+                        )
+                            .split(',')
+                            .includes(g.sourceType || 'manual'))),
+        )
     return { applySubscription, memberEntitlements, hasSiteGrant }
 }

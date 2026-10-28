@@ -222,6 +222,8 @@ const methods = {}
 const moderation = ec.resource.script(
     'component://mr-mantle/service/mantle/forum/ForumModeration.js',
 )(core, methods)
+// The word rules, for the integration module's exact case-reply preview.
+core.applyRules = applyRules
 const integration = ec.resource.script(
     'component://mr-mantle/service/mantle/forum/ForumIntegration.js',
 )(core, methods)
@@ -786,15 +788,23 @@ methods.previewCategoryAccess = (p) => {
         category: categoryProjection(a),
         proposedVisibility: p.visibility,
         proposedQualifyingSources: p.qualifyingSources ?? null,
-        activeGrantCount: rows(
-            S + 'PublicAccessGrant',
-            {
-                siteId: p.siteId,
-                targetType: 'category',
-                targetId: p.contactListId,
-            },
-            1000,
-        ).filter(grantActive).length,
+        // The grants that would admit readers with the proposed sources; site grants count once sources are chosen.
+        activeGrantCount: (() => {
+            const chosen =
+                p.qualifyingSources ??
+                (a.category.qualifyingSources
+                    ? String(a.category.qualifyingSources).split(',')
+                    : null)
+            const sources = chosen || ['manual']
+            const counts = (fields) =>
+                rows(S + 'PublicAccessGrant', { siteId: p.siteId, ...fields }, 10000).filter(
+                    (g) => grantActive(g) && sources.includes(g.sourceType || 'manual'),
+                ).length
+            return (
+                counts({ targetType: 'category', targetId: p.contactListId }) +
+                (chosen ? counts({ targetType: 'site' }) : 0)
+            )
+        })(),
         topicCount: find(E + 'CommunicationEvent', {
             contactListId: p.contactListId,
         })
