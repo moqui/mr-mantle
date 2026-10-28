@@ -155,4 +155,81 @@
       <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('endSanction',input || {})</script>
     </actions>
   </service>
+  <service verb="store" noun="Rule" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('storeRule',input || {})</script>
+    </actions>
+  </service>
+  <service verb="find" noun="Rules" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findRules',input || {})</script>
+    </actions>
+  </service>
+  <service verb="test" noun="Rule" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('testRule',input || {})</script>
+    </actions>
+  </service>
+  <service verb="set" noun="Trust" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('setTrust',input || {})</script>
+    </actions>
+  </service>
+  <service verb="decide" noun="Reviews" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('decideReviews',input || {})</script>
+    </actions>
+  </service>
+  <service verb="appeal" noun="Review" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('appealReview',input || {})</script>
+    </actions>
+  </service>
+  <service verb="find" noun="MyReviews" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findMyReviews',input || {})</script>
+    </actions>
+  </service>
 </services>

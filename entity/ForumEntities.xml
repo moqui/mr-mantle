@@ -35,6 +35,7 @@
     <field name="unlisted" type="text-indicator"/>
     <field name="visiblePostCount" type="number-integer"/>
     <field name="reactionCount" type="number-integer"/>
+    <field name="slowIntervalSeconds" type="number-integer"/>
     <field name="lastActivity" type="date-time"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <index name="FORUM_TOPIC_PAGE">
@@ -208,6 +209,8 @@
     <field name="claimExpiresAt" type="date-time"/>
     <field name="createdAt" type="date-time"/>
     <field name="decisionReason" type="text-long"/>
+    <field name="linkedReviewId" type="id"/>
+    <field name="detail" type="text-long"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.marketing.contact.ContactList"/>
     <index name="FORUM_REVIEW_QUEUE">
@@ -271,6 +274,15 @@
     <field name="dayKey" type="id"/>
     <field name="dailyTopics" type="number-integer"/>
     <field name="dailyReplies" type="number-integer"/>
+    <field name="topicsEntered" type="number-integer"/>
+    <field name="postsRead" type="number-integer"/>
+    <field name="readingSeconds" type="number-integer"/>
+    <field name="visitDays" type="number-integer"/>
+    <field name="lastVisitDay" type="id"/>
+    <field name="lastReadAt" type="date-time"/>
+    <field name="trustLocked" type="text-indicator"/>
+    <field name="trustReason" type="text-long"/>
+    <field name="trustSetAt" type="date-time"/>
     <field name="revision" type="number-integer"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.party.Party"/>
@@ -406,6 +418,66 @@
     <field name="errorText" type="text-long"/>
     <field name="attempts" type="number-integer"/>
     <relationship type="one" related="mantle.forum.ForumJobRun"/>
+  </entity>
+  <entity entity-name="ForumMemberPreference" package="mantle.forum">
+    <field name="siteId" type="id" is-pk="true"/>
+    <field name="partyId" type="id" is-pk="true"/>
+    <field name="targetPartyId" type="id" is-pk="true"/>
+    <field name="preference" type="id"/>
+    <field name="expiresAt" type="date-time"/>
+    <field name="revision" type="number-integer"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <relationship type="one" related="mantle.party.Party"/>
+    <relationship type="one" related="mantle.party.Party" title="Target">
+      <key-map field-name="targetPartyId" related="partyId"/>
+    </relationship>
+  </entity>
+  <entity entity-name="ForumRule" package="mantle.forum">
+    <field name="ruleId" type="id" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="contactListId" type="id"/>
+    <field name="ruleType" type="id"/>
+    <field name="pattern" type="text-medium"/>
+    <field name="action" type="id"/>
+    <field name="enabled" type="text-indicator"/>
+    <field name="priority" type="number-integer"/>
+    <field name="revision" type="number-integer"/>
+    <field name="createdAt" type="date-time"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <index name="FORUM_RULE_SITE">
+      <index-field name="siteId"/>
+      <index-field name="enabled"/>
+      <index-field name="priority"/>
+    </index>
+  </entity>
+  <entity entity-name="ForumTopicTimer" package="mantle.forum">
+    <field name="timerId" type="id" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="rootCommEventId" type="id"/>
+    <field name="contactListId" type="id"/>
+    <field name="action" type="id"/>
+    <field name="dueAt" type="date-time"/>
+    <field name="state" type="id"/>
+    <field name="reason" type="text-long"/>
+    <field name="createdByPartyId" type="id"/>
+    <field name="revision" type="number-integer"/>
+    <field name="lastError" type="text-long"/>
+    <relationship type="one" related="mantle.forum.ForumTopic"/>
+    <index name="FORUM_TIMER_DUE">
+      <index-field name="state"/>
+      <index-field name="dueAt"/>
+    </index>
+    <index name="FORUM_TIMER_TOPIC">
+      <index-field name="rootCommEventId"/>
+      <index-field name="state"/>
+    </index>
+  </entity>
+  <entity entity-name="ForumPermalink" package="mantle.forum">
+    <field name="oldRootCommEventId" type="id" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="targetRootCommEventId" type="id"/>
+    <field name="createdAt" type="date-time"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
   </entity>
   <entity entity-name="ForumTag" package="mantle.forum">
     <field name="tagId" type="id" is-pk="true"/>

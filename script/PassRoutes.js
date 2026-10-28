@@ -102,4 +102,11 @@
     ['GET', 'posts/{postId}/revisions/compare', 'comparePostRevisions'],
     ['POST', 'posts/{postId}/restore', 'restorePostRevision'],
     ['DELETE', 'posts/{postId}', 'deletePost'],
+    ['GET', 'rules', 'findRules'],
+    ['POST', 'rules', 'storeRule'],
+    ['POST', 'rules/test', 'testRule'],
+    ['PATCH', 'moderation/members/{targetPartyId}/trust', 'setTrust'],
+    ['POST', 'reviews/decisions', 'decideReviews'],
+    ['POST', 'reviews/{reviewId}/appeal', 'appealReview'],
+    ['GET', 'me/reviews', 'findMyReviews'],
 ]

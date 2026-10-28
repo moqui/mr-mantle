@@ -296,6 +296,11 @@
             'expectedGeneration',
             'postId',
             'active',
+            'postIds',
+            'targetRootCommEventId',
+            'slowIntervalSeconds',
+            'timerAction',
+            'dueAt',
         ],
     },
     findActions: {
@@ -388,7 +393,7 @@
     },
     storePolicy: {
         service: 'mantle.forum.ModerationServices.store#Policy',
-        fields: ['siteId', 'config', 'expectedRevision'],
+        fields: ['siteId', 'config', 'expectedRevision', 'reason'],
     },
     getPolicy: {
         service: 'mantle.forum.ModerationServices.get#Policy',
@@ -460,7 +465,14 @@
     },
     previewTopicAction: {
         service: 'mantle.forum.ModerationServices.preview#TopicAction',
-        fields: ['siteId', 'rootCommEventId', 'targetContactListId'],
+        fields: [
+            'siteId',
+            'rootCommEventId',
+            'targetContactListId',
+            'action',
+            'postIds',
+            'targetRootCommEventId',
+        ],
     },
     resolveDelivery: {
         service: 'mantle.forum.DeliveryServices.resolve#Delivery',
@@ -568,5 +580,52 @@
     deletePost: {
         service: 'mantle.forum.ForumServices.delete#Post',
         fields: ['siteId', 'postId', 'expectedRevision', 'reason'],
+    },
+    storeRule: {
+        service: 'mantle.forum.ModerationServices.store#Rule',
+        fields: [
+            'siteId',
+            'ruleId',
+            'contactListId',
+            'ruleType',
+            'pattern',
+            'action',
+            'active',
+            'sequenceNum',
+            'expectedRevision',
+            'reason',
+            'operationId',
+        ],
+    },
+    findRules: {
+        service: 'mantle.forum.ModerationServices.find#Rules',
+        fields: ['siteId'],
+    },
+    testRule: {
+        service: 'mantle.forum.ModerationServices.test#Rule',
+        fields: ['siteId', 'ruleType', 'pattern', 'body'],
+    },
+    setTrust: {
+        service: 'mantle.forum.ModerationServices.set#Trust',
+        fields: [
+            'siteId',
+            'targetPartyId',
+            'trustLevel',
+            'locked',
+            'reason',
+            'expectedRevision',
+        ],
+    },
+    decideReviews: {
+        service: 'mantle.forum.ModerationServices.decide#Reviews',
+        fields: ['siteId', 'reviewIds', 'decision', 'reason'],
+    },
+    appealReview: {
+        service: 'mantle.forum.ModerationServices.appeal#Review',
+        fields: ['siteId', 'reviewId', 'reason', 'operationId'],
+    },
+    findMyReviews: {
+        service: 'mantle.forum.ModerationServices.find#MyReviews',
+        fields: ['siteId'],
     },
 })

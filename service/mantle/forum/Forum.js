@@ -7,6 +7,8 @@ const F = 'mantle.forum.',
     E = 'mantle.party.communication.'
 const now = () => ec.user.nowTimestamp
 const millis = (value) => (value == null ? 0 : ec.user.timestampMillis(value))
+/* A time stamp for an entity condition from epoch milliseconds. */
+const stamp = (ms) => new Date(ms)
 const id = () => ec.user.randomString(32)
 const hash = (text) => ec.user.singleUseCodeHash(String(text))
 const me = () =>
@@ -299,7 +301,8 @@ function canEditPost(state, event, a) {
     if (!a.canEdit || state.visibility === 'deleted') return false
     if (
         event.fromPartyId === me() &&
-        millis(now()) - millis(event.entryDate) <= 86400000
+        millis(now()) - millis(event.entryDate) <=
+            editWindowMs(a.category.siteId)
     )
         return true
     return (
@@ -365,7 +368,8 @@ function postProjection(state, event, a, t) {
                 state.rootCommEventId !== event.communicationEventId &&
                 (a.canModerate ||
                     (event.fromPartyId === me() &&
-                        millis(now()) - millis(event.entryDate) <= 86400000)),
+                        millis(now()) - millis(event.entryDate) <=
+                            editWindowMs(a.category.siteId))),
         },
         attachments: deleted
             ? []
@@ -1167,7 +1171,7 @@ methods.findTopics = (p) =>
                 q = q.condition(
                     'lastActivity',
                     'greater-equals',
-                    millis(now()) - TOP_PERIODS[p.period],
+                    stamp(millis(now()) - TOP_PERIODS[p.period]),
                 )
             const candidates = Array.from(
                 q
@@ -1255,13 +1259,36 @@ methods.findTopics = (p) =>
         return { topicList: list, nextCursor: more ? pg.next(offset) : null }
     })
 methods.getTopic = (p) => {
+    // A merged topic's old ID resolves to its destination after the destination's own access check.
+    if (!one(F + 'ForumTopic', { rootCommEventId: p.rootCommEventId })) {
+        const alias = one(F + 'ForumPermalink', {
+            oldRootCommEventId: p.rootCommEventId,
+        })
+        if (alias && alias.siteId === p.siteId)
+            return {
+                topic: {
+                    ...methods.getTopic({
+                        siteId: p.siteId,
+                        rootCommEventId: alias.targetRootCommEventId,
+                    }).topic,
+                    movedFrom: p.rootCommEventId,
+                },
+            }
+    }
     const { t, event, a } = topic(p.rootCommEventId, p.siteId)
     return {
         topic: {
             ...pick(
                 t,
-                'rootCommEventId revision pinned visiblePostCount lastActivity',
+                'rootCommEventId revision pinned unlisted slowIntervalSeconds visiblePostCount lastActivity',
             ),
+            timers: a.canModerate
+                ? rows(
+                      F + 'ForumTopicTimer',
+                      { rootCommEventId: t.rootCommEventId, state: 'pending' },
+                      10,
+                  ).map((v) => pick(v, 'timerId action dueAt reason'))
+                : [],
             marker: readingBoundary(
                 t.rootCommEventId,
                 p.siteId,
@@ -1554,8 +1581,12 @@ methods.publishPost = (p) => {
             fail('Unauthorized', 'Posting is not permitted')
         if (existing?.event.statusId === 'CeResolved')
             fail('Conflict', 'This topic is closed')
-        if (!String(p.body || '').trim() || String(p.body).length > 100000)
-            invalid('Body must contain 1–100000 characters')
+        const pol = policy(p.siteId)
+        if (
+            !String(p.body || '').trim() ||
+            String(p.body).length > pol.maxPostLength
+        )
+            invalid('Body must contain 1–' + pol.maxPostLength + ' characters')
         if (!existing && (!p.title || String(p.title).length > 250))
             invalid('A title of at most 250 characters is required')
         if (p.parentCommEventId) {
@@ -1584,26 +1615,35 @@ methods.publishPost = (p) => {
                 dailyReplies: 0,
                 revision: 1,
             })
-        const currentPolicy = Array.from(
-            find(F + 'ForumPolicy', { siteId: p.siteId })
-                .orderBy('-policyRevision')
-                .limit(1)
-                .list(),
-        )[0]
-        const postingPolicy = currentPolicy
-            ? JSON.parse(currentPolicy.config)
-            : {}
         if (
             memberState.lastPostedAt &&
             millis(now()) - millis(memberState.lastPostedAt) <
-                Number(postingPolicy.postIntervalSeconds ?? 10) * 1000
+                pol.postIntervalSeconds * 1000
         )
             fail(
                 'Tarpit',
-                'Wait ' +
-                    Number(postingPolicy.postIntervalSeconds ?? 10) +
-                    ' seconds between posts',
+                'Wait ' + pol.postIntervalSeconds + ' seconds between posts',
             )
+        // Slow mode spaces one member's replies in this topic; staff are not limited.
+        const slow = Number(existing?.t.slowIntervalSeconds || 0)
+        if (slow > 0 && !a.canModerate) {
+            const last = Array.from(
+                find(F + 'ForumPostSearch', {
+                    rootCommEventId: existing.t.rootCommEventId,
+                    fromPartyId: me(),
+                })
+                    .orderBy('-entryDate')
+                    .limit(1)
+                    .list(),
+            )[0]
+            if (last && millis(now()) - millis(last.entryDate) < slow * 1000)
+                fail(
+                    'Tarpit',
+                    'This topic is in slow mode; wait ' +
+                        slow +
+                        ' seconds between replies',
+                )
+        }
         const day = String(now()).slice(0, 10),
             daily =
                 memberState.dayKey === day
@@ -1611,28 +1651,41 @@ methods.publishPost = (p) => {
                         ? Number(memberState.dailyReplies)
                         : Number(memberState.dailyTopics)
                     : 0
-        const caps =
-            memberState.trustLevel === 'new'
-                ? [3, 10]
-                : memberState.trustLevel === 'basic'
-                  ? [10, 50]
-                  : [20, 100]
-        if (daily >= caps[existing ? 1 : 0])
-            fail('Tarpit', 'Daily contribution limit reached')
-        const body = StringUtilities.cleanHtml(p.body),
-            count = (pattern) => (body.match(pattern) || []).length
+        const effects =
+            TRUST_EFFECTS[memberState.trustLevel] || TRUST_EFFECTS.new
         if (
-            memberState.trustLevel === 'new' &&
-            (count(/<a\b/gi) > 2 || count(/<img\b/gi) > 1)
+            !a.canModerate &&
+            daily >= (existing ? effects.replies : effects.topics)
         )
-            invalid('New members may include two links and one image')
+            fail('Tarpit', 'Daily contribution limit reached')
+        let body = StringUtilities.cleanHtml(p.body)
+        const count = (pattern) => (body.match(pattern) || []).length
+        if (
+            !a.canModerate &&
+            (count(/<a\b/gi) > effects.links ||
+                count(/<img\b/gi) > effects.images ||
+                mentionHandles(body).length > effects.mentions)
+        )
+            invalid(
+                'Your trust level allows ' +
+                    effects.links +
+                    ' links, ' +
+                    effects.images +
+                    ' images and ' +
+                    effects.mentions +
+                    ' mentions per post',
+            )
+        const ruled = applyRules(p.siteId, a.category.contactListId, body)
+        if (ruled.block && !a.canModerate)
+            invalid('This post contains content the community does not allow')
+        body = ruled.body
         const postId = id(),
             root = existing?.t.rootCommEventId || postId,
             ordinal = existing ? Number(existing.t.nextOrdinal) : 1
-        const pending =
-            Number(memberState.approvedContributions || 0) <
-                Number(postingPolicy.firstContributionCount ?? 2) &&
-            !a.canModerate
+        const firstPost =
+                Number(memberState.approvedContributions || 0) <
+                    pol.firstContributionCount && !a.canModerate,
+            pending = firstPost || (ruled.approve && !a.canModerate)
         create(E + 'CommunicationEvent', {
             communicationEventId: postId,
             communicationEventTypeId: 'Message',
@@ -1724,9 +1777,18 @@ methods.publishPost = (p) => {
                 'post',
                 postId,
                 1,
-                'first-post',
+                firstPost ? 'first-post' : 'rule',
             )
         else {
+            if (ruled.flag)
+                review(
+                    p.siteId,
+                    a.category.contactListId,
+                    'post',
+                    postId,
+                    1,
+                    'rule',
+                )
             allocateInternal(postId, a.category.contactListId, me())
             create(F + 'ForumOutbox', {
                 outboxId: id(),
@@ -1737,6 +1799,7 @@ methods.publishPost = (p) => {
                 createdAt: now(),
             })
         }
+        queueClassification(p.siteId, postId)
         if (savedDraft) savedDraft.delete()
         return {
             postId,
@@ -1808,10 +1871,21 @@ methods.updatePost = (p) => {
         invalid('Only the author changes attachments')
     if (a.canModerate && event.fromPartyId !== me() && !p.reason)
         invalid('Staff edits require a reason')
-    if (!String(p.body || '').trim() || String(p.body).length > 100000)
-        invalid('Body must contain 1–100000 characters')
+    const pol = policy(p.siteId)
+    if (
+        !String(p.body || '').trim() ||
+        String(p.body).length > pol.maxPostLength
+    )
+        invalid('Body must contain 1–' + pol.maxPostLength + ' characters')
+    const ruled = applyRules(
+        p.siteId,
+        a.category.contactListId,
+        StringUtilities.cleanHtml(p.body),
+    )
+    if (ruled.block && !a.canModerate)
+        invalid('This post contains content the community does not allow')
     const r = Number(st.revision) + 1,
-        body = StringUtilities.cleanHtml(p.body)
+        body = ruled.body
     create(F + 'ForumPostRevision', {
         communicationEventId: p.postId,
         revision: r,
@@ -1865,6 +1939,9 @@ methods.updatePost = (p) => {
         )
     // Open reports now concern the edited text; decisions bind to that revision.
     refreshReviews(p.siteId, p.postId, r)
+    if ((ruled.approve || ruled.flag) && !a.canModerate)
+        review(p.siteId, a.category.contactListId, 'post', p.postId, r, 'rule')
+    queueClassification(p.siteId, p.postId)
     bump(p.siteId)
     if (p.draftId) {
         const draft = one(F + 'ForumDraft', {
@@ -1953,6 +2030,13 @@ methods.markRead = (p) => {
                   : marker?.unreadBoundary,
     }
     marker ? update(marker, fields) : create(F + 'ForumTopicUser', fields)
+    if (active(member(p.siteId, partyId)) && p.markUnread !== true)
+        recordReading(
+            p.siteId,
+            partyId,
+            Math.max(0, fields.consumedOrdinal - consumed),
+            !marker,
+        )
     if (internalParty(partyId) && p.markUnread !== true) {
         for (const postId of rendered) {
             const post = one(F + 'ForumPostState', {
@@ -1996,6 +2080,8 @@ methods.flagPost = (p) =>
         })
         if (!postVisible(st, event, a)) missing()
         if (!p.reason) invalid('A reason is required')
+        if (event.fromPartyId === me())
+            invalid('Edit or delete your own post instead of reporting it')
         one(S + 'PublicSite', { siteId: p.siteId }, true)
         const r = review(
             p.siteId,
@@ -2018,7 +2104,13 @@ methods.flagPost = (p) =>
                 evidence: event.body,
                 createdAt: now(),
             })
-        return { reviewId: r.reviewId, state: r.state }
+        const lockedState = one(
+            F + 'ForumPostState',
+            { communicationEventId: p.postId },
+            true,
+        )
+        const hidden = hideIfFlagged(p.siteId, lockedState, event, r.reviewId)
+        return { reviewId: r.reviewId, state: r.state, hidden }
     })
 function staff(siteId, contactListId) {
     if (contactListId) {
@@ -2065,7 +2157,7 @@ methods.findReviews = (p) => {
             .map((r) =>
                 pick(
                     r,
-                    'reviewId targetType targetId targetRevision reasonFamily state revision claimedByPartyId claimExpiresAt createdAt',
+                    'reviewId targetType targetId targetRevision reasonFamily state revision claimedByPartyId claimExpiresAt createdAt linkedReviewId',
                 ),
             ),
         nextCursor:
@@ -2082,7 +2174,7 @@ methods.getReview = (p) => {
     return {
         review: pick(
             r,
-            'reviewId targetType targetId targetRevision reasonFamily state revision claimedByPartyId claimExpiresAt createdAt decisionReason',
+            'reviewId targetType targetId targetRevision reasonFamily state revision claimedByPartyId claimExpiresAt createdAt decisionReason linkedReviewId detail',
         ),
         post:
             r.targetType === 'post'
@@ -2211,7 +2303,15 @@ methods.decideReview = (p) => {
                 { rootCommEventId: st.rootCommEventId },
                 true,
             )
-        if (p.decision === 'approved' && st.visibility !== 'approved') {
+        if (st.visibility === 'hidden' && p.decision !== 'rejected') {
+            // A post hidden by reports returns when staff dismiss the reports or approve the post.
+            update(st, { visibility: 'approved' })
+            if (st.communicationEventId !== t.rootCommEventId)
+                update(t, {
+                    visiblePostCount: Number(t.visiblePostCount) + 1,
+                    revision: Number(t.revision) + 1,
+                })
+        } else if (p.decision === 'approved' && st.visibility !== 'approved') {
             update(st, {
                 visibility: 'approved',
                 approvedRevision: st.revision,
@@ -2286,7 +2386,24 @@ methods.decideReview = (p) => {
     bump(p.siteId)
     return { state: r.state, revision: Number(r.revision) }
 }
-const TOPIC_ACTIONS = ['close', 'reopen', 'title', 'category', 'wiki']
+const TOPIC_ACTIONS = [
+    'close',
+    'reopen',
+    'title',
+    'category',
+    'wiki',
+    'pin',
+    'unpin',
+    'unlist',
+    'list',
+    'slow',
+    'timer',
+    'delete',
+    'restore',
+    'move-posts',
+    'split',
+    'merge',
+]
 methods.applyTopicAction = (p) => {
     requireUser()
     site(p.siteId)
@@ -2296,6 +2413,23 @@ methods.applyTopicAction = (p) => {
     revision(t, p.expectedRevision)
     if (!p.reason) invalid('A reason is required')
     if (!TOPIC_ACTIONS.includes(p.action)) invalid('Unsupported topic action')
+    if (['move-posts', 'split', 'merge'].includes(p.action)) {
+        // Each root change is one transaction: a failure leaves both topics as they were.
+        const before = Number(t.revision),
+            out = restructure(p, t, event, a)
+        audit(
+            p.siteId,
+            event.contactListId,
+            'topic',
+            t.rootCommEventId,
+            p.action,
+            p.reason + ' → ' + out.rootCommEventId,
+            before,
+            before + 1,
+        )
+        bump(p.siteId)
+        return { revision: before + 1, ...out }
+    }
     if (p.action === 'category') {
         const target = category(p.targetContactListId, p.siteId)
         if (!target.canModerate)
@@ -2369,6 +2503,83 @@ methods.applyTopicAction = (p) => {
     } else if (p.action === 'title') {
         if (!p.title) invalid('Title required')
         update(event, { subject: p.title })
+    } else if (['pin', 'unpin', 'unlist', 'list'].includes(p.action)) {
+        update(
+            t,
+            p.action === 'pin' || p.action === 'unpin'
+                ? { pinned: p.action === 'pin' ? 'Y' : 'N' }
+                : { unlisted: p.action === 'unlist' ? 'Y' : 'N' },
+        )
+    } else if (p.action === 'slow') {
+        const seconds = Number(p.slowIntervalSeconds || 0)
+        if (!Number.isInteger(seconds) || seconds < 0 || seconds > 86400)
+            invalid('Slow mode is 0–86400 seconds')
+        update(t, { slowIntervalSeconds: seconds })
+    } else if (p.action === 'timer') {
+        if (p.timerAction === 'cancel')
+            find(F + 'ForumTopicTimer', {
+                rootCommEventId: t.rootCommEventId,
+                state: 'pending',
+            }).updateAll({ state: 'cancelled', lastError: p.reason })
+        else {
+            if (!TIMER_ACTIONS.includes(p.timerAction))
+                invalid('Invalid timer action')
+            if (!(millis(p.dueAt) > millis(now())))
+                invalid('A timer is due in the future')
+            create(F + 'ForumTopicTimer', {
+                timerId: id(),
+                siteId: p.siteId,
+                rootCommEventId: t.rootCommEventId,
+                contactListId: event.contactListId,
+                action: p.timerAction,
+                dueAt: millis(p.dueAt),
+                state: 'pending',
+                reason: p.reason,
+                createdByPartyId: me(),
+                revision: 1,
+            })
+        }
+    } else if (p.action === 'delete' || p.action === 'restore') {
+        const postId = p.postId || t.rootCommEventId,
+            st = one(
+                F + 'ForumPostState',
+                { communicationEventId: postId },
+                true,
+            )
+        if (!st || st.rootCommEventId !== t.rootCommEventId) missing()
+        const isRoot = postId === t.rootCommEventId
+        if (p.action === 'delete') {
+            if (st.visibility === 'deleted') fail('Conflict', 'Already deleted')
+            // Deleting the root hides the whole topic from readers; replies keep their state for a restore.
+            if (isRoot)
+                update(st, {
+                    visibility: 'deleted',
+                    deletedAt: now(),
+                    deletedByPartyId: me(),
+                    deleteReason: p.reason,
+                })
+            else
+                softDelete(
+                    st,
+                    one(E + 'CommunicationEvent', {
+                        communicationEventId: postId,
+                    }),
+                    t,
+                    a,
+                    p.reason,
+                )
+        } else {
+            if (!['deleted', 'hidden', 'rejected'].includes(st.visibility))
+                fail('Conflict', 'Post is not removed')
+            update(st, {
+                visibility: 'approved',
+                approvedRevision: st.revision,
+                deletedAt: null,
+                deletedByPartyId: null,
+                deleteReason: null,
+            })
+            if (!isRoot) recount(t)
+        }
     } else if (p.action === 'wiki') {
         // Wiki mode opens one post to versioned edits by eligible members; every edit stays in its history.
         const st = one(
@@ -2566,7 +2777,7 @@ methods.getMember = (p) => {
                 siteId: p.siteId,
                 partyId: p.targetPartyId,
             }),
-            'trustLevel approvedContributions lastPostedAt revision',
+            'trustLevel trustLocked trustReason approvedContributions lastPostedAt topicsEntered postsRead readingSeconds visitDays revision',
         ),
         sanctionList: rows(F + 'ForumSanction', {
             siteId: p.siteId,
@@ -3485,55 +3696,34 @@ methods.markNotifications = (p) => {
 methods.storePolicy = (p) => {
     const s = site(p.siteId, true)
     revision(s, p.expectedRevision)
-    if (
-        p.config?.firstContributionCount != null &&
-        (!Number.isInteger(p.config.firstContributionCount) ||
-            p.config.firstContributionCount < 2 ||
-            p.config.firstContributionCount > 20)
-    )
-        invalid('Approval threshold must be 2–20')
-    if (
-        p.config?.postIntervalSeconds != null &&
-        (!Number.isInteger(p.config.postIntervalSeconds) ||
-            p.config.postIntervalSeconds < 10 ||
-            p.config.postIntervalSeconds > 86400)
-    )
-        invalid('Posting interval must be 10–86400 seconds')
-    if (
-        !p.config ||
-        Object.keys(p.config).some(
-            (k) =>
-                !['firstContributionCount', 'postIntervalSeconds'].includes(k),
-        )
-    )
-        invalid('Unsupported Stage 1 policy')
+    if (!p.config) invalid('A policy configuration is required')
+    validPolicy(p.config)
+    // A section saves only its own settings; the rest carry over from the current revision.
+    const config = { ...policy(p.siteId), ...p.config }
     const rev = Number(s.policyRevision) + 1
     create(F + 'ForumPolicy', {
         siteId: p.siteId,
         policyRevision: rev,
-        config: JSON.stringify(p.config),
+        config: JSON.stringify(config),
         createdAt: now(),
     })
     update(s, { policyRevision: rev, generation: Number(s.generation) + 1 })
+    if (p.reason)
+        audit(
+            p.siteId,
+            null,
+            'policy',
+            p.siteId,
+            'policy',
+            p.reason,
+            rev - 1,
+            rev,
+        )
     return { revision: rev }
 }
 methods.getPolicy = (p) => {
-    site(p.siteId, true)
-    const s = site(p.siteId)
-    const v = Array.from(
-        find(F + 'ForumPolicy', { siteId: p.siteId })
-            .orderBy('-policyRevision')
-            .limit(1)
-            .list(),
-    )[0]
-    return {
-        policy: {
-            firstContributionCount: 2,
-            postIntervalSeconds: 10,
-            ...(v ? JSON.parse(v.config) : {}),
-        },
-        revision: Number(s.policyRevision),
-    }
+    const s = site(p.siteId, true)
+    return { policy: policy(p.siteId), revision: Number(s.policyRevision) }
 }
 
 methods.getSiteInfo = (p) => {
@@ -4418,6 +4608,52 @@ methods.getEditablePost = (p) => {
 methods.previewTopicAction = (p) => {
     const { t, event, a } = topic(p.rootCommEventId, p.siteId)
     if (!a.canModerate) fail('Unauthorized', 'Moderator access required')
+    if (['move-posts', 'split', 'merge'].includes(p.action)) {
+        const dest = destination(p, a)
+        if (!dest.a.canModerate)
+            fail('Unauthorized', 'Destination moderator access required')
+        const states =
+            p.action === 'merge'
+                ? Array.from(
+                      find(F + 'ForumPostState', {
+                          rootCommEventId: t.rootCommEventId,
+                      })
+                          .limit(20000)
+                          .list(),
+                  )
+                : selection(t, p.postIds)
+        const ids = states.map((s) => s.communicationEventId)
+        return {
+            title: event.subject,
+            action: p.action,
+            sourceVisibility: a.category.visibility,
+            targetVisibility: dest.a.category.visibility,
+            targetRootCommEventId: dest.t?.rootCommEventId || null,
+            selectedPostIds: ids.slice(0, 100),
+            visiblePostCount: states.filter((s) => s.visibility === 'approved')
+                .length,
+            replyCount: Math.max(0, ids.length - (p.postIds?.length || 0)),
+            attachmentCount: ids.reduce(
+                (n, postId) =>
+                    n +
+                    find(F + 'ForumAttachment', {
+                        communicationEventId: postId,
+                    }).count(),
+                0,
+            ),
+            acceptedAnswerAffected:
+                !!t.acceptedAnswerId &&
+                (p.action === 'merge' || ids.includes(t.acceptedAnswerId)),
+            watcherCount: find(F + 'ForumPreference', {
+                siteId: p.siteId,
+                scopeType: 'topic',
+                scopeId: t.rootCommEventId,
+                watchLevel: 'Watching',
+            }).count(),
+            expectedRevision: Number(t.revision),
+            expectedGeneration: audienceRevision(p.siteId, a, dest.a),
+        }
+    }
     const target = p.targetContactListId
         ? category(p.targetContactListId, p.siteId)
         : a
@@ -5247,7 +5483,7 @@ methods.deletePost = (p) => {
     revision(st, p.expectedRevision)
     const author =
         event.fromPartyId === me() &&
-        millis(now()) - millis(event.entryDate) <= 86400000
+        millis(now()) - millis(event.entryDate) <= editWindowMs(p.siteId)
     if (!a.canModerate && !author)
         fail('Unauthorized', 'Ask a moderator to remove this post')
     if (a.canModerate && event.fromPartyId !== me() && !p.reason)
@@ -5279,6 +5515,985 @@ methods.deletePost = (p) => {
         )
     bump(p.siteId)
     return { postId: p.postId, revision: Number(st.revision), state: 'deleted' }
+}
+/* ---- Stage 2 moderation: versioned policy, trust, content rules, flag hiding, classifier, topic tools, timers ---- */
+/* Numeric settings are [default, minimum, maximum]. Owners may be stricter than a default, never laxer. */
+const POLICY_NUMBERS = {
+    firstContributionCount: [2, 2, 20],
+    postIntervalSeconds: [10, 10, 86400],
+    editWindowHours: [24, 0, 24],
+    maxPostLength: [100000, 1000, 100000],
+    slowModeSeconds: [0, 0, 86400],
+    basicTopicsEntered: [5, 5, 10000],
+    basicPostsRead: [20, 20, 100000],
+    basicReadingMinutes: [10, 10, 100000],
+    basicVisitDays: [2, 2, 1000],
+    memberVisitDays: [15, 15, 1000],
+    memberTopicsEntered: [20, 20, 10000],
+    memberPostsRead: [100, 100, 100000],
+    memberReadingMinutes: [60, 60, 100000],
+    regularVisitDays: [50, 50, 1000],
+    regularTopicsEntered: [100, 100, 10000],
+    regularPostsRead: [500, 500, 100000],
+    regularApprovedContributions: [10, 10, 10000],
+    abuseFreeDays: [30, 30, 365],
+    flagHideCount: [3, 2, 10],
+    privateRecipientLimit: [10, 1, 10],
+    mediaMaxBytes: [10485760, 1024, 10485760],
+    mediaFilesPerPost: [10, 0, 10],
+}
+const POLICY_FLAGS = {
+    classifierEnabled: false,
+    privateEnabled: true,
+    privateExistingReplies: true,
+    privateFullBodyEmail: false,
+}
+const POLICY_CHOICES = {
+    privateMinTrust: ['basic', ['new', 'basic', 'member', 'regular']],
+}
+const TRUST_ORDER = ['new', 'basic', 'member', 'regular']
+const TRUST_EFFECTS = {
+    new: { topics: 3, replies: 10, links: 2, images: 1, mentions: 2 },
+    basic: { topics: 10, replies: 50, links: 10, images: 10, mentions: 5 },
+    member: { topics: 20, replies: 100, links: 20, images: 20, mentions: 10 },
+    regular: { topics: 20, replies: 100, links: 20, images: 20, mentions: 10 },
+}
+const trustRank = (level) => Math.max(0, TRUST_ORDER.indexOf(level))
+function policy(siteId) {
+    const v = Array.from(
+        find(F + 'ForumPolicy', { siteId })
+            .orderBy('-policyRevision')
+            .limit(1)
+            .list(),
+    )[0]
+    const out = {
+        ...Object.fromEntries(
+            Object.entries(POLICY_NUMBERS).map(([k, [d]]) => [k, d]),
+        ),
+        ...POLICY_FLAGS,
+        ...Object.fromEntries(
+            Object.entries(POLICY_CHOICES).map(([k, [d]]) => [k, d]),
+        ),
+    }
+    return Object.assign(out, json(v?.config, {}))
+}
+function validPolicy(config) {
+    for (const [k, v] of Object.entries(config)) {
+        if (POLICY_NUMBERS[k]) {
+            const [, min, max] = POLICY_NUMBERS[k]
+            if (!Number.isInteger(v) || v < min || v > max)
+                invalid(k + ' must be ' + min + '–' + max)
+        } else if (k in POLICY_FLAGS) {
+            if (typeof v !== 'boolean') invalid(k + ' must be true or false')
+        } else if (POLICY_CHOICES[k]) {
+            if (!POLICY_CHOICES[k][1].includes(v)) invalid('Invalid ' + k)
+        } else invalid('Unsupported policy: ' + k)
+    }
+}
+const editWindowMs = (siteId) => policy(siteId).editWindowHours * 3600000
+const mentionHandles = (html) => [
+    ...new Set(
+        Array.from(
+            plainText(html).matchAll(/(?:^|[^\w@.])@([A-Za-z0-9_.-]{2,40})/g),
+        ).map((m) => m[1].toLowerCase()),
+    ),
+]
+/* ---- Content rules ---- */
+const escapeRegex = (text) =>
+    String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+function validRule(type, pattern) {
+    if (!['word', 'regex', 'link'].includes(type)) invalid('Invalid rule type')
+    if (!pattern || String(pattern).length > 200)
+        invalid('A pattern of 1–200 characters is required')
+    if (type === 'regex') {
+        // Patterns run on every post: refuse nested quantifiers and back references that can backtrack badly.
+        if (
+            /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*[+*{]/.test(pattern) ||
+            /\\[1-9]/.test(pattern)
+        )
+            invalid('Nested repetition and back references are not allowed')
+        try {
+            new RegExp(pattern, 'i')
+        } catch (e) {
+            invalid('Invalid pattern')
+        }
+    }
+}
+function ruleRegex(r) {
+    if (r.ruleType === 'regex') return new RegExp(r.pattern, 'i')
+    if (r.ruleType === 'link')
+        return new RegExp(
+            '(?:https?://|www\\.)(?:[^\\s/"\'<>]*\\.)?' +
+                escapeRegex(r.pattern),
+            'i',
+        )
+    return new RegExp('\\b' + escapeRegex(r.pattern) + '\\b', 'i')
+}
+/* Censoring masks matched text outside tags; the author's original stays in the revision source for staff. */
+function censor(html, re) {
+    const global = new RegExp(re.source, re.flags.replace('g', '') + 'g')
+    return String(html)
+        .split(/(<[^>]*>)/)
+        .map((part) =>
+            part.startsWith('<')
+                ? part
+                : part.replace(global, (m) => '■'.repeat(m.length)),
+        )
+        .join('')
+}
+function applyRules(siteId, contactListId, html) {
+    const text = plainText(html) + ' ' + String(html),
+        out = { block: null, approve: false, flag: false, body: html }
+    for (const r of Array.from(
+        find(F + 'ForumRule', { siteId, enabled: 'Y' })
+            .orderBy('priority,ruleId')
+            .limit(200)
+            .list(),
+    )) {
+        if (r.contactListId && r.contactListId !== contactListId) continue
+        let re
+        try {
+            re = ruleRegex(r)
+        } catch (e) {
+            ec.logger.error('Forum rule ' + r.ruleId + ' is invalid; skipped')
+            continue
+        }
+        if (!re.test(r.action === 'censor' ? plainText(out.body) : text))
+            continue
+        if (r.action === 'block') out.block = r
+        else if (r.action === 'approve') out.approve = true
+        else if (r.action === 'flag') out.flag = true
+        else if (r.action === 'censor') out.body = censor(out.body, re)
+    }
+    return out
+}
+methods.storeRule = (p) =>
+    receipt(p, 'storeRule', () => {
+        site(p.siteId, true)
+        validRule(p.ruleType, p.pattern)
+        if (!['block', 'approve', 'flag', 'censor'].includes(p.action))
+            invalid('Invalid rule action')
+        if (p.contactListId) category(p.contactListId, p.siteId)
+        let r = p.ruleId
+            ? one(F + 'ForumRule', { ruleId: p.ruleId }, true)
+            : null
+        if (p.ruleId && (!r || r.siteId !== p.siteId)) missing()
+        if (r) revision(r, p.expectedRevision)
+        const fields = {
+            contactListId: p.contactListId || null,
+            ruleType: p.ruleType,
+            pattern: p.pattern,
+            action: p.action,
+            enabled: p.active === false ? 'N' : 'Y',
+            priority: Number(p.sequenceNum || 0),
+            revision: Number(r?.revision || 0) + 1,
+        }
+        r = r
+            ? update(r, fields)
+            : create(F + 'ForumRule', {
+                  ruleId: id(),
+                  siteId: p.siteId,
+                  createdAt: now(),
+                  ...fields,
+              })
+        audit(
+            p.siteId,
+            fields.contactListId,
+            'rule',
+            r.ruleId,
+            'store',
+            p.reason || '',
+            fields.revision - 1,
+            fields.revision,
+        )
+        return { ruleId: r.ruleId, revision: fields.revision }
+    })
+methods.findRules = (p) => {
+    site(p.siteId, true)
+    return {
+        ruleList: Array.from(
+            find(F + 'ForumRule', { siteId: p.siteId })
+                .orderBy('priority,ruleId')
+                .limit(200)
+                .list(),
+        ).map((r) =>
+            pick(
+                r,
+                'ruleId contactListId ruleType pattern action enabled priority revision',
+            ),
+        ),
+    }
+}
+/* A bounded test against sample text: what each action would do, with no post written. */
+methods.testRule = (p) => {
+    site(p.siteId, true)
+    validRule(p.ruleType, p.pattern)
+    if (String(p.body || '').length > 10000)
+        invalid('Sample text is limited to 10000 characters')
+    const re = ruleRegex({ ruleType: p.ruleType, pattern: p.pattern })
+    const sample = String(p.body || '')
+    return {
+        matched: re.test(sample),
+        censored: censor(WebUtilities.encodeHtml(sample), re),
+    }
+}
+/* ---- Trust ---- */
+function memberStateFor(siteId, partyId) {
+    const key = { siteId, partyId }
+    return (
+        one(F + 'ForumMemberState', key, true) ||
+        create(F + 'ForumMemberState', {
+            ...key,
+            trustLevel: 'new',
+            approvedContributions: 0,
+            dailyTopics: 0,
+            dailyReplies: 0,
+            revision: 1,
+        })
+    )
+}
+/* Reading telemetry is measured on the server from the reader's own position updates, never from client counters. */
+function recordReading(siteId, partyId, newlyRead, firstVisit) {
+    const m = memberStateFor(siteId, partyId),
+        day = String(now()).slice(0, 10),
+        gap = m.lastReadAt ? millis(now()) - millis(m.lastReadAt) : 0
+    update(m, {
+        postsRead: Number(m.postsRead || 0) + Math.min(100, newlyRead),
+        topicsEntered: Number(m.topicsEntered || 0) + (firstVisit ? 1 : 0),
+        readingSeconds:
+            Number(m.readingSeconds || 0) +
+            (gap > 0 && gap < 300000
+                ? Math.min(60, Math.floor(gap / 1000))
+                : 0),
+        visitDays: Number(m.visitDays || 0) + (m.lastVisitDay === day ? 0 : 1),
+        lastVisitDay: day,
+        lastReadAt: now(),
+    })
+}
+function earnedTrust(m, pol) {
+    const entered = Number(m.topicsEntered || 0),
+        read = Number(m.postsRead || 0),
+        minutes = Number(m.readingSeconds || 0) / 60,
+        days = Number(m.visitDays || 0)
+    if (!(
+        entered >= pol.basicTopicsEntered &&
+        read >= pol.basicPostsRead &&
+        minutes >= pol.basicReadingMinutes &&
+        days >= pol.basicVisitDays
+    ))
+        return 'new'
+    if (!(
+        days >= pol.memberVisitDays &&
+        entered >= pol.memberTopicsEntered &&
+        read >= pol.memberPostsRead &&
+        minutes >= pol.memberReadingMinutes
+    ))
+        return 'basic'
+    if (!(
+        days >= pol.regularVisitDays &&
+        entered >= pol.regularTopicsEntered &&
+        read >= pol.regularPostsRead &&
+        Number(m.approvedContributions || 0) >= pol.regularApprovedContributions
+    ))
+        return 'member'
+    return 'regular'
+}
+/* Worker step: promotion only, never past an owner lock or a recent sanction. Trust grants no staff authority. */
+function recomputeMemberTrust(siteId, partyId) {
+    const m = one(F + 'ForumMemberState', { siteId, partyId }, true)
+    if (!m || m.trustLocked === 'Y') return { changed: false }
+    const pol = policy(siteId)
+    if (
+        find(F + 'ForumSanction', { siteId, partyId })
+            .condition(
+                'fromDate',
+                'greater-equals',
+                stamp(millis(now()) - pol.abuseFreeDays * 86400000),
+            )
+            .count() > 0
+    )
+        return { changed: false }
+    const earned = earnedTrust(m, pol)
+    if (trustRank(earned) <= trustRank(m.trustLevel)) return { changed: false }
+    update(m, {
+        trustLevel: earned,
+        trustSetAt: now(),
+        revision: Number(m.revision) + 1,
+    })
+    return { changed: true, trustLevel: earned }
+}
+function recomputeTrust() {
+    const run =
+        one(F + 'ForumJobRun', { runId: 'TRUST_SCAN' }, true) ||
+        create(F + 'ForumJobRun', {
+            runId: 'TRUST_SCAN',
+            jobType: 'trust',
+            state: 'running',
+            checkpoint: '',
+            createdAt: now(),
+            successCount: 0,
+            failedCount: 0,
+        })
+    const [afterSite, afterParty] = String(run.checkpoint || '|').split('|')
+    const cf = ec.entity.conditionFactory
+    let q = find(F + 'ForumMemberState', {})
+    if (afterSite)
+        q = q.condition(
+            cf.makeCondition(
+                [
+                    cf.makeCondition('siteId', 'greater', afterSite),
+                    cf.makeCondition(
+                        [
+                            cf.makeCondition('siteId', 'equals', afterSite),
+                            cf.makeCondition('partyId', 'greater', afterParty),
+                        ],
+                        'and',
+                    ),
+                ],
+                'or',
+            ),
+        )
+    const batch = Array.from(q.orderBy('siteId,partyId').limit(500).list())
+    let changed = 0,
+        failed = 0
+    for (const m of batch)
+        try {
+            if (
+                ec.service
+                    .sync()
+                    .requireNewTransaction(true)
+                    .throwOnError(true)
+                    .name(
+                        'mantle.forum.ModerationWorkerServices.recompute#MemberTrust',
+                    )
+                    .parameters({ siteId: m.siteId, partyId: m.partyId })
+                    .call().result.changed
+            )
+                changed++
+        } catch (e) {
+            ec.message.clearErrors()
+            failed++
+            ec.logger.error(
+                'Trust recompute for ' +
+                    m.siteId +
+                    '/' +
+                    m.partyId +
+                    ' failed: ' +
+                    String(e?.message || e).split('\n')[0],
+            )
+        }
+    const last = batch[batch.length - 1]
+    update(run, {
+        checkpoint: batch.length < 500 ? '' : last.siteId + '|' + last.partyId,
+        successCount: Number(run.successCount || 0) + batch.length - failed,
+        failedCount: Number(run.failedCount || 0) + failed,
+    })
+    return { inspected: batch.length, changed, failed }
+}
+methods.setTrust = (p) => {
+    site(p.siteId, true)
+    if (!TRUST_ORDER.includes(p.trustLevel)) invalid('Invalid trust level')
+    if (!p.reason) invalid('A reason is required')
+    if (!member(p.siteId, p.targetPartyId)) missing()
+    const m = memberStateFor(p.siteId, p.targetPartyId)
+    revision(m, p.expectedRevision)
+    const before = Number(m.revision)
+    update(m, {
+        trustLevel: p.trustLevel,
+        trustLocked: p.locked === true ? 'Y' : 'N',
+        trustReason: p.reason,
+        trustSetAt: now(),
+        revision: before + 1,
+    })
+    audit(
+        p.siteId,
+        null,
+        'member',
+        p.targetPartyId,
+        'trust-' + p.trustLevel + (p.locked === true ? '-locked' : ''),
+        p.reason,
+        before,
+        before + 1,
+    )
+    return { trustLevel: p.trustLevel, revision: before + 1 }
+}
+/* ---- Flag hiding and automatic review ---- */
+function systemAudit(
+    siteId,
+    contactListId,
+    targetType,
+    targetId,
+    action,
+    reason,
+    staffPartyId,
+) {
+    create(F + 'ForumModerationAction', {
+        actionId: id(),
+        siteId,
+        contactListId,
+        staffPartyId: staffPartyId || null,
+        targetType,
+        targetId,
+        action,
+        reason: reason || '',
+        createdAt: now(),
+    })
+}
+/* Enough distinct basic-or-higher reporters hide a post until staff decide; the author's own and repeat reports do not count. */
+function hideIfFlagged(siteId, st, event, reviewId) {
+    if (st.visibility !== 'approved') return false
+    const pol = policy(siteId)
+    const reporters = rows(F + 'ForumReviewReport', { reviewId }, 100).filter(
+        (r) =>
+            r.reporterPartyId !== event.fromPartyId &&
+            trustRank(trustLevel(siteId, r.reporterPartyId)) >= 1 &&
+            !memberBlocks(siteId, event.fromPartyId, r.reporterPartyId),
+    )
+    if (reporters.length < pol.flagHideCount) return false
+    const t = one(
+        F + 'ForumTopic',
+        { rootCommEventId: st.rootCommEventId },
+        true,
+    )
+    update(st, { visibility: 'hidden' })
+    if (st.communicationEventId !== t.rootCommEventId)
+        update(t, {
+            visiblePostCount: Math.max(0, Number(t.visiblePostCount) - 1),
+            revision: Number(t.revision) + 1,
+        })
+    if (t.acceptedAnswerId === st.communicationEventId)
+        update(t, { acceptedAnswerId: null })
+    systemAudit(
+        siteId,
+        event.contactListId,
+        'post',
+        st.communicationEventId,
+        'auto-hide',
+        reporters.length + ' community reports',
+    )
+    bump(siteId)
+    return true
+}
+/* Classification is queued with the post and runs after commit; an unavailable classifier only delays review. */
+function queueClassification(siteId, postId) {
+    if (!policy(siteId).classifierEnabled) return
+    create(F + 'ForumOutbox', {
+        outboxId: id(),
+        siteId,
+        communicationEventId: postId,
+        eventType: 'classify',
+        state: 'classify',
+        cursor: '0',
+        createdAt: now(),
+    })
+}
+function classifyPost(outboxId) {
+    const box = one(F + 'ForumOutbox', { outboxId }, true)
+    if (!box || box.state !== 'classify') return { classified: false }
+    const service = System.getProperty('pass_classifier_service')
+    const st = one(F + 'ForumPostState', {
+            communicationEventId: box.communicationEventId,
+        }),
+        event = one(E + 'CommunicationEvent', {
+            communicationEventId: box.communicationEventId,
+        })
+    if (!service || !st || !event || st.visibility === 'deleted') {
+        update(box, { state: 'complete' })
+        return { classified: false }
+    }
+    let result
+    try {
+        // Its own transaction, so a failing classifier cannot roll back this queue item's bookkeeping.
+        result = ec.service
+            .sync()
+            .requireNewTransaction(true)
+            .throwOnError(true)
+            .name(service)
+            .parameters({
+                siteId: box.siteId,
+                postId: box.communicationEventId,
+                revision: Number(st.revision),
+                text: plainText(event.body),
+            })
+            .call()
+    } catch (e) {
+        ec.message.clearErrors()
+        const attempts = Number(box.cursor || 0) + 1
+        update(box, {
+            cursor: String(attempts),
+            state: attempts >= 3 ? 'failed' : 'classify',
+        })
+        ec.logger.error(
+            'Forum classifier for post ' +
+                box.communicationEventId +
+                ' failed (attempt ' +
+                attempts +
+                '): ' +
+                String(e?.message || e).split('\n')[0],
+        )
+        return { classified: false }
+    }
+    if (result?.decision === 'review') {
+        const r = review(
+            box.siteId,
+            event.contactListId,
+            'post',
+            box.communicationEventId,
+            Number(st.revision),
+            'classifier',
+        )
+        update(r, {
+            detail: JSON.stringify({
+                model: String(result.model || ''),
+                version: String(result.version || ''),
+                reason: String(result.reason || '').slice(0, 1000),
+            }),
+        })
+    }
+    update(box, { state: 'complete' })
+    return { classified: true, decision: result?.decision || 'none' }
+}
+function classifyPosts() {
+    let done = 0,
+        failed = 0
+    for (const box of Array.from(
+        find(F + 'ForumOutbox', { state: 'classify' })
+            .orderBy('createdAt,outboxId')
+            .limit(100)
+            .list(),
+    ))
+        try {
+            ec.service
+                .sync()
+                .requireNewTransaction(true)
+                .throwOnError(true)
+                .name('mantle.forum.ModerationWorkerServices.classify#Post')
+                .parameters({ outboxId: box.outboxId })
+                .call()
+            done++
+        } catch (e) {
+            ec.message.clearErrors()
+            failed++
+            ec.logger.error(
+                'Forum classification ' +
+                    box.outboxId +
+                    ' failed: ' +
+                    String(e?.message || e).split('\n')[0],
+            )
+        }
+    return { done, failed }
+}
+/* ---- Bulk decisions and appeals ---- */
+methods.decideReviews = (p) => {
+    requireUser()
+    site(p.siteId)
+    if (!Array.isArray(p.reviewIds) || !p.reviewIds.length)
+        invalid('Select at least one review')
+    const results = []
+    for (const reviewId of p.reviewIds) {
+        // Each decision is its own transaction with its own checks; one refusal does not undo the others.
+        try {
+            const r = one(F + 'ForumReviewItem', { reviewId, siteId: p.siteId })
+            if (!r) missing()
+            const out = ec.service
+                .sync()
+                .requireNewTransaction(true)
+                .throwOnError(true)
+                .name('mantle.forum.ModerationServices.decide#Review')
+                .parameters({
+                    input: {
+                        siteId: p.siteId,
+                        reviewId,
+                        decision: p.decision,
+                        reason: p.reason,
+                        expectedRevision: Number(r.revision),
+                    },
+                })
+                .call().result
+            results.push({ reviewId, ok: true, state: out.state })
+        } catch (e) {
+            ec.message.clearErrors()
+            results.push({
+                reviewId,
+                ok: false,
+                error: String(e?.message || e)
+                    .split('\n')[0]
+                    .replace(/^(Error: )+/, ''),
+            })
+        }
+    }
+    return { results }
+}
+/* An author appeals a rejection with a new linked review item; the decision itself is never reopened. */
+methods.appealReview = (p) =>
+    receipt(p, 'appealReview', () => {
+        site(p.siteId)
+        const r = one(F + 'ForumReviewItem', {
+            reviewId: p.reviewId,
+            siteId: p.siteId,
+        })
+        if (!r || r.targetType !== 'post') missing()
+        const event = one(E + 'CommunicationEvent', {
+            communicationEventId: r.targetId,
+        })
+        if (!event || event.fromPartyId !== me()) missing()
+        if (r.state !== 'rejected')
+            fail('Conflict', 'Only a rejected decision can be appealed')
+        if (!p.reason || p.reason.length > 2000)
+            invalid('An appeal reason of at most 2000 characters is required')
+        const appeal = review(
+            p.siteId,
+            r.contactListId,
+            'post',
+            r.targetId,
+            r.targetRevision,
+            'appeal',
+        )
+        update(appeal, { linkedReviewId: r.reviewId, detail: p.reason })
+        return { reviewId: appeal.reviewId, state: appeal.state }
+    })
+/* The actor's own removed posts with the safe staff reason, so an author can understand and appeal a decision. */
+methods.findMyReviews = (p) => {
+    site(p.siteId)
+    const partyId = requireUser()
+    const list = []
+    for (const st of Array.from(
+        find(F + 'ForumPostSearch', {
+            siteId: p.siteId,
+            fromPartyId: partyId,
+            visibility: 'rejected',
+        })
+            .orderBy('-entryDate')
+            .limit(50)
+            .list(),
+    )) {
+        const decided = Array.from(
+            find(F + 'ForumReviewItem', {
+                siteId: p.siteId,
+                targetType: 'post',
+                targetId: st.communicationEventId,
+            })
+                .orderBy('-createdAt')
+                .limit(5)
+                .list(),
+        )
+        const rejected = decided.find((r) => r.state === 'rejected')
+        if (!rejected) continue
+        const appeal = decided.find(
+            (r) =>
+                r.reasonFamily === 'appeal' &&
+                r.linkedReviewId === rejected.reviewId,
+        )
+        list.push({
+            reviewId: rejected.reviewId,
+            postId: st.communicationEventId,
+            title: st.subject,
+            decisionReason: rejected.decisionReason,
+            appealState: appeal?.state || null,
+        })
+    }
+    return { reviewList: list }
+}
+/* ---- Topic tools: selection, relocation and timers ---- */
+const TIMER_ACTIONS = ['close', 'reopen', 'unpin', 'list', 'unlist']
+/* A moved post takes its whole reply subtree, so no reply is left pointing into another thread. */
+function selection(t, postIds) {
+    if (!Array.isArray(postIds) || !postIds.length || postIds.length > 100)
+        invalid('Select 1–100 posts')
+    const picked = new Set(),
+        queue = [...postIds]
+    while (queue.length) {
+        const postId = queue.shift()
+        if (picked.has(postId)) continue
+        const st = one(F + 'ForumPostState', { communicationEventId: postId })
+        if (!st || st.rootCommEventId !== t.rootCommEventId)
+            invalid('Selected posts must belong to this topic')
+        if (postId === t.rootCommEventId)
+            invalid('Move the whole topic with merge or a category change')
+        picked.add(postId)
+        if (picked.size > 1000) invalid('The selection is too large')
+        for (const child of rows(
+            F + 'ForumPostSearch',
+            { rootCommEventId: t.rootCommEventId, parentCommEventId: postId },
+            1000,
+        ))
+            queue.push(child.communicationEventId)
+    }
+    return Array.from(picked)
+        .map((postId) =>
+            one(F + 'ForumPostState', { communicationEventId: postId }),
+        )
+        .sort((a, b) => Number(a.ordinal) - Number(b.ordinal))
+}
+function relocate(states, dest, destListId, newRootId) {
+    const ids = new Set(states.map((s) => s.communicationEventId))
+    let next = Number(dest.nextOrdinal || 1)
+    const destRoot = dest.rootCommEventId,
+        destEvent = one(E + 'CommunicationEvent', {
+            communicationEventId: destRoot,
+        })
+    for (const st of states) {
+        const postId = st.communicationEventId,
+            ev = one(
+                E + 'CommunicationEvent',
+                { communicationEventId: postId },
+                true,
+            ),
+            isRoot = postId === newRootId
+        update(ev, {
+            rootCommEventId: isRoot ? null : destRoot,
+            parentCommEventId: isRoot
+                ? null
+                : ids.has(ev.parentCommEventId)
+                  ? ev.parentCommEventId
+                  : destRoot,
+            contactListId: destListId,
+            subject: isRoot ? ev.subject : destEvent?.subject || ev.subject,
+        })
+        update(
+            one(F + 'ForumPostState', { communicationEventId: postId }, true),
+            {
+                rootCommEventId: destRoot,
+                ordinal: next++,
+            },
+        )
+        for (const entity of ['ForumReaction', 'ForumPoll', 'ForumBookmark'])
+            find(F + entity, { communicationEventId: postId }).updateAll({
+                rootCommEventId: destRoot,
+            })
+        // Open reviews now sit in the destination audience; a claim made under the old one is released.
+        for (const r of rows(
+            F + 'ForumReviewItem',
+            { siteId: dest.siteId, targetType: 'post', targetId: postId },
+            100,
+        ))
+            update(
+                r,
+                ['pending', 'claimed'].includes(r.state)
+                    ? {
+                          contactListId: destListId,
+                          state: 'pending',
+                          claimedByPartyId: null,
+                          claimExpiresAt: null,
+                          revision: Number(r.revision) + 1,
+                      }
+                    : { contactListId: destListId },
+            )
+    }
+    update(dest, { nextOrdinal: next })
+}
+/* Counters are derived again after a structural change; they never decide access. */
+function recount(t) {
+    let visible = 0,
+        reactions = 0,
+        last = null
+    for (const st of Array.from(
+        find(F + 'ForumPostSearch', {
+            rootCommEventId: t.rootCommEventId,
+            visibility: 'approved',
+        })
+            .limit(20000)
+            .list(),
+    )) {
+        visible++
+        reactions += Number(st.reactionCount || 0)
+        if (!last || millis(st.entryDate) > millis(last)) last = st.entryDate
+    }
+    update(t, {
+        visiblePostCount: visible,
+        reactionCount: reactions,
+        lastActivity: last || t.lastActivity,
+        revision: Number(t.revision) + 1,
+    })
+}
+function retireTopic(t, targetRoot) {
+    for (const entity of ['ForumTopicTag', 'ForumTopicUser', 'ForumTopicTimer'])
+        find(F + entity, { rootCommEventId: t.rootCommEventId }).deleteAll()
+    find(F + 'ForumDraft', { rootCommEventId: t.rootCommEventId }).updateAll({
+        rootCommEventId: targetRoot,
+    })
+    find(F + 'ForumPermalink', {
+        targetRootCommEventId: t.rootCommEventId,
+    }).updateAll({ targetRootCommEventId: targetRoot })
+    create(F + 'ForumPermalink', {
+        oldRootCommEventId: t.rootCommEventId,
+        siteId: t.siteId,
+        targetRootCommEventId: targetRoot,
+        createdAt: now(),
+    })
+    t.delete()
+}
+/* The destination of a move, split or merge, with the same audience confirmation a category move needs. */
+function destination(p, a) {
+    if (p.action === 'split') {
+        const target = p.targetContactListId
+            ? category(p.targetContactListId, p.siteId)
+            : a
+        return { a: target, t: null }
+    }
+    if (
+        !p.targetRootCommEventId ||
+        p.targetRootCommEventId === p.rootCommEventId
+    )
+        invalid('Choose a different destination topic')
+    const out = topic(p.targetRootCommEventId, p.siteId, true)
+    return { a: out.a, t: out.t }
+}
+function checkAudience(p, a, target) {
+    if (!target.canModerate)
+        fail('Unauthorized', 'Destination moderator access required')
+    if (target.category.contactListId === a.category.contactListId) return
+    if (p.confirmAudience !== true)
+        invalid('Review and confirm the destination audience')
+    if (Number(p.expectedGeneration) !== audienceRevision(p.siteId, a, target))
+        fail('Conflict', 'Audience changed; preview the move again')
+}
+function restructure(p, t, event, a) {
+    const dest = destination(p, a)
+    checkAudience(p, a, dest.a)
+    const destListId = dest.a.category.contactListId
+    if (p.action === 'merge') {
+        const states = Array.from(
+            find(F + 'ForumPostState', { rootCommEventId: t.rootCommEventId })
+                .orderBy('ordinal')
+                .limit(20000)
+                .list(),
+        )
+        relocate(states, dest.t, destListId, null)
+        recount(dest.t)
+        retireTopic(t, dest.t.rootCommEventId)
+        return { rootCommEventId: dest.t.rootCommEventId, moved: states.length }
+    }
+    const states = selection(t, p.postIds)
+    if (
+        t.acceptedAnswerId &&
+        states.some((s) => s.communicationEventId === t.acceptedAnswerId)
+    )
+        update(t, { acceptedAnswerId: null })
+    let target = dest.t
+    if (p.action === 'split') {
+        if (!p.title || p.title.length > 250)
+            invalid('A title of at most 250 characters is required')
+        const newRoot = states[0].communicationEventId
+        update(
+            one(
+                E + 'CommunicationEvent',
+                { communicationEventId: newRoot },
+                true,
+            ),
+            {
+                subject: p.title,
+            },
+        )
+        target = create(F + 'ForumTopic', {
+            rootCommEventId: newRoot,
+            siteId: p.siteId,
+            contactListId: destListId,
+            kind: 'category',
+            revision: 0,
+            nextOrdinal: 1,
+            visiblePostCount: 0,
+            reactionCount: 0,
+            lastActivity: now(),
+            pinned: 'N',
+            unlisted: 'N',
+            slowIntervalSeconds: 0,
+        })
+        relocate(states, target, destListId, newRoot)
+    } else relocate(states, target, destListId, null)
+    recount(target)
+    recount(t)
+    return { rootCommEventId: target.rootCommEventId, moved: states.length }
+}
+function fireTimer(timerId) {
+    const timer = one(F + 'ForumTopicTimer', { timerId }, true)
+    if (!timer || timer.state !== 'pending') return { fired: false }
+    const t = one(
+        F + 'ForumTopic',
+        { rootCommEventId: timer.rootCommEventId },
+        true,
+    )
+    const end = (state, error) => {
+        update(timer, { state, lastError: error || null })
+        return { fired: state === 'done', state }
+    }
+    // The scope is checked when the timer fires: a moved topic or a creator who lost moderation cancels it.
+    if (!t || t.contactListId !== timer.contactListId)
+        return end('cancelled', 'Topic moved or removed')
+    if (!categoryAccess(t.contactListId, timer.createdByPartyId)?.canModerate)
+        return end(
+            'cancelled',
+            'Timer creator no longer moderates this category',
+        )
+    const event = one(
+        E + 'CommunicationEvent',
+        { communicationEventId: t.rootCommEventId },
+        true,
+    )
+    if (timer.action === 'close' || timer.action === 'reopen')
+        update(event, {
+            statusId: timer.action === 'close' ? 'CeResolved' : 'CeReceived',
+        })
+    else if (timer.action === 'unpin') update(t, { pinned: 'N' })
+    else update(t, { unlisted: timer.action === 'unlist' ? 'Y' : 'N' })
+    update(t, { revision: Number(t.revision) + 1 })
+    systemAudit(
+        t.siteId,
+        t.contactListId,
+        'topic',
+        t.rootCommEventId,
+        'timer-' + timer.action,
+        timer.reason,
+        timer.createdByPartyId,
+    )
+    bump(t.siteId)
+    return end('done')
+}
+function fireTimers() {
+    let fired = 0,
+        failed = 0
+    for (const timer of Array.from(
+        find(F + 'ForumTopicTimer', { state: 'pending' })
+            .condition('dueAt', 'less-equals', now())
+            .orderBy('dueAt,timerId')
+            .limit(100)
+            .list(),
+    ))
+        try {
+            ec.service
+                .sync()
+                .requireNewTransaction(true)
+                .throwOnError(true)
+                .name('mantle.forum.ModerationWorkerServices.fire#TopicTimer')
+                .parameters({ timerId: timer.timerId })
+                .call()
+            fired++
+        } catch (e) {
+            ec.message.clearErrors()
+            failed++
+            ec.logger.error(
+                'Forum topic timer ' +
+                    timer.timerId +
+                    ' failed: ' +
+                    String(e?.message || e).split('\n')[0],
+            )
+        }
+    return { fired, failed }
+}
+/* A member's own mute or block of another member on one site. */
+function memberBlocks(siteId, partyId, targetPartyId) {
+    const v =
+        partyId && targetPartyId
+            ? one(F + 'ForumMemberPreference', {
+                  siteId,
+                  partyId,
+                  targetPartyId,
+              })
+            : null
+    return (
+        v?.preference === 'block' &&
+        (!v.expiresAt || millis(v.expiresAt) > millis(now()))
+    )
 }
 /* Policy revisions only grow, so their sum over the site and both category chains changes whenever either audience can. */
 function audienceRevision(siteId, source, target) {
@@ -5329,6 +6544,8 @@ function execute(operation, p) {
         'tags',
         'optionIds',
         'allowedCategories',
+        'postIds',
+        'reviewIds',
     ])
         if (
             p?.[key] != null &&
@@ -5351,6 +6568,7 @@ function execute(operation, p) {
         'fromRevision',
         'toRevision',
         'revision',
+        'slowIntervalSeconds',
     ])
     const booleans = new Set([
         'confirm',
@@ -5360,6 +6578,7 @@ function execute(operation, p) {
         'jump',
         'all',
         'active',
+        'locked',
     ])
     const listFields = new Set([
         'attachmentIds',
@@ -5368,6 +6587,8 @@ function execute(operation, p) {
         'tags',
         'optionIds',
         'allowedCategories',
+        'postIds',
+        'reviewIds',
     ])
     for (const [key, value] of Object.entries(p || {})) {
         if (value == null) continue
@@ -5381,7 +6602,7 @@ function execute(operation, p) {
             if (typeof value !== 'boolean')
                 invalid('Invalid Boolean field: ' + key)
         } else if (listFields.has(key)) continue
-        else if (['expiresAt', 'thruDate', 'remindAt'].includes(key)) {
+        else if (['expiresAt', 'thruDate', 'remindAt', 'dueAt'].includes(key)) {
             if (!['number', 'string'].includes(typeof value))
                 invalid('Invalid date field: ' + key)
         } else if (key === 'poll') {
@@ -5445,4 +6666,10 @@ function execute(operation, p) {
     addNamedReceipts,
     remindBookmarks,
     remindBookmark,
+    recomputeTrust,
+    recomputeMemberTrust,
+    classifyPosts,
+    classifyPost,
+    fireTimers,
+    fireTimer,
 })
