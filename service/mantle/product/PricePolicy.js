@@ -7,7 +7,7 @@ const map=r=>r.getMap?r.getMap():Object.assign({},r)
 const ms=v=>v==null||v===''?null:Number.isFinite(Number(String(v)))?Number(String(v)):Date.parse(String(v))
 const call=(n,p)=>{const out=ec.service.sync().name(n).parameters(p||{}).disableAuthz().call()||{};if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return out}
 const internal=id=>!!id&&!!one('mantle.party.PartyRole',{partyId:id,roleTypeId:'OrgInternal'})
-const has=g=>!!ec.user.userId&&(!ec.user.isInGroup('BOSS_PROJECT_CLIENT')||ec.user.isInGroup('ADMIN'))&&ec.user.isInGroup(g)
+const has=g=>!!ec.user.userId&&(!ec.user.isInGroup('BOSS_PROJECT_CLIENT')||ec.user.isInGroup('ADMIN'))&&(ec.user.isInGroup(g)||g.startsWith('BOSS_PRODUCTS')&&ec.user.isInGroup('BOSS_PRODUCTS_ADMIN'))
 const optional=['productStoreId','vendorPartyId','customerPartyId','pricePurposeEnumId','quantityUomId','termUomId','agreementId','agreementItemSeqId']
 const writeFields='productId,productStoreId,vendorPartyId,customerPartyId,priceTypeEnumId,pricePurposeEnumId,fromDate,thruDate,minQuantity,price,priceUomId,termUomId,taxInPrice,taxAmount,taxPercentage,taxAuthorityId,agreementId,agreementItemSeqId,otherPartyItemName,otherPartyItemId,comments,quantityIncrement,quantityIncluded,quantityUomId,preferredOrderEnumId,supplierRatingTypeEnumId,standardLeadTimeDays,canDropShip,changeReason'.split(',')
 const pick=(p,keys)=>Object.fromEntries(keys.filter(k=>Object.keys(p).includes(k)).map(k=>[k,p[k]===''?null:p[k]]))

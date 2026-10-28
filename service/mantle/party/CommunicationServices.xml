@@ -2233,6 +2233,22 @@ along with this software (see the LICENSE.md file). If not, see
                     ids.push(workEffort.rootWorkEffortId)
                     root = ec.entity.find(WORK_EFFORT).condition('workEffortId', workEffort.rootWorkEffortId).disableAuthz().one()
                 }
+                // A company role does not expose a Work group project's items. Apply the same project rule as
+                // list/search, retaining personal ownership and an explicit personal role on this record.
+                const project = workEffort.workEffortTypeEnumId === 'WetProject' ? workEffort
+                        : root?.workEffortTypeEnumId === 'WetProject' ? root : null
+                if (project) {
+                    if (workEffort.ownerPartyId === s.userPartyId || ec.entity.find('mantle.work.effort.WorkEffortParty')
+                            .condition('workEffortId', workEffort.workEffortId).condition('partyId', s.userPartyId)
+                            .condition(current()).disableAuthz().count() > 0) return true
+                    const visible = ec.service.sync().name('mantle.work.ProjectServices.get#VisibleProjectInfo').disableAuthz().call() || {}
+                    if (visible.allProjects) return true
+                    if (!Array.from(visible.visibleProjectIds || []).includes(project.workEffortId)) return false
+                    if (workEffort.workEffortId === project.workEffortId) return true
+                    return !['WevRestricted', 'WevConfidential'].includes(workEffort.visibilityEnumId)
+                            || Array.from(visible.managedProjectIds || []).includes(project.workEffortId)
+                            || Array.from(visible.restrictedItemIds || []).includes(workEffort.workEffortId)
+                }
                 if ([workEffort.ownerPartyId, root?.ownerPartyId].some((partyId) => partyId && s.partyIds.includes(partyId))) return true
                 if (ec.entity.find('mantle.work.effort.WorkEffortParty').condition('workEffortId', 'in', ids)
                         .condition('partyId', 'in', s.partyIds).condition(current()).disableAuthz().count() > 0) return true

@@ -12,7 +12,7 @@ const pick=(p,fields)=>Object.fromEntries(fields.filter(k=>Object.keys(p).includ
 const listFields='listName,organizationPartyId,direction,pricePurposeEnumId,priceUomId,productStoreId,agreementId,agreementItemSeqId,partyClassificationId,geoId,priority,state,fromDate,thruDate,changeReason'.split(',')
 const ruleFields='priceListId,sequenceNum,selector,productId,productCategoryId,productFeatureId,partyClassificationId,geoId,minQuantity,maxQuantity,quantityUomId,fromDate,thruDate,baseType,basePriceTypeEnumId,basePriceListId,fixedPrice,percentChange,amountChange,roundingIncrement,minimumPrice,maximumPrice,changeReason'.split(',')
 const settingFields='defaultPriceListId,defaultCurrencyUomId,defaultPurposeEnumId,roundingIncrement,allowedPurposeIds,changeReason'.split(',')
-const has=g=>!!ec.user.userId&&(!ec.user.isInGroup('BOSS_PROJECT_CLIENT')||ec.user.isInGroup('ADMIN'))&&ec.user.isInGroup(g)
+const has=g=>!!ec.user.userId&&(!ec.user.isInGroup('BOSS_PROJECT_CLIENT')||ec.user.isInGroup('ADMIN'))&&(ec.user.isInGroup(g)||g.startsWith('BOSS_PRODUCTS')&&ec.user.isInGroup('BOSS_PRODUCTS_ADMIN'))
 function scope(){return call(P+'ProductServices.get#CatalogOwnerScope')}
 function guard(r,write=false){
  const s=scope(),group=r.direction==='purchase'?'BOSS_PRODUCTS_SUPPLIER_PRICE_':'BOSS_PRODUCTS_PRICE_'
@@ -104,11 +104,11 @@ function retire(p){lock();const list=getList(p.priceListId,true);reason(p);const
 function settings(p){const s=scope(),org=p.organizationPartyId||s.activeOrganizationPartyId||s.organizationPartyIds[0];if(!s.systemAdmin&&!(has('BOSS_PRODUCTS_ADMIN')&&s.ownerPartyIds.includes(org)))guard({organizationPartyId:org,direction:has('BOSS_PRODUCTS_SUPPLIER_PRICE_READ')||has('BOSS_PRODUCTS_SUPPLIER_PRICE_EDIT')?'purchase':'sales'});const date=p.asOfDate||ec.user.nowTimestamp,r=rows(S,{organizationPartyId:org}).filter(r=>at(r,date)).sort((a,b)=>ms(b.fromDate)-ms(a.fromDate))[0];return{organizationPartyId:org,fromDate:r?.fromDate,settings:r?map(r):{defaultCurrencyUomId:'USD',defaultPurposeEnumId:'PppPurchase',roundingIncrement:null,allowedPurposeIds:'PppPurchase,PppRecurring,PppUsage,PppComponent'}}}
 function storeSettings(p){
  const s=scope(),org=p.organizationPartyId;if(!s.systemAdmin&&(!has('BOSS_PRODUCTS_ADMIN')||!s.ownerPartyIds.includes(org)))throw new Error('Catalog administrator authority in the organization is required')
- lock();reason(p);const old=rows(S,{organizationPartyId:org}).filter(r=>at(r,ec.user.nowTimestamp)).sort((a,b)=>ms(b.fromDate)-ms(a.fromDate))[0]
+ lock();reason(p);const now=ms(ec.user.nowTimestamp),old=rows(S,{organizationPartyId:org}).filter(r=>at(r,now)).sort((a,b)=>ms(b.fromDate)-ms(a.fromDate))[0]
  if(ms(p.expectedFromDate)!==ms(old?.fromDate))throw new Error('Pricing settings changed; reload before saving')
- const data=Object.assign({},old?map(old):{},pick(p,settingFields)),date=p.fromDate||ec.user.nowTimestamp
- if(!one('mantle.party.PartyRole',{partyId:org,roleTypeId:'OrgInternal'})||!Number.isFinite(ms(date))||ms(date)<ms(ec.user.nowTimestamp))throw new Error('Choose an internal organization and an effective date now or later')
- if(rows(S,{organizationPartyId:org}).some(r=>ms(r.fromDate)>ms(ec.user.nowTimestamp)))throw new Error('A future pricing policy is already scheduled')
+ const data=Object.assign({},old?map(old):{},pick(p,settingFields)),date=p.fromDate||now
+ if(!one('mantle.party.PartyRole',{partyId:org,roleTypeId:'OrgInternal'})||!Number.isFinite(ms(date))||ms(date)<now)throw new Error('Choose an internal organization and an effective date now or later')
+ if(rows(S,{organizationPartyId:org}).some(r=>ms(r.fromDate)>now))throw new Error('A future pricing policy is already scheduled')
  if(old&&ms(date)<=ms(old.fromDate))throw new Error('New settings must start after the current row')
  if(one('moqui.basic.Uom',{uomId:data.defaultCurrencyUomId})?.uomTypeEnumId!=='UT_CURRENCY_MEASURE')throw new Error('Choose a default currency')
  const allowed=String(data.allowedPurposeIds||'').split(',').map(v=>v.trim()).filter(Boolean);if(!allowed.length||allowed.some(enumId=>one('moqui.basic.Enumeration',{enumId})?.enumTypeId!=='ProductPricePurpose')||!allowed.includes(data.defaultPurposeEnumId))throw new Error('Choose permitted price purposes and a default among them')

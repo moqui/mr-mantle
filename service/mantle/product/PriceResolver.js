@@ -8,7 +8,7 @@ const active=(r,date)=>(ms(r.fromDate)??-Infinity)<=ms(date)&&(ms(r.thruDate)??I
 const policy=()=>ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js')
 const call=(name,p)=>{const out=ec.service.sync().name(name).parameters(p||{}).disableAuthz().call()||{};if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return out}
 const internal=id=>!!id&&!!one('mantle.party.PartyRole',{partyId:id,roleTypeId:'OrgInternal'})
-const has=g=>!!ec.user.userId&&(!ec.user.isInGroup('BOSS_PROJECT_CLIENT')||ec.user.isInGroup('ADMIN'))&&ec.user.isInGroup(g)
+const has=g=>!!ec.user.userId&&(!ec.user.isInGroup('BOSS_PROJECT_CLIENT')||ec.user.isInGroup('ADMIN'))&&(ec.user.isInGroup(g)||g.startsWith('BOSS_PRODUCTS')&&ec.user.isInGroup('BOSS_PRODUCTS_ADMIN'))
 const read=(direction,cost=false)=>has('ADMIN')||(cost?['BOSS_PRODUCTS_COST_READ','BOSS_PRODUCTS_COST_ESTIMATE','BOSS_PRODUCTS_COST_APPROVE']:direction==='purchase'?['BOSS_PRODUCTS_SUPPLIER_PRICE_READ','BOSS_PRODUCTS_SUPPLIER_PRICE_EDIT']:['BOSS_PRODUCTS_PRICE_READ','BOSS_PRODUCTS_PRICE_EDIT']).some(has)
 function context(p){
  const out=Object.assign({},p);out.validDate=p.validDate||ec.user.nowTimestamp;out.quantity=p.quantity==null?toDecimal(1):toDecimal(p.quantity);out.priceUomId=p.priceUomId||ec.user.getPreference('CurrencyDefault')||'USD';out.pricePurposeEnumId=p.pricePurposeEnumId||'PppPurchase'
