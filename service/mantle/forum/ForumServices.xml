@@ -309,4 +309,239 @@
       <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('getEditablePost',input || {})</script>
     </actions>
   </service>
+  <service verb="find" noun="Tags" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findTags',input || {})</script>
+    </actions>
+  </service>
+  <service verb="store" noun="Tag" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('storeTag',input || {})</script>
+    </actions>
+  </service>
+  <service verb="merge" noun="Tag" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('mergeTag',input || {})</script>
+    </actions>
+  </service>
+  <service verb="set" noun="Reaction" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('setReaction',input || {})</script>
+    </actions>
+  </service>
+  <service verb="accept" noun="Answer" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('acceptAnswer',input || {})</script>
+    </actions>
+  </service>
+  <service verb="get" noun="Poll" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('getPoll',input || {})</script>
+    </actions>
+  </service>
+  <service verb="vote" noun="Poll" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('votePoll',input || {})</script>
+    </actions>
+  </service>
+  <service verb="store" noun="Bookmark" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('storeBookmark',input || {})</script>
+    </actions>
+  </service>
+  <service verb="remove" noun="Bookmark" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('removeBookmark',input || {})</script>
+    </actions>
+  </service>
+  <service verb="find" noun="Bookmarks" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findBookmarks',input || {})</script>
+    </actions>
+  </service>
+  <service verb="get" noun="PostHistory" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('getPostHistory',input || {})</script>
+    </actions>
+  </service>
+  <service verb="compare" noun="PostRevisions" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('comparePostRevisions',input || {})</script>
+    </actions>
+  </service>
+  <service verb="restore" noun="PostRevision" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('restorePostRevision',input || {})</script>
+    </actions>
+  </service>
+  <service verb="delete" noun="Post" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('deletePost',input || {})</script>
+    </actions>
+  </service>
+  <service verb="remind" noun="Bookmarks" authenticate="false" allow-remote="false">
+    <description>Worker: due bookmark reminders become in-app notices, each in its own transaction.</description>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script><![CDATA[
+        const was=ec.artifactExecution.disableAuthz()
+        try{result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').remindBookmarks()}finally{if(!was)ec.artifactExecution.enableAuthz()}
+      ]]></script>
+    </actions>
+  </service>
+  <service verb="remind" noun="Bookmark" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="bookmarkId" required="true"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script><![CDATA[
+        const was=ec.artifactExecution.disableAuthz()
+        try{result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').remindBookmark(bookmarkId)}finally{if(!was)ec.artifactExecution.enableAuthz()}
+      ]]></script>
+    </actions>
+  </service>
+  <service verb="create" noun="Conversation" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('createConversation',input || {})</script>
+    </actions>
+  </service>
+  <service verb="find" noun="Conversations" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findConversations',input || {})</script>
+    </actions>
+  </service>
+  <service verb="update" noun="Participants" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('updateParticipants',input || {})</script>
+    </actions>
+  </service>
+  <service verb="set" noun="ConversationState" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('setConversationState',input || {})</script>
+    </actions>
+  </service>
+  <service verb="set" noun="MemberPreference" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('setMemberPreference',input || {})</script>
+    </actions>
+  </service>
 </services>

@@ -100,4 +100,92 @@
       <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('resolveDelivery',input || {})</script>
     </actions>
   </service>
+  <service verb="store" noun="Route" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('storeRoute',input || {})</script>
+    </actions>
+  </service>
+  <service verb="find" noun="Routes" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findRoutes',input || {})</script>
+    </actions>
+  </service>
+  <service verb="find" noun="InboundReceipts" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findInboundReceipts',input || {})</script>
+    </actions>
+  </service>
+  <service verb="test" noun="Route" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('testRoute',input || {})</script>
+    </actions>
+  </service>
+  <service verb="retry" noun="Inbound" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('retryInbound',input || {})</script>
+    </actions>
+  </service>
+  <service verb="process" noun="Inbound" authenticate="anonymous-all" allow-remote="false">
+    <implements service="org.moqui.EmailServices.process#EmailEca"/>
+    <description>The forum's email ECA: a stored inbound email addressed to a forum route becomes a reply or new topic by
+      its verified, gateway-authenticated sender, or a recorded refusal. Other mail is left alone.</description>
+    <in-parameters>
+      <parameter name="emailAccountId"/>
+      <parameter name="emailMessageId"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script><![CDATA[
+        const was=ec.artifactExecution.disableAuthz()
+        try{result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').processInbound({emailAccountId,emailMessageId,headers,fields,bodyPartList,message})}finally{if(!was)ec.artifactExecution.enableAuthz()}
+      ]]></script>
+    </actions>
+  </service>
+  <service verb="post" noun="Inbound" authenticate="false" allow-remote="false">
+    <description>Worker step of process#Inbound, called in its own transaction: posts as the verified sender.</description>
+    <in-parameters>
+      <parameter name="input" type="Map" allow-html="any"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script><![CDATA[
+        const was=ec.artifactExecution.disableAuthz()
+        try{result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').postInbound(input)}finally{if(!was)ec.artifactExecution.enableAuthz()}
+      ]]></script>
+    </actions>
+  </service>
 </services>
