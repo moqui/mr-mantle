@@ -52,6 +52,10 @@
       <index-field name="lastActivity"/>
       <index-field name="rootCommEventId"/>
     </index>
+    <index name="FORUM_MAILBOX_TOPICS">
+      <index-field name="contactListId"/>
+      <index-field name="lastActivity"/>
+    </index>
   </entity>
   <entity entity-name="ForumPostState" package="mantle.forum">
     <field name="communicationEventId" type="id" is-pk="true"/>
@@ -115,6 +119,13 @@
     <field name="revision" type="number-integer"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.party.Party"/>
+    <index name="FORUM_PREF_WATCHERS">
+      <index-field name="siteId"/>
+      <index-field name="scopeType"/>
+      <index-field name="scopeId"/>
+      <index-field name="watchLevel"/>
+      <index-field name="partyId"/>
+    </index>
   </entity>
   <entity entity-name="ForumDeliveryPreference" package="mantle.forum">
     <field name="siteId" type="id" is-pk="true"/>
@@ -170,6 +181,12 @@
     <field name="altText" type="text-medium"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.party.communication.CommunicationEvent"/>
+    <index name="FORUM_ATTACH_POST">
+      <index-field name="communicationEventId"/>
+    </index>
+    <index name="FORUM_ATTACH_DRAFT">
+      <index-field name="draftId"/>
+    </index>
   </entity>
   <entity entity-name="ForumReviewItem" package="mantle.forum">
     <field name="reviewId" type="id" is-pk="true"/>
@@ -191,6 +208,12 @@
       <index-field name="siteId"/>
       <index-field name="state"/>
       <index-field name="createdAt"/>
+    </index>
+    <index name="FORUM_REVIEW_TARGET">
+      <index-field name="targetType"/>
+      <index-field name="targetId"/>
+      <index-field name="reasonFamily"/>
+      <index-field name="state"/>
     </index>
   </entity>
   <entity entity-name="ForumReviewReport" package="mantle.forum">
@@ -228,6 +251,10 @@
     <field name="createdAt" type="date-time"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.marketing.contact.ContactList"/>
+    <index name="FORUM_ACTION_LOG">
+      <index-field name="siteId"/>
+      <index-field name="createdAt"/>
+    </index>
   </entity>
   <entity entity-name="ForumMemberState" package="mantle.forum">
     <field name="siteId" type="id" is-pk="true"/>
@@ -311,6 +338,12 @@
       <index-field name="dueAt"/>
     </index>
     <relationship type="one" related="mantle.forum.ForumOutbox"/>
+    <index name="FORUM_DELIVERY_NOTICES">
+      <index-field name="siteId"/>
+      <index-field name="partyId"/>
+      <index-field name="channel"/>
+      <index-field name="state"/>
+    </index>
   </entity>
   <entity entity-name="ForumMailSettings" package="mantle.forum">
     <field name="siteId" type="id" is-pk="true"/>
@@ -329,6 +362,9 @@
     <field name="expiresAt" type="date-time"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.party.Party"/>
+    <index name="FORUM_OPTOUT_EXPIRY">
+      <index-field name="expiresAt"/>
+    </index>
   </entity>
   <entity entity-name="ForumOperationReceipt" package="mantle.forum">
     <field name="siteId" type="id" is-pk="true"/>
@@ -402,6 +438,7 @@
     <alias entity-alias="E" name="fromPartyId"/>
     <alias entity-alias="E" name="contactListId"/>
     <alias entity-alias="T" name="siteId"/>
+    <alias entity-alias="T" name="unlisted"/>
   </view-entity>
   <view-entity entity-name="ForumReceiptState" package="mantle.forum">
     <member-entity entity-alias="R" entity-name="mantle.party.communication.CommunicationEventParty"/>

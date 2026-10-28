@@ -23,34 +23,30 @@ const fail = (kind, message) => {
                 method = request.method.toUpperCase()
             const bearer = request.getHeader('authorization') || '',
                 clientId = request.getHeader('x-pass-client') || ''
+            const account = ec.resource.script(
+                'component://framework/service/org/moqui/public/Account.js',
+            )
+            const registeredClient = account.clientRegistered(
+                clientId,
+                request.getHeader('x-pass-client-secret') || '',
+                siteId,
+            )
             let delegation = null
             if (bearer.startsWith('Bearer ')) {
+                // A credential is only good from the deployment it was issued to.
+                if (!registeredClient)
+                    fail('AuthenticationRequired', 'Registered client required')
                 const was = ec.artifactExecution.disableAuthz()
                 try {
-                    delegation = ec.resource
-                        .script(
-                            'component://framework/service/org/moqui/public/Account.js',
-                        )
-                        .authenticateDelegation(
-                            bearer.slice(7),
-                            clientId,
-                            siteId,
-                        )
+                    delegation = account.authenticateDelegation(
+                        bearer.slice(7),
+                        clientId,
+                        siteId,
+                    )
                 } finally {
                     if (!was) ec.artifactExecution.enableAuthz()
                 }
             }
-            const registeredClient =
-                clientId &&
-                !!System.getProperty('pass_client_' + clientId + '_secret') &&
-                request.getHeader('x-pass-client-secret') ===
-                    System.getProperty('pass_client_' + clientId + '_secret') &&
-                String(
-                    System.getProperty('pass_client_' + clientId + '_sites') ||
-                        '',
-                )
-                    .split(',')
-                    .includes(siteId)
             if (
                 !['GET', 'HEAD'].includes(method) &&
                 !(path[0] === 'account' && registeredClient) &&
@@ -258,9 +254,13 @@ const fail = (kind, message) => {
                 let matches = true
                 for (let i = 0; i < expected.length; i++) {
                     if (expected[i].startsWith('{'))
-                        ids[expected[i].slice(1, -1)] = decodeURIComponent(
-                            path[i],
-                        )
+                        try {
+                            ids[expected[i].slice(1, -1)] = decodeURIComponent(
+                                path[i],
+                            )
+                        } catch (e) {
+                            fail('NotFound', 'Resource not found')
+                        }
                     else if (expected[i] !== path[i]) matches = false
                 }
                 if (!matches) continue

@@ -67,7 +67,15 @@ function site(id, staff = false) {
             !sanctioned(id, m.partyId, null, 'suspend')
     if (staff && !owner && !isOperator())
         fail('Unauthorized', 'Site owner access required')
-    if (v.state !== 'published' && !owner && !isOperator()) missing()
+    // Internal staff keep using bound mailboxes through Comms before publication; category access still decides
+    // what they can read there.
+    if (
+        v.state !== 'published' &&
+        !owner &&
+        !isOperator() &&
+        !internalParty(me())
+    )
+        missing()
     return v
 }
 function revision(row, expected) {
@@ -120,7 +128,28 @@ function listMember(contactListId, partyId) {
         )[0] || null
     )
 }
+/* Read-heavy loops (topic lists, search, summaries) evaluate the same category for the same actor many times.
+   Inside withAccessMemo those answers are kept for the rest of that one call; writes never run inside it. */
+let accessMemo = null
+function withAccessMemo(work) {
+    const outer = accessMemo
+    accessMemo = outer || new Map()
+    try {
+        return work()
+    } finally {
+        accessMemo = outer
+    }
+}
 function categoryAccess(contactListId, actor = me(), seen = new Set()) {
+    if (accessMemo && seen.size === 0) {
+        const key = contactListId + '|' + (actor || '')
+        if (!accessMemo.has(key))
+            accessMemo.set(key, evaluateCategoryAccess(contactListId, actor, seen))
+        return accessMemo.get(key)
+    }
+    return evaluateCategoryAccess(contactListId, actor, seen)
+}
+function evaluateCategoryAccess(contactListId, actor, seen) {
     const c = one(F + 'ForumCategory', { contactListId })
     if (!c || seen.has(contactListId)) return null
     seen.add(contactListId)
@@ -133,8 +162,14 @@ function categoryAccess(contactListId, actor = me(), seen = new Set()) {
         !sanctioned(c.siteId, actor, contactListId, 'suspend')
     const owner = joined && m.role === 'owner',
         staff = joined && ['owner', 'moderator'].includes(m.role)
+    // Internal list members keep their mailbox through Comms whether or not they ever join the public site.
+    const internalMember =
+        !!lm &&
+        internalParty(actor) &&
+        !sanctioned(c.siteId, actor, contactListId, 'suspend')
+    const participant = joined || internalMember
     const categoryStaff =
-        joined &&
+        participant &&
         !!lm &&
         ['ListOwner', 'ListModerator'].includes(lm.roleTypeId) &&
         !sanctioned(c.siteId, actor, contactListId, 'suspend')
@@ -156,6 +191,7 @@ function categoryAccess(contactListId, actor = me(), seen = new Set()) {
         s?.state === 'published' && c.publicationState === 'published'
     let read =
         moderate ||
+        internalMember ||
         (published &&
             (c.visibility === 'public' ||
                 (joined && (c.visibility === 'members' || !!lm || granted))))
@@ -172,7 +208,7 @@ function categoryAccess(contactListId, actor = me(), seen = new Set()) {
     const archived =
         list?.archivedDate && millis(list.archivedDate) <= millis(now())
     const post =
-        joined &&
+        participant &&
         !archived &&
         !sanctioned(c.siteId, actor, contactListId, 'silence') &&
         (read || own) &&
@@ -189,7 +225,7 @@ function categoryAccess(contactListId, actor = me(), seen = new Set()) {
         canReply: !!post,
         canEdit: !!post,
         canUpload: !!post,
-        canFlag: !!joined && !!(read || own),
+        canFlag: participant && !!(read || own),
         canModerate: moderate,
         canInvite: owner || categoryStaff,
     }
@@ -209,6 +245,12 @@ const capabilities = (a) =>
         a,
         'canDiscover canRead canStartTopic canReply canEdit canUpload canFlag canModerate canInvite',
     )
+/* The decorative part of a topic URL; the ID before it is what resolves. */
+const slugify = (title) =>
+    String(title || 'topic')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'topic'
 function topic(root, siteId, lock = false) {
     const t = one(F + 'ForumTopic', { rootCommEventId: root }, lock)
     if (!t || t.siteId !== siteId || t.kind !== 'category') missing()
@@ -330,14 +372,23 @@ function page(p, scope) {
         },
     }
 }
+/* The actor's own account row serializes that actor's retries and first inserts (receipts, reading markers)
+   without making every other member on the site or topic wait. */
+function lockActor() {
+    if (ec.user.userId)
+        ec.entity
+            .find('moqui.security.UserAccount')
+            .condition('userId', ec.user.userId)
+            .forUpdate(true)
+            .one()
+}
 function receipt(p, action, work) {
     const actorPartyId = requireUser()
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(p.operationId || ''))
         invalid(
             'operationId must contain 8–64 letters, numbers, underscores or hyphens',
         )
-    // Site lock serializes same-operation retries, including the first insert.
-    one(S + 'PublicSite', { siteId: p.siteId }, true)
+    lockActor()
     const key = {
             siteId: p.siteId,
             actorPartyId,
@@ -547,12 +598,22 @@ methods.joinSite = (p) => {
     const old = member(p.siteId)
     if (old && old.state === 'active')
         return { state: old.state, revision: Number(old.revision) }
+    // Staff suspensions and removals stand until staff change them.
+    if (
+        old &&
+        (old.state === 'suspended' ||
+            (old.state === 'ended' &&
+                old.stateSetByPartyId &&
+                old.stateSetByPartyId !== partyId))
+    )
+        fail('Unauthorized', 'Joining is not permitted')
     const fields = {
         siteId: p.siteId,
         partyId,
         state: s.approvalRequired === 'Y' ? 'pending' : 'active',
         role: 'member',
         joinedAt: now(),
+        stateSetByPartyId: partyId,
         revision: Number(old?.revision || 0) + 1,
     }
     old ? update(old, fields) : create(S + 'PublicSiteParty', fields)
@@ -570,6 +631,7 @@ methods.leaveSite = (p) => {
     update(m, {
         state: 'ended',
         thruDate: now(),
+        stateSetByPartyId: m.partyId,
         revision: Number(m.revision) + 1,
     })
     bump(p.siteId)
@@ -633,7 +695,11 @@ methods.setMembership = (p) => {
         m.revision,
         Number(m.revision) + 1,
     )
-    update(m, { state: p.state, revision: Number(m.revision) + 1 })
+    update(m, {
+        state: p.state,
+        stateSetByPartyId: me(),
+        revision: Number(m.revision) + 1,
+    })
     bump(p.siteId)
     return { revision: Number(m.revision) }
 }
@@ -813,37 +879,38 @@ methods.getProfile = (p) => {
         },
     }
 }
-methods.findCategories = (p) => {
-    site(p.siteId)
-    const pg = page(p, 'categories:' + p.siteId)
-    const list = []
-    let offset = pg.offset,
-        more = false
-    for (let batch = 0; batch < 10 && list.length <= pg.limit; batch++) {
-        const candidates = Array.from(
-            find(F + 'ForumCategory', { siteId: p.siteId })
-                .orderBy('sequenceNum,contactListId')
-                .offset(offset)
-                .limit(100)
-                .list(),
-        )
-        if (!candidates.length) break
-        for (const c of candidates) {
-            const a = categoryAccess(c.contactListId)
-            offset++
-            if (a?.canDiscover || a?.canReadOwn || a?.canModerate) {
-                if (list.length === pg.limit) {
-                    more = true
-                    offset--
-                    break
+methods.findCategories = (p) =>
+    withAccessMemo(() => {
+        site(p.siteId)
+        const pg = page(p, 'categories:' + p.siteId)
+        const list = []
+        let offset = pg.offset,
+            more = false
+        for (let batch = 0; batch < 10 && list.length <= pg.limit; batch++) {
+            const candidates = Array.from(
+                find(F + 'ForumCategory', { siteId: p.siteId })
+                    .orderBy('sequenceNum,contactListId')
+                    .offset(offset)
+                    .limit(100)
+                    .list(),
+            )
+            if (!candidates.length) break
+            for (const c of candidates) {
+                const a = categoryAccess(c.contactListId)
+                offset++
+                if (a?.canDiscover || a?.canReadOwn || a?.canModerate) {
+                    if (list.length === pg.limit) {
+                        more = true
+                        offset--
+                        break
+                    }
+                    list.push(categoryProjection(a))
                 }
-                list.push(categoryProjection(a))
             }
+            if (more || candidates.length < 100) break
         }
-        if (more || candidates.length < 100) break
-    }
-    return { categoryList: list, nextCursor: more ? pg.next(offset) : null }
-}
+        return { categoryList: list, nextCursor: more ? pg.next(offset) : null }
+    })
 function categoryProjection(a) {
     const l = one('mantle.marketing.contact.ContactList', {
         contactListId: a.category.contactListId,
@@ -875,6 +942,7 @@ function storeCategory(p) {
     if (c) revision(c, p.expectedRevision)
     if (
         c?.publicationState === 'published' &&
+        p.parentContactListId !== undefined &&
         (c.parentContactListId || null) !== (p.parentContactListId || null) &&
         p.confirmAudience !== true
     )
@@ -918,11 +986,19 @@ function storeCategory(p) {
     }
     const l = one('mantle.marketing.contact.ContactList', { contactListId })
     if (p.name) update(l, { contactListName: p.name })
+    // An omitted field keeps its value, so a rename cannot drop the parent (and its access ceiling).
+    const given = (k) => p[k] !== undefined
     update(c, {
-        parentContactListId: p.parentContactListId || null,
-        slug: p.slug || contactListId,
-        sequenceNum: Number(p.sequenceNum || 0),
-        rules: StringUtilities.cleanHtml(p.rules || ''),
+        parentContactListId: given('parentContactListId')
+            ? p.parentContactListId || null
+            : (c.parentContactListId ?? null),
+        slug: given('slug') ? p.slug || contactListId : c.slug || contactListId,
+        sequenceNum: given('sequenceNum')
+            ? Number(p.sequenceNum || 0)
+            : Number(c.sequenceNum || 0),
+        rules: given('rules')
+            ? StringUtilities.cleanHtml(p.rules || '')
+            : (c.rules ?? ''),
         policyRevision: Number(c.policyRevision) + 1,
     })
     bump(p.siteId)
@@ -972,113 +1048,125 @@ methods.setCategoryAccess = (p) => {
     bump(p.siteId)
     return { revision: Number(c.policyRevision) }
 }
-methods.findTopics = (p) => {
-    site(p.siteId)
-    if (p.contactListId) category(p.contactListId, p.siteId)
-    if (p.view && !['latest', 'new', 'unread', 'top'].includes(p.view))
-        invalid('Invalid topic view')
-    if (['new', 'unread'].includes(p.view)) requireUser()
-    const pg = page(
-            p,
-            'topics:' +
-                p.siteId +
-                ':' +
-                (p.contactListId || '') +
-                ':' +
-                (p.query || '') +
-                ':' +
-                (p.view || 'latest'),
-        ),
-        list = []
-    let offset = pg.offset,
-        more = false
-    // Work is capped even when most candidates are concealed. Cursor advances over the inspected window.
-    for (let batch = 0; batch < 10 && list.length <= pg.limit; batch++) {
-        const candidates = Array.from(
-            find(F + 'ForumTopic', {
-                siteId: p.siteId,
-                kind: 'category',
-                ...(p.contactListId ? { contactListId: p.contactListId } : {}),
-            })
-                .orderBy(
-                    p.view === 'top'
-                        ? '-visiblePostCount,rootCommEventId'
-                        : '-lastActivity,rootCommEventId',
+methods.findTopics = (p) =>
+    withAccessMemo(() => {
+        site(p.siteId)
+        if (p.contactListId) category(p.contactListId, p.siteId)
+        if (p.view && !['latest', 'new', 'unread', 'top'].includes(p.view))
+            invalid('Invalid topic view')
+        // A member's activity: only when their profile is visible to this reader (getProfile conceals otherwise).
+        const authorPartyId = p.authorHandle
+            ? (methods.getProfile({ siteId: p.siteId, handle: p.authorHandle }),
+              one(S + 'PublicSiteProfile', {
+                  siteId: p.siteId,
+                  handle: p.authorHandle,
+              }).partyId)
+            : null
+        if (['new', 'unread'].includes(p.view)) requireUser()
+        const pg = page(
+                p,
+                'topics:' +
+                    p.siteId +
+                    ':' +
+                    (p.contactListId || '') +
+                    ':' +
+                    (p.query || '') +
+                    ':' +
+                    (p.view || 'latest') +
+                    ':' +
+                    (p.authorHandle || ''),
+            ),
+            list = []
+        let offset = pg.offset,
+            more = false
+        // Work is capped even when most candidates are concealed. Cursor advances over the inspected window.
+        for (let batch = 0; batch < 10 && list.length <= pg.limit; batch++) {
+            const candidates = Array.from(
+                find(F + 'ForumTopic', {
+                    siteId: p.siteId,
+                    kind: 'category',
+                    ...(p.contactListId ? { contactListId: p.contactListId } : {}),
+                })
+                    .orderBy(
+                        p.view === 'top'
+                            ? '-visiblePostCount,rootCommEventId'
+                            : '-lastActivity,rootCommEventId',
+                    )
+                    .offset(offset)
+                    .limit(100)
+                    .list(),
+            )
+            if (!candidates.length) break
+            for (const t of candidates) {
+                offset++
+                let out
+                try {
+                    out = topic(t.rootCommEventId, p.siteId)
+                } catch (e) {
+                    if (e.moquiErrorKind === 'NotFound') continue
+                    throw e
+                }
+                const { event, a } = out
+                if (
+                    (p.contactListId && event.contactListId !== p.contactListId) ||
+                    (authorPartyId && event.fromPartyId !== authorPartyId) ||
+                    (t.unlisted === 'Y' && !a.canModerate) ||
+                    (p.query &&
+                        !String(event.subject || '')
+                            .toLowerCase()
+                            .includes(String(p.query).toLowerCase()))
                 )
-                .offset(offset)
-                .limit(100)
-                .list(),
-        )
-        if (!candidates.length) break
-        for (const t of candidates) {
-            offset++
-            let out
-            try {
-                out = topic(t.rootCommEventId, p.siteId)
-            } catch (e) {
-                if (e.moquiErrorKind === 'NotFound') continue
-                throw e
+                    continue
+                const marker = readingBoundary(
+                    t.rootCommEventId,
+                    p.siteId,
+                    event.contactListId,
+                )
+                const unreadCount = marker
+                    ? find(F + 'ForumPostSearch', {
+                          rootCommEventId: t.rootCommEventId,
+                          visibility: 'approved',
+                      })
+                          .condition(
+                              'ordinal',
+                              'greater',
+                              Number(marker.consumedOrdinal || 0),
+                          )
+                          .condition('fromPartyId', 'not-equals', me())
+                          .count()
+                    : null
+                if (
+                    (p.view === 'unread' && !unreadCount) ||
+                    (p.view === 'new' &&
+                        (one(F + 'ForumTopicUser', {
+                            rootCommEventId: t.rootCommEventId,
+                            partyId: me(),
+                        }) ||
+                            millis(event.entryDate) <=
+                                millis(member(p.siteId)?.joinedAt)))
+                )
+                    continue
+                if (list.length === pg.limit) {
+                    more = true
+                    offset--
+                    break
+                }
+                list.push({
+                    unreadCount,
+                    ...pick(
+                        t,
+                        'rootCommEventId revision pinned lastActivity visiblePostCount',
+                    ),
+                    title: event.subject,
+                    category: categoryProjection(a),
+                    capabilities: capabilities(a),
+                })
             }
-            const { event, a } = out
-            if (
-                (p.contactListId && event.contactListId !== p.contactListId) ||
-                (t.unlisted === 'Y' && !a.canModerate) ||
-                (p.query &&
-                    !String(event.subject || '')
-                        .toLowerCase()
-                        .includes(String(p.query).toLowerCase()))
-            )
-                continue
-            const marker = readingBoundary(
-                t.rootCommEventId,
-                p.siteId,
-                event.contactListId,
-            )
-            const unreadCount = marker
-                ? find(F + 'ForumPostSearch', {
-                      rootCommEventId: t.rootCommEventId,
-                      visibility: 'approved',
-                  })
-                      .condition(
-                          'ordinal',
-                          'greater',
-                          Number(marker.consumedOrdinal || 0),
-                      )
-                      .condition('fromPartyId', 'not-equals', me())
-                      .count()
-                : null
-            if (
-                (p.view === 'unread' && !unreadCount) ||
-                (p.view === 'new' &&
-                    (one(F + 'ForumTopicUser', {
-                        rootCommEventId: t.rootCommEventId,
-                        partyId: me(),
-                    }) ||
-                        millis(event.entryDate) <=
-                            millis(member(p.siteId)?.joinedAt)))
-            )
-                continue
-            if (list.length === pg.limit) {
-                more = true
-                offset--
-                break
-            }
-            list.push({
-                unreadCount,
-                ...pick(
-                    t,
-                    'rootCommEventId revision pinned lastActivity visiblePostCount',
-                ),
-                title: event.subject,
-                category: categoryProjection(a),
-                capabilities: capabilities(a),
-            })
+            if (more || candidates.length < 100) break
+            if (batch === 9) more = true
         }
-        if (more || candidates.length < 100) break
-        if (batch === 9) more = true
-    }
-    return { topicList: list, nextCursor: more ? pg.next(offset) : null }
-}
+        return { topicList: list, nextCursor: more ? pg.next(offset) : null }
+    })
 methods.getTopic = (p) => {
     const { t, event, a } = topic(p.rootCommEventId, p.siteId)
     return {
@@ -1093,11 +1181,7 @@ methods.getTopic = (p) => {
                 event.contactListId,
             ),
             title: event.subject,
-            slug:
-                String(event.subject || 'topic')
-                    .toLowerCase()
-                    .replace(/[^a-z0-9]+/g, '-')
-                    .replace(/^-|-$/g, '') || 'topic',
+            slug: slugify(event.subject),
             closed: event.statusId === 'CeResolved',
             category: categoryProjection(a),
             capabilities: {
@@ -1121,10 +1205,13 @@ methods.getPosts = (p) => {
             ':' +
             (p.after || ''),
         pg = page(p, scope)
-    let q = find(F + 'ForumPostSearch', { rootCommEventId: t.rootCommEventId })
-    if (!a.canModerate) {
+    const visiblePosts = () => {
+        const q = find(F + 'ForumPostSearch', {
+            rootCommEventId: t.rootCommEventId,
+        })
+        if (a.canModerate) return q
         const cf = ec.entity.conditionFactory
-        q = q.condition(
+        return q.condition(
             cf.makeCondition(
                 [
                     cf.makeCondition('visibility', 'equals', 'approved'),
@@ -1138,6 +1225,7 @@ methods.getPosts = (p) => {
             ),
         )
     }
+    let q = visiblePosts()
     if (p.around) {
         if (p.before != null || p.after != null)
             invalid('Use one post window locator')
@@ -1149,8 +1237,18 @@ methods.getPosts = (p) => {
                 communicationEventId: p.around,
             })
         if (!target || !event || !postVisible(target, event, a)) missing()
-        // Stable ordinals keep the requested post in the first window without scanning earlier pages.
-        q = q.condition('ordinal', 'greater-equals', Number(target.ordinal))
+        // Start a few visible posts before the target so it reads in context; stable ordinals make this one query.
+        const earlier = Array.from(
+            visiblePosts()
+                .condition('ordinal', 'less', Number(target.ordinal))
+                .orderBy('-ordinal')
+                .limit(Math.min(5, Math.floor(pg.limit / 3)))
+                .list(),
+        )
+        const start = earlier.length
+            ? Number(earlier[earlier.length - 1].ordinal)
+            : Number(target.ordinal)
+        q = q.condition('ordinal', 'greater-equals', start)
     }
     for (const key of ['before', 'after'])
         if (p[key] != null) {
@@ -1195,11 +1293,6 @@ methods.getPosts = (p) => {
         revision: Number(t.revision),
         generation: Number(a.site.generation),
     }
-}
-methods.searchForum = (p) => {
-    if (!p.query || String(p.query).length > 200)
-        invalid('Enter a query of at most 200 characters')
-    return methods.findTopics(p)
 }
 methods.storeDraft = (p) => {
     site(p.siteId)
@@ -1407,7 +1500,12 @@ methods.publishPost = (p) => {
             millis(now()) - millis(memberState.lastPostedAt) <
                 Number(postingPolicy.postIntervalSeconds ?? 10) * 1000
         )
-            fail('Tarpit', 'Wait ten seconds between posts')
+            fail(
+                'Tarpit',
+                'Wait ' +
+                    Number(postingPolicy.postIntervalSeconds ?? 10) +
+                    ' seconds between posts',
+            )
         const day = String(now()).slice(0, 10),
             daily =
                 memberState.dayKey === day
@@ -1493,24 +1591,7 @@ methods.publishPost = (p) => {
             publicHistoryAllowed: 'N',
         })
 
-        for (const attachmentId of p.attachmentIds || []) {
-            const att = one(F + 'ForumAttachment', { attachmentId }, true)
-            if (
-                !att ||
-                att.siteId !== p.siteId ||
-                att.ownerPartyId !== me() ||
-                att.communicationEventId ||
-                att.purpose === 'avatar' ||
-                att.scanState !== 'clean' ||
-                (att.expiresAt && millis(att.expiresAt) <= millis(now()))
-            )
-                invalid('Attachment is unavailable or has not passed scanning')
-            update(att, {
-                communicationEventId: postId,
-                draftId: null,
-                expiresAt: null,
-            })
-        }
+        attachToPost(p.siteId, postId, p.attachmentIds)
         update(memberState, {
             lastPostedAt: now(),
             dayKey: day,
@@ -1556,6 +1637,41 @@ methods.publishPost = (p) => {
         }
     })
 }
+/* A staged upload of the actor's, or one already on this post, that passed scanning and has not expired. */
+function attachToPost(siteId, postId, attachmentIds) {
+    for (const attachmentId of attachmentIds || []) {
+        const att = one(F + 'ForumAttachment', { attachmentId }, true)
+        const usable =
+            att &&
+            att.siteId === siteId &&
+            ((att.ownerPartyId === me() && !att.communicationEventId) ||
+                att.communicationEventId === postId) &&
+            att.purpose !== 'avatar' &&
+            att.scanState === 'clean' &&
+            !(att.expiresAt && millis(att.expiresAt) <= millis(now()))
+        if (!usable)
+            invalid('Attachment is unavailable or has not passed scanning')
+        update(att, { communicationEventId: postId, draftId: null, expiresAt: null })
+    }
+}
+function refreshReviews(siteId, postId, targetRevision) {
+    for (const r of find(F + 'ForumReviewItem', {
+        siteId,
+        targetType: 'post',
+        targetId: postId,
+    })
+        .condition('state', 'in', ['pending', 'claimed'])
+        .forUpdate(true)
+        .list())
+        if (Number(r.targetRevision) !== Number(targetRevision))
+            update(r, {
+                targetRevision,
+                revision: Number(r.revision) + 1,
+                state: 'pending',
+                claimedByPartyId: null,
+                claimExpiresAt: null,
+            })
+}
 methods.updatePost = (p) => {
     requireUser()
     site(p.siteId)
@@ -1570,7 +1686,6 @@ methods.updatePost = (p) => {
         event = one(E + 'CommunicationEvent', {
             communicationEventId: p.postId,
         })
-    requireUser()
     revision(st, p.expectedRevision)
     if (
         !a.canModerate &&
@@ -1614,26 +1729,7 @@ methods.updatePost = (p) => {
                     expiresAt: millis(now()) + 7 * 86400000,
                 })
         }
-    for (const attachmentId of p.attachmentIds || []) {
-        const att = one(F + 'ForumAttachment', { attachmentId }, true)
-        if (
-            !att ||
-            att.siteId !== p.siteId ||
-            (att.ownerPartyId !== me() &&
-                att.communicationEventId !== p.postId) ||
-            (att.communicationEventId &&
-                att.communicationEventId !== p.postId) ||
-            att.purpose === 'avatar' ||
-            att.scanState !== 'clean' ||
-            (att.expiresAt && millis(att.expiresAt) <= millis(now()))
-        )
-            invalid('Attachment is unavailable or has not passed scanning')
-        update(att, {
-            communicationEventId: p.postId,
-            draftId: null,
-            expiresAt: null,
-        })
-    }
+    attachToPost(p.siteId, p.postId, p.attachmentIds)
     if (a.canModerate)
         audit(
             p.siteId,
@@ -1654,6 +1750,8 @@ methods.updatePost = (p) => {
             r,
             'first-post',
         )
+    // Open reports now concern the edited text; decisions bind to that revision.
+    refreshReviews(p.siteId, p.postId, r)
     bump(p.siteId)
     if (p.draftId) {
         const draft = one(F + 'ForumDraft', {
@@ -1670,9 +1768,10 @@ methods.updatePost = (p) => {
     }
 }
 methods.markRead = (p) => {
-    const { t, a } = topic(p.rootCommEventId, p.siteId, true),
+    const { t, a } = topic(p.rootCommEventId, p.siteId),
         partyId = requireUser(),
         key = { rootCommEventId: t.rootCommEventId, partyId }
+    lockActor()
     let marker = one(F + 'ForumTopicUser', key, true)
     if (marker)
         revision({ revision: marker.markerRevision }, p.expectedRevision)
@@ -2042,10 +2141,13 @@ methods.decideReview = (p) => {
         const m = member(p.siteId, r.targetId)
         if (!m || Number(m.revision) !== Number(r.targetRevision))
             fail('Conflict', 'Membership changed')
-        update(m, {
-            state: p.decision === 'approved' ? 'active' : 'ended',
-            revision: Number(m.revision) + 1,
-        })
+        // Dismissing the review item is not a decision about the membership.
+        if (p.decision !== 'dismissed')
+            update(m, {
+                state: p.decision === 'approved' ? 'active' : 'ended',
+                stateSetByPartyId: me(),
+                revision: Number(m.revision) + 1,
+            })
     }
     audit(
         p.siteId,
@@ -2081,7 +2183,7 @@ methods.applyTopicAction = (p) => {
             fail('Unauthorized', 'Destination moderator access required')
         if (p.confirmAudience !== true)
             invalid('Review and confirm the destination audience')
-        if (Number(p.expectedGeneration) !== Number(site(p.siteId).generation))
+        if (Number(p.expectedGeneration) !== audienceRevision(p.siteId, a, target))
             fail('Conflict', 'Audience changed; preview the move again')
         const cf = ec.entity.conditionFactory
         let after = ''
@@ -2230,11 +2332,33 @@ methods.findActions = (p) => {
             ),
     }
 }
+/* Staff act only on lower-ranked parties: operator > site owner > site moderator > list owner > list moderator > member. */
+function rank(siteId, contactListId, partyId, actor) {
+    if (actor && isOperator()) return 5
+    const m = member(siteId, partyId)
+    const siteRole =
+        active(m) && m.state === 'active'
+            ? { owner: 4, moderator: 3 }[m.role] || 0
+            : 0
+    const lm = contactListId ? listMember(contactListId, partyId) : null
+    const listRole = { ListOwner: 2, ListModerator: 1 }[lm?.roleTypeId] || 0
+    return Math.max(siteRole, listRole)
+}
+function requireHigherRank(siteId, contactListId, targetPartyId) {
+    const self = me()
+    if (targetPartyId === self) invalid('Staff cannot sanction themselves')
+    if (
+        rank(siteId, contactListId, self, true) <=
+        rank(siteId, contactListId, targetPartyId, false)
+    )
+        fail('Unauthorized', 'Only higher-ranked staff can sanction this member')
+}
 methods.setSanction = (p) =>
     receipt(p, 'setSanction', () => {
         staff(p.siteId, p.contactListId)
         const target = member(p.siteId, p.targetPartyId)
         if (!target) missing()
+        requireHigherRank(p.siteId, p.contactListId, p.targetPartyId)
         if (p.thruDate && millis(p.thruDate) <= millis(now()))
             invalid('Sanction expiry must be in the future')
         if (target.role === 'owner' && p.kind === 'suspend' && !p.contactListId)
@@ -2569,6 +2693,28 @@ function allocateInternal(postId, contactListId, author) {
             communicationEventId: postId,
             partyId,
             roleTypeId: 'MessageMailbox',
+            statusId: 'CepReceived',
+        })
+    }
+}
+/* Named internal recipients who can read the category: To beats Cc beats the plain mailbox receipt. */
+function addNamedReceipts(postId, contactListId, author, toIds, ccIds) {
+    const roles = new Map()
+    for (const partyId of toIds || []) roles.set(partyId, 'MessageTo')
+    for (const partyId of ccIds || [])
+        if (!roles.has(partyId)) roles.set(partyId, 'MessageCc')
+    for (const [partyId, roleTypeId] of roles) {
+        if (partyId === author || !internalParty(partyId)) continue
+        if (!categoryAccess(contactListId, partyId)?.canRead) continue
+        for (const row of find(E + 'CommunicationEventParty', {
+            communicationEventId: postId,
+            partyId,
+        }).list())
+            row.delete()
+        create(E + 'CommunicationEventParty', {
+            communicationEventId: postId,
+            partyId,
+            roleTypeId,
             statusId: 'CepReceived',
         })
     }
@@ -2912,8 +3058,26 @@ function optOut(p) {
     return v
 }
 methods.inspectOptOut = (p) => {
-    optOut(p)
-    return { valid: true }
+    const v = optOut(p)
+    // Name only what the recipient can still see; a scope they lost access to stays generic.
+    let scope = 'this site'
+    if (v.scopeType === 'category') {
+        const a = categoryAccess(v.scopeId, v.partyId)
+        scope = a?.canRead
+            ? 'the ' +
+              (one('mantle.marketing.contact.ContactList', {
+                  contactListId: v.scopeId,
+              })?.contactListName || 'selected') +
+              ' category'
+            : 'a category'
+    } else if (v.scopeType === 'topic') scope = 'one discussion'
+    return {
+        valid: true,
+        optOut: {
+            'Stops email for': scope,
+            'Keeps': 'Your membership, your access and in-app notifications',
+        },
+    }
 }
 methods.applyOptOut = (p) => {
     const v = optOut(p),
@@ -3104,14 +3268,20 @@ methods.getAttachment = (p) => {
 methods.findNotifications = (p) => {
     site(p.siteId)
     const partyId = requireUser(),
-        pg = page(p, 'notifications:' + p.siteId),
-        list = Array.from(
+        pg = page(p, 'notifications:' + p.siteId + ':' + (p.view || 'all'))
+    if (p.view && !['all', 'unread'].includes(p.view))
+        invalid('Invalid notification view')
+    const list = Array.from(
             find(F + 'ForumDelivery', {
                 siteId: p.siteId,
                 partyId,
                 channel: 'in-app',
-                state: 'sent',
             })
+                .condition(
+                    'state',
+                    'in',
+                    p.view === 'unread' ? ['sent'] : ['sent', 'read'],
+                )
                 .orderBy('-dueAt,deliveryId')
                 .offset(pg.offset)
                 .limit(pg.limit + 1)
@@ -3134,6 +3304,7 @@ methods.findNotifications = (p) => {
                 rootCommEventId: st.rootCommEventId,
                 title: event.subject,
                 createdAt: item.dueAt,
+                read: item.state === 'read',
             })
         } catch (e) {
             if (e.moquiErrorKind !== 'NotFound') throw e
@@ -3155,8 +3326,24 @@ methods.markNotifications = (p) => {
             deliveryId,
             channel: 'in-app',
         })
-        if (v) update(v, { state: 'read' })
+        if (v?.state === 'sent') update(v, { state: 'read' })
     }
+    // Read all: the actor's own unread notices on this site, in bounded pages.
+    if (p.all === true)
+        for (let pageCount = 0; pageCount < 20; pageCount++) {
+            const unread = Array.from(
+                find(F + 'ForumDelivery', {
+                    siteId: p.siteId,
+                    partyId,
+                    channel: 'in-app',
+                    state: 'sent',
+                })
+                    .limit(500)
+                    .list(),
+            )
+            for (const v of unread) update(v, { state: 'read' })
+            if (unread.length < 500) break
+        }
     return { marked: true }
 }
 methods.storePolicy = (p) => {
@@ -3181,7 +3368,6 @@ methods.storePolicy = (p) => {
         Object.keys(p.config).some(
             (k) =>
                 ![
-                    'requireAccountApproval',
                     'firstContributionCount',
                     'postIntervalSeconds',
                 ].includes(k),
@@ -3346,22 +3532,22 @@ function legacyReading(event, partyId) {
         archivedAt: marker?.archivedAt || null,
     }
 }
+/* A public member's inbox summary of one mailbox. Only the most recently active topics are counted, so one
+   inbox load stays bounded however many threads the mailbox has; beyond them the count is a lower bound. */
+const SUMMARY_TOPIC_LIMIT = 200
 function legacyMailboxSummary(contactListId) {
     const partyId = me()
     if (!partyId || internalParty(partyId)) return null
-    let unreadCount = 0,
-        lastPostDate = null,
-        after = ''
-    for (;;) {
+    return withAccessMemo(() => {
+        let unreadCount = 0,
+            lastPostDate = null
         const topics = Array.from(
             find(F + 'ForumTopic', { contactListId, kind: 'category' })
-                .condition('rootCommEventId', 'greater', after)
-                .orderBy('rootCommEventId')
-                .limit(100)
+                .orderBy('-lastActivity,rootCommEventId')
+                .limit(SUMMARY_TOPIC_LIMIT + 1)
                 .list(),
         )
-        if (!topics.length) break
-        for (const t of topics) {
+        for (const t of topics.slice(0, SUMMARY_TOPIC_LIMIT)) {
             if (t.siteId) {
                 try {
                     topic(t.rootCommEventId, t.siteId)
@@ -3370,6 +3556,7 @@ function legacyMailboxSummary(contactListId) {
                     throw error
                 }
             }
+            if (!lastPostDate) lastPostDate = t.lastActivity
             const marker = one(F + 'ForumTopicUser', {
                     rootCommEventId: t.rootCommEventId,
                     partyId,
@@ -3390,27 +3577,20 @@ function legacyMailboxSummary(contactListId) {
                         Number(boundary?.consumedOrdinal || 0),
                     )
                     .count()
-            const last = Array.from(
-                find(F + 'ForumPostSearch', {
-                    rootCommEventId: t.rootCommEventId,
-                    visibility: 'approved',
-                })
-                    .orderBy('-ordinal')
-                    .limit(1)
-                    .list(),
-            )[0]
-            if (last && millis(last.entryDate) > millis(lastPostDate))
-                lastPostDate = last.entryDate
         }
-        after = topics[topics.length - 1].rootCommEventId
-    }
-    return { unreadCount, lastPostDate }
+        return {
+            unreadCount,
+            lastPostDate,
+            unreadCapped: topics.length > SUMMARY_TOPIC_LIMIT,
+        }
+    })
 }
 
 function legacyMarker(event, partyId, change, expected) {
     const root = event.rootCommEventId || event.communicationEventId,
         key = { rootCommEventId: root, partyId }
-    let topicRow = one(F + 'ForumTopic', { rootCommEventId: root }, true)
+    lockActor()
+    let topicRow = one(F + 'ForumTopic', { rootCommEventId: root })
     if (!topicRow)
         fail('Unavailable', 'Mailbox tracking conversion is required')
     const state = one(F + 'ForumPostState', {
@@ -3516,7 +3696,12 @@ methods.joinCategory = (p) => {
     site(p.siteId)
     const partyId = requireUser(),
         a = category(p.contactListId, p.siteId)
-    if (member(p.siteId)?.state !== 'active' || (!a.canRead && !a.canReadOwn))
+    // Joining a help category would open every other member's thread; staff add help members.
+    if (
+        member(p.siteId)?.state !== 'active' ||
+        !a.canRead ||
+        a.category.visibility === 'help'
+    )
         fail('Unauthorized', 'Joining is not permitted')
     const old = listMember(p.contactListId, partyId)
     if (old) return { state: 'active' }
@@ -3658,6 +3843,15 @@ methods.bindMailbox = (p) => {
             contactListId: p.contactListId,
         })
         if (!list || list.contactListTypeEnumId !== 'MAILBOX') missing()
+        // Binding exposes a mailbox's history to the site's staff: an operator, or an internal owner of that list.
+        if (
+            !isOperator() &&
+            !(
+                listMember(p.contactListId, me())?.roleTypeId === 'ListOwner' &&
+                internalParty(me())
+            )
+        )
+            missing()
         if (one(F + 'ForumCategory', { contactListId: p.contactListId }))
             fail('Conflict', 'Mailbox is already bound')
         const category = create(F + 'ForumCategory', {
@@ -3779,82 +3973,120 @@ methods.publishSitePage = (p) => {
     return { revision: values.publicationRevision }
 }
 
-methods.searchForum = (p) => {
-    site(p.siteId)
-    if (!p.query || String(p.query).length < 2 || String(p.query).length > 200)
-        invalid('Search needs 2–200 characters')
-    const allowed = []
-    for (const c of rows(F + 'ForumCategory', { siteId: p.siteId }, 1000)) {
-        const a = categoryAccess(c.contactListId)
-        if (
-            a &&
-            (a.canRead || a.canReadOwn || a.canModerate) &&
-            (!p.contactListId || p.contactListId === c.contactListId)
+/* Sanitized HTML as plain text; templates escape it once. */
+function plainText(html) {
+    return StringUtilities.cleanHtml(html || '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+        .replace(/&#x([0-9a-f]+);/gi, (_, n) =>
+            String.fromCodePoint(parseInt(n, 16)),
         )
-            allowed.push(c.contactListId)
-    }
-    if (!allowed.length) return { topicList: [], nextCursor: null }
-    const pg = page(
-            p,
-            'search:' +
-                p.siteId +
-                ':' +
-                p.query +
-                ':' +
-                (p.contactListId || ''),
-        ),
-        cf = ec.entity.conditionFactory
-    const candidates = Array.from(
-        find(F + 'ForumPostSearch', {
-            siteId: p.siteId,
-            visibility: 'approved',
-        })
-            .condition('contactListId', 'in', allowed)
-            .condition(
-                cf.makeCondition(
-                    [
-                        cf.makeCondition(
-                            'subject',
-                            'like',
-                            '%' + p.query + '%',
-                        ),
-                        cf.makeCondition('body', 'like', '%' + p.query + '%'),
-                    ],
-                    'or',
-                ),
-            )
-            .orderBy('-entryDate,communicationEventId')
-            .offset(pg.offset)
-            .limit(pg.limit + 1)
-            .list(),
-    )
-    const list = []
-    for (const candidate of candidates.slice(0, pg.limit)) {
-        let out
-        try {
-            out = topic(candidate.rootCommEventId, p.siteId)
-        } catch (e) {
-            if (e.moquiErrorKind === 'NotFound') continue
-            throw e
-        }
-        if (!postVisible(candidate, candidate, out.a)) continue
-        list.push({
-            rootCommEventId: candidate.rootCommEventId,
-            postId: candidate.communicationEventId,
-            title: candidate.subject,
-            snippet: StringUtilities.cleanHtml(candidate.body || '')
-                .replace(/<[^>]*>/g, ' ')
-                .slice(0, 240),
-            entryDate: candidate.entryDate,
-            capabilities: capabilities(out.a),
-        })
-    }
-    return {
-        topicList: list,
-        nextCursor:
-            candidates.length > pg.limit ? pg.next(pg.offset + pg.limit) : null,
-    }
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;|&apos;/g, "'")
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/\s+/g, ' ')
+        .trim()
 }
+methods.searchForum = (p) =>
+    withAccessMemo(() => {
+        site(p.siteId)
+        if (!p.query || String(p.query).length < 2 || String(p.query).length > 200)
+            invalid('Search needs 2–200 characters')
+        const allowed = []
+        for (const c of rows(F + 'ForumCategory', { siteId: p.siteId }, 1000)) {
+            const a = categoryAccess(c.contactListId)
+            if (
+                a &&
+                (a.canRead || a.canReadOwn || a.canModerate) &&
+                (!p.contactListId || p.contactListId === c.contactListId)
+            )
+                allowed.push(c.contactListId)
+        }
+        if (!allowed.length) return { topicList: [], nextCursor: null }
+        const pg = page(
+                p,
+                'search:' +
+                    p.siteId +
+                    ':' +
+                    p.query +
+                    ':' +
+                    (p.contactListId || ''),
+            ),
+            cf = ec.entity.conditionFactory
+        const candidates = Array.from(
+            find(F + 'ForumPostSearch', {
+                siteId: p.siteId,
+                visibility: 'approved',
+            })
+                .condition('contactListId', 'in', allowed)
+                .condition(cf.makeCondition('unlisted', 'not-equals', 'Y', true))
+                .condition(
+                    cf.makeCondition(
+                        [
+                            // Replies keep the subject from when they were posted; only the root carries the title.
+                            cf.makeCondition(
+                                [
+                                    cf.makeCondition(
+                                        'subject',
+                                        'like',
+                                        '%' + p.query + '%',
+                                    ),
+                                    cf.makeCondition('ordinal', 'equals', 1),
+                                ],
+                                'and',
+                            ),
+                            cf.makeCondition('body', 'like', '%' + p.query + '%'),
+                        ],
+                        'or',
+                    ),
+                )
+                .orderBy('-entryDate,communicationEventId')
+                .offset(pg.offset)
+                .limit(pg.limit + 1)
+                .list(),
+        )
+        const literal = /[%_]/.test(p.query) ? String(p.query).toLowerCase() : null
+        const list = []
+        for (const candidate of candidates.slice(0, pg.limit)) {
+            let out
+            try {
+                out = topic(candidate.rootCommEventId, p.siteId)
+            } catch (e) {
+                if (e.moquiErrorKind === 'NotFound') continue
+                throw e
+            }
+            if (!postVisible(candidate, candidate, out.a)) continue
+            const text = plainText(candidate.body)
+            // LIKE treats % and _ as wildcards; keep only literal matches.
+            if (
+                literal &&
+                !(
+                    (Number(candidate.ordinal) === 1 &&
+                        String(out.event.subject || '')
+                            .toLowerCase()
+                            .includes(literal)) ||
+                    text.toLowerCase().includes(literal)
+                )
+            )
+                continue
+            list.push({
+                rootCommEventId: candidate.rootCommEventId,
+                postId: candidate.communicationEventId,
+                title: out.event.subject,
+                snippet: text.slice(0, 240),
+                entryDate: candidate.entryDate,
+                capabilities: capabilities(out.a),
+            })
+        }
+        return {
+            topicList: list,
+            nextCursor:
+                candidates.length > pg.limit ? pg.next(pg.offset + pg.limit) : null,
+        }
+    })
 methods.getFeed = (p) => {
     const s = one(S + 'PublicSite', { siteId: p.siteId })
     if (!s || s.state !== 'published') missing()
@@ -3923,12 +4155,7 @@ methods.getFeed = (p) => {
         '/t/' +
         encodeURIComponent(t.id) +
         '/' +
-        encodeURIComponent(
-            String(t.title || 'topic')
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, '-')
-                .replace(/^-|-$/g, '') || 'topic',
-        )
+        encodeURIComponent(slugify(t.title))
     if (p.format === 'sitemap')
         return {
             contentType: 'application/xml',
@@ -4001,11 +4228,7 @@ methods.getPostLocation = (p) => {
         missing()
     return {
         rootCommEventId: state.rootCommEventId,
-        slug:
-            String(event.subject || 'topic')
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, '-')
-                .replace(/^-|-$/g, '') || 'topic',
+        slug: slugify(event.subject),
         postId: p.postId,
     }
 }
@@ -4063,8 +4286,23 @@ methods.previewTopicAction = (p) => {
         targetVisibility: target.category.visibility,
         visiblePostCount: t.visiblePostCount,
         expectedRevision: Number(t.revision),
-        expectedGeneration: Number(site(p.siteId).generation),
+        expectedGeneration: audienceRevision(p.siteId, a, target),
     }
+}
+/* Policy revisions only grow, so their sum over the site and both category chains changes whenever either audience can. */
+function audienceRevision(siteId, source, target) {
+    let total = Number(one(S + 'PublicSite', { siteId })?.policyRevision || 0)
+    for (const start of [source.category, target.category]) {
+        const seen = new Set()
+        for (let c = start; c && !seen.has(c.contactListId); ) {
+            seen.add(c.contactListId)
+            total += Number(c.policyRevision || 0)
+            c = c.parentContactListId
+                ? one(F + 'ForumCategory', { contactListId: c.parentContactListId })
+                : null
+        }
+    }
+    return total
 }
 function execute(operation, p) {
     const schema = ec.resource.script(
@@ -4117,6 +4355,7 @@ function execute(operation, p) {
         'approvalRequired',
         'markUnread',
         'jump',
+        'all',
     ])
     const listFields = new Set([
         'attachmentIds',
@@ -4193,4 +4432,5 @@ function execute(operation, p) {
     legacyMailboxSummary,
     protectListOwner,
     recordMailboxPost,
+    addNamedReceipts,
 })
