@@ -1805,6 +1805,9 @@ methods.publishPost = (p) => {
         if (poll) createPoll(p.siteId, root, postId, poll)
         update(memberState, {
             lastPostedAt: now(),
+            approvedContributions:
+                Number(memberState.approvedContributions || 0) +
+                (pending ? 0 : 1),
             dayKey: day,
             dailyTopics: existing
                 ? memberState.dayKey === day
@@ -2410,7 +2413,7 @@ methods.decideReview = (p) => {
                     visiblePostCount: Number(t.visiblePostCount) + 1,
                     revision: Number(t.revision) + 1,
                 })
-        } else if (p.decision === 'approved' && st.visibility !== 'approved') {
+        } else if (p.decision === 'approved' && st.visibility === 'pending') {
             update(st, {
                 visibility: 'approved',
                 approvedRevision: st.revision,
@@ -3064,6 +3067,19 @@ methods.setPreferences = (p) => {
         oldDelivery
             ? update(oldDelivery, values)
             : create(F + 'ForumDeliveryPreference', values)
+        // A site-wide stop (an unsubscribe or a hard bounce) lasts until the member chooses a mode again.
+        if (p.emailMode != null && key.scopeType !== 'site') {
+            const siteRow = one(F + 'ForumDeliveryPreference', {
+                ...key,
+                scopeType: 'site',
+                scopeId: '_SITE_',
+            })
+            if (siteRow?.suppressed === 'Y')
+                update(siteRow, {
+                    suppressed: 'N',
+                    revision: Number(siteRow.revision || 0) + 1,
+                })
+        }
     }
     return methods.getPreferences(p)
 }
@@ -5967,12 +5983,19 @@ function recomputeMemberTrust(siteId, partyId) {
     const m = one(F + 'ForumMemberState', { siteId, partyId }, true)
     if (!m || m.trustLocked === 'Y') return { changed: false }
     const pol = policy(siteId)
+    // Any sanction in force within the abuse-free window, however long ago it began, holds promotion.
+    const cut = stamp(millis(now()) - pol.abuseFreeDays * 86400000),
+        cf = ec.entity.conditionFactory
     if (
         find(F + 'ForumSanction', { siteId, partyId })
             .condition(
-                'fromDate',
-                'greater-equals',
-                stamp(millis(now()) - pol.abuseFreeDays * 86400000),
+                cf.makeCondition(
+                    [
+                        cf.makeCondition('thruDate', 'equals', null),
+                        cf.makeCondition('thruDate', 'greater-equals', cut),
+                    ],
+                    'or',
+                ),
             )
             .count() > 0
     )
@@ -6141,6 +6164,14 @@ function hideIfFlagged(siteId, st, event, reviewId) {
 /* Classification is queued with the post and runs after commit; an unavailable classifier only delays review. */
 function queueClassification(siteId, postId) {
     if (!policy(siteId).classifierEnabled) return
+    // Private messages reach staff only through a member's report, never through a classifier.
+    const st = one(F + 'ForumPostState', { communicationEventId: postId })
+    if (
+        st &&
+        one(F + 'ForumTopic', { rootCommEventId: st.rootCommEventId })?.kind ===
+            'private'
+    )
+        return
     create(F + 'ForumOutbox', {
         outboxId: id(),
         siteId,
@@ -6479,6 +6510,11 @@ function retireTopic(t, targetRoot) {
     find(F + 'ForumPermalink', {
         targetRootCommEventId: t.rootCommEventId,
     }).updateAll({ targetRootCommEventId: targetRoot })
+    // A root that was merged before and split out again has an old alias of its own; it is replaced.
+    find(F + 'ForumPermalink', {
+        oldRootCommEventId: t.rootCommEventId,
+    }).deleteAll()
+    find(F + 'ForumPermalink', { oldRootCommEventId: targetRoot }).deleteAll()
     create(F + 'ForumPermalink', {
         oldRootCommEventId: t.rootCommEventId,
         siteId: t.siteId,
@@ -6823,6 +6859,14 @@ methods.findConversations = (p) => {
     const partyId = requireUser(),
         view = p.view || 'inbox'
     if (!['inbox', 'archived'].includes(view)) invalid('Invalid view')
+    // Suspension or an ended membership removes private access, the list included.
+    const m = member(p.siteId)
+    if (
+        !active(m) ||
+        m.state !== 'active' ||
+        sanctioned(p.siteId, partyId, null, 'suspend')
+    )
+        return { conversationList: [], nextCursor: null }
     const pg = page(p, 'conversations:' + p.siteId + ':' + view)
     let q = find(F + 'ForumConversationMember', {
         siteId: p.siteId,
@@ -7404,14 +7448,38 @@ function processInbound(ctx) {
     )
         return record('held', 'Sender is not a verified account address')
     const domain = sender.split('@')[1]
+    // Each method result is read with its own properties: DMARC must pass for this From domain, or one DKIM
+    // signature must pass for this domain or a parent of it (relaxed alignment). Another domain's pass counts for nothing.
+    const aligned = (d) => {
+        const signer = String(d || '')
+            .replace(/^@/, '')
+            .toLowerCase()
+        return !!signer && (domain === signer || domain.endsWith('.' + signer))
+    }
     const authenticated = headerValues(headers, 'authentication-results').some(
-        (v) =>
-            /\bdmarc=pass\b/i.test(v) ||
-            (/\bdkim=pass\b/i.test(v) &&
-                new RegExp(
-                    'header\\.(d|i)=@?' + escapeRegex(domain) + '\\b',
-                    'i',
-                ).test(v)),
+        (value) =>
+            String(value)
+                .split(';')
+                .slice(1)
+                .some((result) => {
+                    const r = result.trim()
+                    const prop = (name) =>
+                        new RegExp('\\b' + name + '=([^\\s;]+)', 'i').exec(
+                            r,
+                        )?.[1]
+                    if (/^dmarc=pass\b/i.test(r))
+                        return (
+                            String(
+                                prop('header\\.from') || '',
+                            ).toLowerCase() === domain
+                        )
+                    if (/^dkim=pass\b/i.test(r))
+                        return aligned(
+                            prop('header\\.d') ||
+                                prop('header\\.i')?.split('@').pop(),
+                        )
+                    return false
+                }),
     )
     if (!authenticated)
         return record(

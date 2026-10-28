@@ -149,6 +149,25 @@ along with this software (see the LICENSE.md file). If not, see
                     return
                 }
 
+                // A PASS private conversation is written only through the forum, as a current participant, so Comms
+                // cannot reply into it on old receipts or split its thread.
+                {
+                    const threadOf = (id) => { const e = id ? ec.entity.find('mantle.party.communication.CommunicationEvent').condition('communicationEventId', id).one() : null; return e ? (e.rootCommEventId || e.communicationEventId) : null }
+                    const threadRoot = rootCommEventId || threadOf(parentCommEventId)
+                    const privateTopic = threadRoot ? ec.entity.find('mantle.forum.ForumTopic').condition('rootCommEventId', threadRoot).one() : null
+                    if (privateTopic?.kind === 'private') {
+                        if (fromPartyId !== ec.user.userAccount?.partyId) { ec.message.addError('A private conversation post must use the current author'); return }
+                        const out = ec.service.sync().name('mantle.forum.ForumServices.publish#Post').parameters({input:{
+                            siteId:privateTopic.siteId,rootCommEventId:threadRoot,parentCommEventId:parentCommEventId || null,
+                            body:body || '',operationId:ec.user.randomString(32)}}).call()
+                        if (ec.message.hasError() || !out?.result?.postId) { if (!ec.message.hasError()) ec.message.addError('The message could not be posted'); return }
+                        communicationEventId = out.result.postId
+                        rootCommEventId = out.result.rootCommEventId
+                        newMailUserIds = []
+                        forumDelegated = true
+                        return
+                    }
+                }
                 const findEvent = (id) => ec.entity.find('mantle.party.communication.CommunicationEvent').condition('communicationEventId', id).one()
                 if (parentCommEventId) {
                     const parent = findEvent(parentCommEventId)

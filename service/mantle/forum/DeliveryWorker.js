@@ -46,6 +46,18 @@ function effective(siteId, partyId, scopes) {
             includeOwn = pref.includeOwn === 'Y'
         }
     }
+    // A site-wide stop (an unsubscribe for the whole site or a hard bounce) wins over every narrower mode.
+    if (
+        one(F + 'ForumDeliveryPreference', {
+            siteId,
+            partyId,
+            scopeType: 'site',
+            scopeId: '_SITE_',
+        })?.suppressed === 'Y'
+    ) {
+        email = 'None'
+        emailScope = { scopeType: 'site', scopeId: '_SITE_' }
+    }
     return {
         watch: watch || 'Normal',
         watchScope,
