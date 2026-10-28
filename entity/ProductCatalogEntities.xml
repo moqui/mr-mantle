@@ -48,7 +48,7 @@
         <field name="itemKey" type="text-long"/>
         <field name="requestJson" type="text-very-long"/>
         <field name="result" type="text-short"/>
-        <field name="resultProductId" type="id"/>
+        <field name="resultProductId" type="id"/><field name="resultRecordId" type="id"/><field name="resultEntityName" type="text-medium"/>
         <field name="errorMessage" type="text-long"/>
         <field name="completedDate" type="date-time"/>
         <relationship type="one" related="mantle.product.ProductCatalogOperation"/>

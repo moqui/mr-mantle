@@ -386,12 +386,12 @@ along with this software (see the LICENSE.md file). If not, see
                 </id>
             </resource>
             <resource name="prices">
-                <method type="get"><entity name="mantle.product.ProductPrice" operation="list"/></method>
-                <method type="post"><entity name="mantle.product.ProductPrice" operation="create"/></method>
+                <method type="get"><service name="mantle.product.PriceServices.find#ProductPrices"/></method>
+                <method type="post"><service name="mantle.product.PriceServices.store#ProductPrice"/></method>
                 <id name="productPriceId">
-                    <method type="get"><entity name="mantle.product.ProductPrice" operation="one"/></method>
-                    <method type="patch"><entity name="mantle.product.ProductPrice" operation="update"/></method>
-                    <method type="delete"><entity name="mantle.product.ProductPrice" operation="delete"/></method>
+                    <method type="get"><service name="mantle.product.PriceServices.find#ProductPrices"/></method>
+                    <method type="patch"><service name="mantle.product.PriceServices.store#ProductPrice"/></method>
+                    <method type="delete"><service name="mantle.product.PriceServices.expire#ProductPrice"/></method>
                 </id>
             </resource>
             <resource name="subscriptionResources">

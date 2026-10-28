@@ -90,7 +90,7 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldSeqId="24" fieldPath="reservations:reservedDate" fieldNameAlias="reservedDate"/>
         <fields fieldSeqId="25" fieldPath="reservations:currentPromisedDate" fieldNameAlias="currentPromisedDate"/>
     
-        <fields fieldSeqId="30" fieldPath="header:placedDate"/>
+        <fields fieldSeqId="30" fieldPath="header:placedDate"/><fields fieldSeqId="31" fieldPath="header:currencyUomId" fieldNameAlias="currencyUomId"/>
     
         <conditions conditionSeqId="01" fieldNameAlias="productId" operator="is-not-null" fieldValue=""/>
     </dataDocuments>

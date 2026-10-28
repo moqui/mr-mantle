@@ -151,14 +151,14 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="PriceHistoryInfo">
         <in-parameters>
             <parameter name="productIdList" type="List" required="true"/>
-            <parameter name="facilityId"/>
+            <parameter name="facilityId"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/><parameter name="currencyUomId"/><parameter name="direction"/>
             <parameter name="fromDate" type="Timestamp"/>
             <parameter name="thruDate" type="Timestamp" default="ec.user.nowTimestamp"/>
             <parameter name="maxResults" type="Integer" default="1000"/>
             <parameter name="indexName" default-value="mantle_inventory"/>
             <parameter name="orderItemDocumentName" default-value="MantleInventoryOrderItem"/>
         </in-parameters>
-        <out-parameters>
+        <out-parameters><parameter name="searchAvailable" type="Boolean"/>
             <parameter name="infoByProductId" type="Map"><description>A Map where the key is a productId and the value
                 is a Map with: orderQuantitySum, unitAmountMin, unitAmountMax, weightedAmountSum, and weightedAmountAvg.</description></parameter>
         </out-parameters>
@@ -169,11 +169,14 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             // aggregation metrics are decimals on Postgres and numbers on OpenSearch; the summaries work in numbers
             const num = (value) => value == null ? 0 : (typeof value === 'number' ? value : toDecimal(value).toNumber())
-            infoByProductId = {}
+            infoByProductId = {}; searchAvailable=ec.search.isAvailable()
             if (!ec.search.isAvailable()) { ec.message.addMessage("Search is not configured, no price history", "danger"); return }
 
             const clauses = [{field: {name: 'productId', op: 'in', values: productIdList}},
                     {field: {name: 'partStatusId', op: 'in', values: ['OrderRejected', 'OrderCancelled'], negate: true}}]
+            for(const [field,value] of Object.entries({vendorPartyId,customerPartyId,currencyUomId}))if(value)clauses.push({field:{name:field,op:'eq',value}})
+            if(direction==='purchase')clauses.push({field:{name:'vendorRoles.vendorRoleTypeId',op:'eq',value:'OrgInternal',negate:true}})
+            if(direction==='sales')clauses.push({field:{name:'vendorRoles.vendorRoleTypeId',op:'eq',value:'OrgInternal'}})
             if (facilityId) clauses.push({field: {name: 'facilityId', op: 'eq', value: facilityId}})
             // alternative to allow placedDate to be null: an any of placedDate missing or in range
             const placedRange = {name: 'placedDate', op: 'range', lte: Number(thruDate)}

@@ -590,49 +590,49 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="ProductPrice" package="mantle.product">
         <field name="productPriceId" type="id" is-pk="true"/>
-        <field name="productId" type="id" not-null="true"/>
-        <field name="productStoreId" type="id"><description>For pricing per store. Leave null to apply to all stores.</description></field>
-        <field name="vendorPartyId" type="id"><description>
+        <field name="productId" enable-audit-log="true" type="id" not-null="true"/>
+        <field name="productStoreId" enable-audit-log="true" type="id"><description>For pricing per store. Leave null to apply to all stores.</description></field>
+        <field name="vendorPartyId" enable-audit-log="true" type="id"><description>
             For sales from internal organization (ie company) set to internal organization's ID.
             For supplier prices set to supplier's ID.
         </description></field>
-        <field name="customerPartyId" type="id"><description>
+        <field name="customerPartyId" enable-audit-log="true" type="id"><description>
             For general consumer prices leave null.
             For a price for a specific customer (or group of customers), set to that customer's ID.
             For supplier prices this is the internal organization's (ie company's) ID.
         </description></field>
-        <field name="priceTypeEnumId" type="id"/>
-        <field name="pricePurposeEnumId" type="id"/>
-        <field name="fromDate" type="date-time"/>
-        <field name="thruDate" type="date-time"/>
-        <field name="minQuantity" type="number-decimal"/>
+        <field name="priceTypeEnumId" enable-audit-log="true" type="id"/>
+        <field name="pricePurposeEnumId" enable-audit-log="true" type="id"/>
+        <field name="fromDate" enable-audit-log="true" type="date-time"/>
+        <field name="thruDate" enable-audit-log="true" type="date-time"/>
+        <field name="minQuantity" enable-audit-log="true" type="number-decimal"/>
         <field name="price" type="currency-precise" enable-audit-log="true"/>
-        <field name="priceUomId" type="id"/>
-        <field name="termUomId" type="id"><description>For recurring and usage prices to specify a time/freq measure,
+        <field name="priceUomId" enable-audit-log="true" type="id"/>
+        <field name="termUomId" enable-audit-log="true" type="id"><description>For recurring and usage prices to specify a time/freq measure,
             or a usage unit measure (bits, minutes, etc).</description></field>
 
-        <field name="taxInPrice" type="text-indicator"><description>If Y the price field has tax included for the given
+        <field name="taxInPrice" enable-audit-log="true" type="text-indicator"><description>If Y the price field has tax included for the given
             taxAuthorityId at the taxPercentage.</description></field>
-        <field name="taxAmount" type="currency-precise"/>
-        <field name="taxPercentage" type="number-decimal"/>
-        <field name="taxAuthorityId" type="id"/>
+        <field name="taxAmount" enable-audit-log="true" type="currency-precise"/>
+        <field name="taxPercentage" enable-audit-log="true" type="number-decimal"/>
+        <field name="taxAuthorityId" enable-audit-log="true" type="id"/>
 
-        <field name="agreementId" type="id"/>
-        <field name="agreementItemSeqId" type="id"><description>Use along with agreementId to associate the price with
+        <field name="agreementId" enable-audit-log="true" type="id"/>
+        <field name="agreementItemSeqId" enable-audit-log="true" type="id"><description>Use along with agreementId to associate the price with
             an AgreementItem.</description></field>
 
-        <field name="otherPartyItemName" type="text-medium"/>
-        <field name="otherPartyItemId" type="text-short"/>
-        <field name="comments" type="text-long"/>
+        <field name="otherPartyItemName" enable-audit-log="true" type="text-medium"/>
+        <field name="otherPartyItemId" enable-audit-log="true" type="text-short"/>
+        <field name="comments" enable-audit-log="true" type="text-long"/><field name="changeReason" type="text-long" enable-audit-log="true"/>
 
         <!-- these fields are for supplier pricing (where customerPartyId is an internal organization) -->
-        <field name="quantityIncrement" type="number-decimal"/>
-        <field name="quantityIncluded" type="number-decimal"/>
-        <field name="quantityUomId" type="id"/>
-        <field name="preferredOrderEnumId" type="id"/>
-        <field name="supplierRatingTypeEnumId" type="id"/>
-        <field name="standardLeadTimeDays" type="number-decimal"/>
-        <field name="canDropShip" type="text-indicator"/>
+        <field name="quantityIncrement" enable-audit-log="true" type="number-decimal"/>
+        <field name="quantityIncluded" enable-audit-log="true" type="number-decimal"/>
+        <field name="quantityUomId" enable-audit-log="true" type="id"/>
+        <field name="preferredOrderEnumId" enable-audit-log="true" type="id"/>
+        <field name="supplierRatingTypeEnumId" enable-audit-log="true" type="id"/>
+        <field name="standardLeadTimeDays" enable-audit-log="true" type="number-decimal"/>
+        <field name="canDropShip" enable-audit-log="true" type="text-indicator"/>
 
         <relationship type="one" related="mantle.product.Product" short-alias="product"/>
         <relationship type="one" title="ProductPriceType" related="moqui.basic.Enumeration" short-alias="type">
