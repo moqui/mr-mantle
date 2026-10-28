@@ -33,7 +33,7 @@
                 removedCount=0;failedAttachmentIds=[]
                 for(const item of expired){
                     try{const out=ec.service.sync().throwOnError(true).name('mantle.forum.MediaWorkerServices.remove#ExpiredAttachment').parameters({attachmentId:item.attachmentId}).requireNewTransaction(true).call();if(out.removed)removedCount++}
-                    catch(error){ec.message.clearErrors();ec.logger.error('Forum staged attachment '+item.attachmentId+' could not be removed');failedAttachmentIds.push(item.attachmentId)}
+                    catch(error){ec.message.clearErrors();ec.logger.error('Forum staged attachment '+item.attachmentId+' could not be removed: '+String(error?.message || error).split('\n')[0]);failedAttachmentIds.push(item.attachmentId)}
                 }
             }finally{if(!old)ec.artifactExecution.enableAuthz()}
         ]]></script>

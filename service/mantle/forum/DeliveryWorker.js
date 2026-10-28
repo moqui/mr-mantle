@@ -17,6 +17,10 @@ const set = (v, p) => {
 }
 const now = () => ec.user.nowTimestamp
 const time = () => ec.user.timestampMillis(now())
+const firstLine = (error) =>
+    String(error?.message || error || '')
+        .split('\n')[0]
+        .slice(0, 200)
 const policy = () =>
     ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js')
 function audience(box, partyId) {
@@ -76,10 +80,15 @@ function audience(box, partyId) {
         ['site', '_SITE_'],
     ]
     let watch = null,
+        watchScope = null,
         email = null
     for (const [scopeType, scopeId] of scopes) {
         const key = { siteId: box.siteId, partyId, scopeType, scopeId }
-        watch = watch || one(F + 'ForumPreference', key)?.watchLevel
+        const level = one(F + 'ForumPreference', key)?.watchLevel
+        if (!watch && level) {
+            watch = level
+            watchScope = { scopeType, scopeId }
+        }
         const pref = one(F + 'ForumDeliveryPreference', key)
         if (pref?.suppressed === 'Y') email = 'None'
         email = email || pref?.emailMode
@@ -90,53 +99,106 @@ function audience(box, partyId) {
               communicationEventId: event.parentCommEventId,
           })
         : null
-    if (watch !== 'Watching' && parent?.fromPartyId !== partyId) return null
-    return { event, st, email: email || 'Notifications' }
+    const repliedTo = parent?.fromPartyId === partyId
+    if (watch !== 'Watching' && !repliedTo) return null
+    // An opt-out link stops the delivery that caused this mail: the watched scope, or the topic for a reply.
+    const scope =
+        watch === 'Watching' && watchScope.scopeType !== 'site'
+            ? watchScope
+            : { scopeType: 'topic', scopeId: st.rootCommEventId }
+    return { event, st, email: email || 'Notifications', scope }
+}
+/* Who can be notified at all: the parent post's author, then the topic, category and site watchers. */
+function candidateSources(box) {
+    const event = one(E + 'CommunicationEvent', {
+            communicationEventId: box.communicationEventId,
+        }),
+        st = one(F + 'ForumPostState', {
+            communicationEventId: box.communicationEventId,
+        })
+    if (!event || !st) return []
+    const parent = event.parentCommEventId
+        ? one(E + 'CommunicationEvent', {
+              communicationEventId: event.parentCommEventId,
+          })
+        : null
+    const watchers = (scopeType, scopeId) => (after, limit) =>
+        Array.from(
+            find(F + 'ForumPreference', {
+                siteId: box.siteId,
+                scopeType,
+                scopeId,
+                watchLevel: 'Watching',
+            })
+                .condition('partyId', 'greater', after || '')
+                .orderBy('partyId')
+                .limit(limit)
+                .list(),
+        ).map((row) => row.partyId)
+    return [
+        (after) =>
+            !after && parent?.fromPartyId ? [parent.fromPartyId] : [],
+        watchers('topic', st.rootCommEventId),
+        watchers('category', event.contactListId),
+        watchers('site', '_SITE_'),
+    ]
 }
 function prepare(p) {
     const box = find(F + 'ForumOutbox', { outboxId: p.outboxId })
         .forUpdate(true)
         .one()
-    if (!box || box.state !== 'pending') return {}
-    let query = find(S + 'PublicSiteParty', {
-        siteId: box.siteId,
-        state: 'active',
-    }).conditionDate('fromDate', 'thruDate', now())
-    if (box.cursor) query = query.condition('partyId', 'greater', box.cursor)
-    const candidates = Array.from(query.orderBy('partyId').limit(100).list())
-    for (const m of candidates) {
-        const allowed = audience(box, m.partyId)
-        if (!allowed) continue
-        for (const channel of [
-            'in-app',
-            ...(allowed.email === 'Notifications' ? ['email'] : []),
-        ]) {
-            if (
-                one(F + 'ForumDelivery', {
-                    outboxId: box.outboxId,
-                    partyId: m.partyId,
-                    channel,
-                })
-            )
-                continue
-            write(F + 'ForumDelivery', {
-                deliveryId: ec.user.randomString(32),
-                siteId: box.siteId,
-                outboxId: box.outboxId,
-                partyId: m.partyId,
-                channel,
-                state: 'pending',
-                attempts: 0,
-                revision: 1,
-                dueAt: now(),
-            })
-        }
+    if (!box || box.state !== 'pending') return { done: true }
+    const sources = candidateSources(box)
+    let position = { source: 0, after: null }
+    try {
+        if (box.cursor) position = JSON.parse(box.cursor)
+    } catch (e) {
+        // A cursor from before candidate sources restarts; existing deliveries are not duplicated.
     }
+    let examined = 0
+    while (position.source < sources.length && examined < 100) {
+        const want = 100 - examined
+        const partyIds = sources[position.source](position.after, want)
+        for (const partyId of partyIds) {
+            examined++
+            position.after = partyId
+            const allowed = audience(box, partyId)
+            if (!allowed) continue
+            for (const channel of [
+                'in-app',
+                ...(allowed.email === 'Notifications' ? ['email'] : []),
+            ]) {
+                if (
+                    one(F + 'ForumDelivery', {
+                        outboxId: box.outboxId,
+                        partyId,
+                        channel,
+                    })
+                )
+                    continue
+                write(F + 'ForumDelivery', {
+                    deliveryId: ec.user.randomString(32),
+                    siteId: box.siteId,
+                    outboxId: box.outboxId,
+                    partyId,
+                    channel,
+                    state: 'pending',
+                    attempts: 0,
+                    revision: 1,
+                    dueAt: now(),
+                })
+            }
+        }
+        // A source that returned less than asked for is exhausted.
+        if (partyIds.length < want)
+            position = { source: position.source + 1, after: null }
+    }
+    const done = position.source >= sources.length
     set(box, {
-        cursor: candidates[candidates.length - 1]?.partyId || box.cursor,
-        state: candidates.length < 100 ? 'prepared' : 'pending',
+        cursor: JSON.stringify(position),
+        state: done ? 'prepared' : 'pending',
     })
-    return { prepared: candidates.length }
+    return { prepared: examined, done }
 }
 function claim(p) {
     const v = find(F + 'ForumDelivery', { deliveryId: p.deliveryId })
@@ -195,16 +257,21 @@ function deliver(p) {
     }
     const token = ec.user.randomString(64),
         host = one(S + 'PublicSiteHost', { siteId: v.siteId, canonical: 'Y' }),
-        mount = one(S + 'PublicSiteApp', {
-            siteId: v.siteId,
-            app: 'account',
-            enabled: 'Y',
-        })
-    if (!host || !mount) {
+        mountBase = (app) => {
+            const m = one(S + 'PublicSiteApp', {
+                siteId: v.siteId,
+                app,
+                enabled: 'Y',
+            })
+            return m ? (m.pathPrefix === '/' ? '' : m.pathPrefix) : null
+        },
+        accountBase = mountBase('account'),
+        forumBase = mountBase('forum')
+    if (!host || accountBase == null || forumBase == null) {
         set(v, {
             state: 'failed',
             lastError:
-                'Canonical public host or account mount is not configured',
+                'Canonical public host or account/forum mount is not configured',
         })
         return { state: 'failed' }
     }
@@ -212,22 +279,26 @@ function deliver(p) {
         tokenHash: ec.user.singleUseCodeHash(token),
         siteId: v.siteId,
         partyId: v.partyId,
-        scopeType: 'category',
-        scopeId: allowed.event.contactListId,
+        scopeType: allowed.scope.scopeType,
+        scopeId: allowed.scope.scopeId,
         expiresAt: time() + 365 * 86400000,
     })
-    const unsubscribeUrl =
-            'https://' +
-            host.hostname +
-            mount.pathPrefix +
+    const origin = 'https://' + host.hostname,
+        unsubscribeUrl =
+            origin +
+            accountBase +
             '/Unsubscribe?token=' +
             encodeURIComponent(token),
         oneClickUrl =
-            'https://' +
-            host.hostname +
-            mount.pathPrefix +
+            origin +
+            accountBase +
             '/Unsubscribe/oneClick?token=' +
-            encodeURIComponent(token)
+            encodeURIComponent(token),
+        postUrl =
+            origin +
+            forumBase +
+            '/p/' +
+            encodeURIComponent(allowed.st.communicationEventId)
     const out = ec.service
         .sync()
         .throwOnError(true)
@@ -242,6 +313,7 @@ function deliver(p) {
             },
             bodyParameters: {
                 unsubscribeUrl,
+                postUrl,
                 title: allowed.event.subject,
                 siteId: v.siteId,
                 rootCommEventId: allowed.st.rootCommEventId,
@@ -283,10 +355,17 @@ function reconcile(p) {
         v?.state === 'sending' &&
         ec.user.timestampMillis(v.startedAt || v.dueAt) < time() - 300000
     )
-        set(v, {
-            state: 'uncertain',
-            lastError: 'Worker ended before provider acceptance was recorded',
-        })
+        // An in-app notice has no outside effect, so it simply retries; only mail can be ambiguous.
+        set(
+            v,
+            v.channel === 'in-app'
+                ? { state: 'retry', dueAt: now() }
+                : {
+                      state: 'uncertain',
+                      lastError:
+                          'Worker ended before provider acceptance was recorded',
+                  },
+        )
     return { state: v?.state }
 }
 function dispatch() {
@@ -309,7 +388,10 @@ function dispatch() {
         } catch (error) {
             ec.message.clearErrors()
             ec.logger.error(
-                'Forum delivery reconciliation failed for ' + item.deliveryId,
+                'Forum delivery reconciliation failed for ' +
+                    item.deliveryId +
+                    ': ' +
+                    firstLine(error),
             )
             failures.push(item.deliveryId)
         }
@@ -320,21 +402,29 @@ function dispatch() {
             .limit(100)
             .list(),
     )
+    // Each page is its own transaction; keep preparing until done or the run's time budget is spent.
+    const deadline = time() + 20000
     for (const item of items) {
         try {
-            ec.service
-                .sync()
-                .throwOnError(true)
-                .name('mantle.forum.DeliveryWorkerServices.prepare#Outbox')
-                .parameters({ outboxId: item.outboxId })
-                .requireNewTransaction(true)
-                .call()
-            processed++
+            for (;;) {
+                const page = ec.service
+                    .sync()
+                    .throwOnError(true)
+                    .name('mantle.forum.DeliveryWorkerServices.prepare#Outbox')
+                    .parameters({ outboxId: item.outboxId })
+                    .requireNewTransaction(true)
+                    .call().result
+                processed++
+                if (page.done || time() > deadline) break
+            }
         } catch (e) {
             ec.message.clearErrors()
-            ec.logger.error('Forum outbox ' + item.outboxId + ' failed')
+            ec.logger.error(
+                'Forum outbox ' + item.outboxId + ' failed: ' + firstLine(e),
+            )
             failures.push(item.outboxId)
         }
+        if (time() > deadline) break
     }
     for (const item of Array.from(
         find(F + 'ForumDelivery', {})
@@ -365,7 +455,8 @@ function dispatch() {
             ec.logger.error(
                 'Forum delivery ' +
                     item.deliveryId +
-                    ' failed; inspect uncertain attempt',
+                    ' failed; inspect uncertain attempt: ' +
+                    firstLine(e),
             )
             failures.push(item.deliveryId)
         }

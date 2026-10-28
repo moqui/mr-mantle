@@ -181,7 +181,9 @@ function dispatch() {
             ec.message.clearErrors()
             ec.logger.error(
                 'Forum tracking eligibility refresh failed for party ' +
-                    mode.partyId,
+                    mode.partyId +
+                    ': ' +
+                    String(error?.message || error).split('\n')[0],
             )
         }
     }
@@ -249,7 +251,9 @@ function dispatch() {
                     'Forum tracking conversion failed for party ' +
                         config.partyId +
                         ' root ' +
-                        rootCommEventId,
+                        rootCommEventId +
+                        ': ' +
+                        String(error?.message || error).split('\n')[0],
                 )
                 failed.push(rootCommEventId)
                 const key = { runId: run.runId, itemId: rootCommEventId },

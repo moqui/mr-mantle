@@ -113,18 +113,6 @@ along with this software (see the LICENSE.md file). If not, see
                         .map((id) => String(id).trim()).filter((id) => id)
                 recipientList = []
                 forumDelegated = false
-                const bound = contactListId ? ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',contactListId).one() : null
-                if (bound && communicationEventTypeId === 'Message') {
-                    if (fromPartyId !== ec.user.userAccount?.partyId) { ec.message.addError('A bound forum post must use the current author'); return }
-                    const published = ec.service.sync().name('mantle.forum.ForumServices.publish#Post').parameters({input:{
-                        siteId:bound.siteId,contactListId:contactListId,rootCommEventId:rootCommEventId || null,
-                        parentCommEventId:parentCommEventId || null,title:subject || '',body:body || '',operationId:ec.user.randomString(32)}}).call().result
-                    communicationEventId = published.postId
-                    rootCommEventId = published.rootCommEventId
-                    newMailUserIds = []
-                    forumDelegated = true
-                    return
-                }
                 const toIds = []
                 const ccIds = []
                 for (const id of (toPartyId ? [toPartyId] : []).concat(asList(toPartyIdList))) if (!toIds.includes(id)) toIds.push(id)
@@ -139,6 +127,27 @@ along with this software (see the LICENSE.md file). If not, see
                     if (missing.length) { ec.message.addError(`Party ${missing.join(', ')} not found`); return }
                 }
                 toPartyId = toIds.length ? toIds[0] : null
+
+                // A bound mailbox posts through the forum, so its gate, ordinals and markers apply; named internal
+                // recipients and mentions still get their own receipts.
+                const bound = contactListId ? ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',contactListId).one() : null
+                if (bound && communicationEventTypeId === 'Message') {
+                    if (fromPartyId !== ec.user.userAccount?.partyId) { ec.message.addError('A bound forum post must use the current author'); return }
+                    const out = ec.service.sync().name('mantle.forum.ForumServices.publish#Post').parameters({input:{
+                        siteId:bound.siteId,contactListId:contactListId,rootCommEventId:rootCommEventId || null,
+                        parentCommEventId:parentCommEventId || null,title:subject || '',body:body || '',operationId:ec.user.randomString(32)}}).call()
+                    if (ec.message.hasError() || !out?.result?.postId) { if (!ec.message.hasError()) ec.message.addError('The forum post could not be published'); return }
+                    const published = out.result
+                    communicationEventId = published.postId
+                    rootCommEventId = published.rootCommEventId
+                    if (published.state === 'published')
+                        ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').addNamedReceipts(communicationEventId, contactListId, fromPartyId, toIds, ccIds)
+                    if (purposeEnumId) ec.service.sync().name('create#mantle.party.communication.CommunicationEventPurpose')
+                            .parameters({communicationEventId: communicationEventId, purposeEnumId: purposeEnumId}).call()
+                    newMailUserIds = []
+                    forumDelegated = true
+                    return
+                }
 
                 const findEvent = (id) => ec.entity.find('mantle.party.communication.CommunicationEvent').condition('communicationEventId', id).one()
                 if (parentCommEventId) {

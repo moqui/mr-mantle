@@ -152,7 +152,15 @@
     },
     findTopics: {
         service: 'mantle.forum.ForumServices.find#Topics',
-        fields: ['siteId', 'contactListId', 'query', 'limit', 'cursor', 'view'],
+        fields: [
+            'siteId',
+            'contactListId',
+            'query',
+            'limit',
+            'cursor',
+            'view',
+            'authorHandle',
+        ],
     },
     getTopic: {
         service: 'mantle.forum.ForumServices.get#Topic',
@@ -362,11 +370,11 @@
     },
     findNotifications: {
         service: 'mantle.forum.DeliveryServices.find#Notifications',
-        fields: ['siteId', 'cursor', 'limit'],
+        fields: ['siteId', 'cursor', 'limit', 'view'],
     },
     markNotifications: {
         service: 'mantle.forum.DeliveryServices.mark#Notifications',
-        fields: ['siteId', 'deliveryIds'],
+        fields: ['siteId', 'deliveryIds', 'all'],
     },
     storePolicy: {
         service: 'mantle.forum.ModerationServices.store#Policy',

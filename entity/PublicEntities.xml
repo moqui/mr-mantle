@@ -38,6 +38,7 @@
     <field name="thruDate" type="date-time"/>
     <field name="revision" type="number-integer"/>
     <field name="guidelinesRevision" type="number-integer"/>
+    <field name="stateSetByPartyId" type="id"><description>Who last set state: the member (leave/join) or staff; staff suspensions and removals cannot be undone by rejoining.</description></field>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.party.Party"/>
     <index name="PASS_SITE_MEMBER_PAGE">
@@ -62,6 +63,10 @@
     <index name="PASS_PROFILE_HANDLE" unique="true">
       <index-field name="siteId"/>
       <index-field name="handle"/>
+    </index>
+    <index name="PASS_PROFILE_AVATAR">
+      <index-field name="siteId"/>
+      <index-field name="avatarId"/>
     </index>
   </entity>
   <entity entity-name="PublicSiteInvitation" package="mantle.public">

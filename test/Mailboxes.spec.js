@@ -551,3 +551,22 @@ feature('public legacy mailbox summaries read markers and never expose internal 
         receipts===0
     }
 })
+feature('a bound mailbox keeps internal members, named recipients and mentions before publication',{
+    when(){
+        at(70)
+        const siteId=call('mantle.public.SiteServices.create#Site',{input:{name:'Bound mailbox',ownerPartyId:ec.user.userAccount.partyId}}).result.siteId
+        const listId=asCall('Olga',`${LISTS}.create#ContactList`,{contactListTypeEnumId:'MAILBOX',contactListName:'Bound internal mailbox',isPublic:'N',memberPartyIdList:[party.Paul,party.Mia]}).contactListId
+        call('mantle.forum.ForumServices.bind#Mailbox',{input:{siteId,contactListId:listId,confirm:true,operationId:'mailbox-bind-0001'}})
+        call('mantle.forum.BootstrapServices.dispatch#Conversions',{})
+        at(71)
+        const postId=post('Olga',{contactListId:listId,subject:'Bound internal post',body:'Still an internal mailbox',toPartyIdList:[party.Paul]})
+        const thread=asCall('Mia',`${COMM}.get#InternalThread`,{rootCommEventId:postId})
+        return {roles:rolesOf(postId),messages:thread.messageList.length,site:ec.entity.find('mantle.public.PublicSite').condition('siteId',siteId).one().state}
+    },
+    then({roles,messages,site}){
+        site==='disabled'
+        roles.Paul==='MessageTo'
+        roles.Mia==='MessageMailbox'
+        messages===1
+    }
+})

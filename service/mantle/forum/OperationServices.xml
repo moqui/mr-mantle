@@ -55,7 +55,18 @@
     try{for(const row of ec.entity.find('mantle.forum.ForumCursor').condition('expiresAt','less',ec.user.nowTimestamp).orderBy('expiresAt,cursorId').limit(1000).list()){
         try{ec.service.sync().throwOnError(true).name('delete#mantle.forum.ForumCursor').parameters({cursorId:row.cursorId}).requireNewTransaction(true).call()}
         catch(error){ec.message.clearErrors();ec.logger.error('Forum cursor cleanup failed for '+row.cursorId)}
-    }}finally{if(!old)ec.artifactExecution.enableAuthz()}
+    }
+    // Expired email opt-out tokens can no longer be redeemed; one bulk delete, isolated from the cursors above.
+    try{ec.service.sync().throwOnError(true).name('mantle.forum.OperationServices.cleanup#OptOutTokens').requireNewTransaction(true).call()}
+    catch(error){ec.message.clearErrors();ec.logger.error('Forum opt-out token cleanup failed: '+String(error?.message || error).split('\n')[0])}
+    }finally{if(!old)ec.artifactExecution.enableAuthz()}
+  ]]></script>
+    </actions>
+  </service>
+  <service verb="cleanup" noun="OptOutTokens" authenticate="false" allow-remote="false">
+    <actions>
+      <script><![CDATA[
+    ec.entity.find('mantle.forum.ForumOptOut').condition('expiresAt','less',ec.user.nowTimestamp).disableAuthz().deleteAll()
   ]]></script>
     </actions>
   </service>

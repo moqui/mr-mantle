@@ -255,10 +255,13 @@ along with this software (see the LICENSE.md file). If not, see
                         const binding = ec.entity.find('mantle.forum.ForumCategory').condition('contactListId',current.contactListId).one()
                         const state = ec.entity.find('mantle.forum.ForumPostState').condition(key).one()
                         if (!state) continue
-                        let access
-                        try { access = forum.topic(state.rootCommEventId,binding.siteId).a }
+                        let found
+                        try { found = forum.topic(state.rootCommEventId,binding.siteId) }
                         catch (error) { if (error.moquiErrorKind === 'NotFound') continue; throw error }
+                        const access = found.a
                         if (!forum.postVisible(state,current,access) || state.visibility === 'deleted') continue
+                        // unlisted topics stay out of discovery for everyone but their moderators
+                        if (found.t.unlisted === 'Y' && !access.canModerate) continue
                         results.push({entityType:hit.documentId,entityTypeName:document.name,key,id:hit.id,
                             title:current.subject,subtitle:null,code:null,category:null,
                             snippet:StringUtilities.cleanHtml(current.body || '').replace(/<[^>]*>/g,' ').slice(0,240),

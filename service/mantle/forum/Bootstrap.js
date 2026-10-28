@@ -166,74 +166,90 @@ function dispatch() {
             .limit(20)
             .list(),
     )) {
-        const config = JSON.parse(run.checkpoint)
-        let query = find(E + 'CommunicationEvent', {
-            contactListId: config.contactListId,
-            rootCommEventId: null,
-        })
-        if (config.after)
-            query = query.condition(
-                'communicationEventId',
-                'greater',
-                config.after,
+        // One run with a bad checkpoint must not stop the others.
+        try {
+            dispatchRun(run, failed)
+        } catch (e) {
+            ec.message.clearErrors()
+            ec.logger.error(
+                'Forum conversion run ' +
+                    run.runId +
+                    ' could not continue: ' +
+                    String(e?.message || e).split('\n')[0],
             )
-        const roots = Array.from(
-            query.orderBy('communicationEventId').limit(10).list(),
-        )
-        for (const event of roots) {
-            const key = { runId: run.runId, itemId: event.communicationEventId }
-            if (one(F + 'ForumJobItem', key)?.state === 'complete') {
-                config.after = event.communicationEventId
-                continue
-            }
-            try {
-                ec.service
-                    .sync()
-                    .throwOnError(true)
-                    .name('mantle.forum.BootstrapServices.convert#Root')
-                    .parameters({
-                        runId: run.runId,
-                        rootCommEventId: event.communicationEventId,
-                    })
-                    .requireNewTransaction(true)
-                    .call()
-                update(run, { successCount: Number(run.successCount) + 1 })
-            } catch (e) {
-                ec.message.clearErrors()
-                ec.logger.error(
-                    'Forum conversion failed for root ' +
-                        event.communicationEventId +
-                        ' in run ' +
-                        run.runId,
-                )
-                const item = one(F + 'ForumJobItem', key)
-                item
-                    ? update(item, {
-                          state: 'failed',
-                          errorText:
-                              'Root conversion failed; inspect correlation log',
-                          attempts: Number(item.attempts) + 1,
-                      })
-                    : create(F + 'ForumJobItem', {
-                          ...key,
-                          state: 'failed',
-                          attempts: 1,
-                          errorText:
-                              'Root conversion failed; inspect correlation log',
-                      })
-                update(run, { failedCount: Number(run.failedCount) + 1 })
-                failed.push(event.communicationEventId)
-            }
-            config.after = event.communicationEventId
-            update(run, { checkpoint: JSON.stringify(config) })
         }
-        update(run, { checkpoint: JSON.stringify(config) })
-        if (roots.length < 10)
-            update(run, {
-                state: Number(run.failedCount) > 0 ? 'failed' : 'complete',
-            })
     }
     return { failedRootIds: failed }
+}
+function dispatchRun(run, failed) {
+    const config = JSON.parse(run.checkpoint)
+    let query = find(E + 'CommunicationEvent', {
+        contactListId: config.contactListId,
+        rootCommEventId: null,
+    })
+    if (config.after)
+        query = query.condition(
+            'communicationEventId',
+            'greater',
+            config.after,
+        )
+    const roots = Array.from(
+        query.orderBy('communicationEventId').limit(10).list(),
+    )
+    for (const event of roots) {
+        const key = { runId: run.runId, itemId: event.communicationEventId }
+        if (one(F + 'ForumJobItem', key)?.state === 'complete') {
+            config.after = event.communicationEventId
+            continue
+        }
+        try {
+            ec.service
+                .sync()
+                .throwOnError(true)
+                .name('mantle.forum.BootstrapServices.convert#Root')
+                .parameters({
+                    runId: run.runId,
+                    rootCommEventId: event.communicationEventId,
+                })
+                .requireNewTransaction(true)
+                .call()
+            update(run, { successCount: Number(run.successCount) + 1 })
+        } catch (e) {
+            ec.message.clearErrors()
+            ec.logger.error(
+                'Forum conversion failed for root ' +
+                    event.communicationEventId +
+                    ' in run ' +
+                    run.runId +
+                    ': ' +
+                    String(e?.message || e).split('\n')[0],
+            )
+            const item = one(F + 'ForumJobItem', key)
+            item
+                ? update(item, {
+                      state: 'failed',
+                      errorText:
+                          'Root conversion failed; inspect correlation log',
+                      attempts: Number(item.attempts) + 1,
+                  })
+                : create(F + 'ForumJobItem', {
+                      ...key,
+                      state: 'failed',
+                      attempts: 1,
+                      errorText:
+                          'Root conversion failed; inspect correlation log',
+                  })
+            update(run, { failedCount: Number(run.failedCount) + 1 })
+            failed.push(event.communicationEventId)
+        }
+        config.after = event.communicationEventId
+        update(run, { checkpoint: JSON.stringify(config) })
+    }
+    update(run, { checkpoint: JSON.stringify(config) })
+    if (roots.length < 10)
+        update(run, {
+            state: Number(run.failedCount) > 0 ? 'failed' : 'complete',
+        })
 }
 function execute(op, p) {
     const was = ec.artifactExecution.disableAuthz()
