@@ -309,28 +309,11 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="productId" required="true"/>
             <parameter name="applTypeEnumId" default-value="PfatSelectable"/>
-        </in-parameters>
+        <parameter name="productFeatureGroupIdSet" type="Set"/></in-parameters>
         <out-parameters>
             <parameter name="productFeatureGroupList" type="List"><parameter name="productFeatureGroup" type="Map"/></parameter>
         </out-parameters>
-        <actions>
-            <set field="productFeatureGroupList" from="[]"/>
-
-            <entity-find entity-name="mantle.product.category.ProductCategoryMember" list="pcmList">
-                <date-filter/><econdition field-name="productId"/></entity-find>
-            <iterate list="pcmList" entry="pcm">
-                <entity-find entity-name="mantle.product.feature.ProductCategoryFeatGrpAppl" list="pcfgaList">
-                    <date-filter/><econdition field-name="productCategoryId" from="pcm.productCategoryId"/>
-                    <econdition field-name="productFeatureGroupId" operator="in" from="productFeatureGroupIdSet" ignore-if-empty="true"/>
-                    <econdition field-name="applTypeEnumId" from="applTypeEnumId" ignore-if-empty="true"/>
-                </entity-find>
-                <iterate list="pcfgaList" entry="pcfga">
-                    <entity-find-one entity-name="mantle.product.feature.ProductFeatureGroup" value-field="pfg" cache="true">
-                        <field-map field-name="productFeatureGroupId" from="pcfga.productFeatureGroupId"/></entity-find-one>
-                    <script>productFeatureGroupList.push(pfg)</script>
-                </iterate>
-            </iterate>
-        </actions>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('groups',context))</script></actions>
     </service>
     <service verb="find" noun="ProductCategoryFeatures">
         <in-parameters>
@@ -422,6 +405,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- =================================== -->
     <!-- Services for Products with Variants -->
+    <service verb="preview" noun="VariantProducts" allow-remote="false">
+      <in-parameters><parameter name="productId" required="true"/><parameter name="productTypeEnumId"/><parameter name="assetTypeEnumId"/><parameter name="assetClassEnumId"/><parameter name="productFeatureGroupIdSet" type="Set"/><parameter name="copyCategoryMembers" type="Boolean"/>
+      <parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/><parameter name="copyFields" type="List"/><parameter name="allowedFeatureIds" type="List"/><parameter name="allowedCategoryIds" type="List"/><parameter name="filterFeatureIds" type="List"/><parameter name="requiredOwnerPartyId"/><parameter name="policyStamp"/><parameter name="previewRevision"/></in-parameters>
+      <out-parameters><parameter name="rows" type="List"/><parameter name="totalCount" type="Long"/><parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/><parameter name="previewRevision"/><parameter name="featureTypeInfoList" type="List"/><parameter name="copyFields" type="List"/></out-parameters>
+      <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('preview',context))</script></actions>
+    </service>
+
 
     <service verb="find" noun="VariantProduct">
         <in-parameters>
@@ -483,7 +473,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="vendorPartyId"/>
             <parameter name="customerPartyId"/>
             <parameter name="getAvailableInventory" type="Boolean" default="false"/>
-        </in-parameters>
+        <parameter name="includePrices" type="Boolean" default="true"/><parameter name="allowedFeatureIds" type="List"/></in-parameters>
         <out-parameters>
             <parameter name="minPrice" type="BigDecimal"/>
             <parameter name="maxPrice" type="BigDecimal"/>
@@ -522,14 +512,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <description>Only populated if productStoreId AND getAvailableInventory</description></parameter>
             </parameter></parameter>
         </out-parameters>
-        <actions>
-            <entity-find entity-name="mantle.product.feature.ProductFeatureAndAppl" list="pfApplList" cache="true">
-                <date-filter/><econdition field-name="productId"/>
-                <econdition field-name="applTypeEnumId" value="PfatSelectable"/>
-                <order-by field-name="sequenceNum,productFeatureTypeEnumId,defaultSequenceNum,description"/>
-            </entity-find>
-            <!-- TODO -->
-        </actions>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('info',context))</script></actions>
     </service>
 
     <service verb="create" noun="VariantProducts">
@@ -540,40 +523,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="assetClassEnumId"/>
             <parameter name="productFeatureGroupIdSet" type="Set"><parameter name="productFeatureGroupId"/></parameter>
             <parameter name="copyCategoryMembers" type="Boolean" default="false"/>
-        </in-parameters>
-        <actions>
-            <entity-find-one entity-name="mantle.product.Product" value-field="product"/>
-
-            <!-- find all PfatSelectable features for the product and related categories -->
-            <service-call name="mantle.product.ProductServices.find#ProductFeatures" out-map="context"
-                in-map="{productId:productId, applTypeEnumId:'PfatSelectable', productFeatureGroupIdSet:productFeatureGroupIdSet}"/>
-
-            <!-- split by feature type, then create a variant for each combination of one feature of each type, types in
-                key order (the TreeSet of Java) -->
-            <script><![CDATA[
-                const featuresByType = {}
-                for (const productFeature of productFeatureList)
-                    (featuresByType[productFeature.productFeatureTypeEnumId] ??= []).push(productFeature)
-                const featureListList = Object.keys(featuresByType).sort().map((featureType) => featuresByType[featureType])
-
-                const recursiveCreate = (featureList, level) => {
-                    for (const feature of featureListList[level]) {
-                        featureList[level] = feature
-                        if (level == featureListList.length - 1) {
-                            // at the bottom, create the variant
-                            ec.service.sync().name("mantle.product.ProductServices.create#VariantProduct")
-                                    .parameters({product: product, productTypeEnumId: productTypeEnumId,
-                                                 assetTypeEnumId: assetTypeEnumId, assetClassEnumId: assetClassEnumId,
-                                                 featureList: featureList.slice(), copyCategoryMembers: copyCategoryMembers})
-                                    .call()
-                        } else {
-                            recursiveCreate(featureList, level + 1)
-                        }
-                    }
-                }
-                if (featureListList.length > 0) recursiveCreate([], 0)
-            ]]></script>
-        </actions>
+        <parameter name="copyFields" type="List"/><parameter name="allowedFeatureIds" type="List"/><parameter name="allowedCategoryIds" type="List"/><parameter name="filterFeatureIds" type="List"/><parameter name="requiredOwnerPartyId"/><parameter name="policyStamp"/><parameter name="previewRevision"/><parameter name="selectedFeatureSets" type="List"/><parameter name="interactiveLimit" type="Integer"/></in-parameters>
+        <out-parameters><parameter name="results" type="List"/><parameter name="createdCount" type="Integer"/><parameter name="existingCount" type="Integer"/><parameter name="failedCount" type="Integer"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('create',context))</script></actions>
     </service>
     <service verb="create" noun="VariantProduct">
         <in-parameters>
@@ -584,83 +535,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="featureList" type="List"/>
             <parameter name="copyStandardFeatures" type="Boolean" default="true"/>
             <parameter name="copyCategoryMembers" type="Boolean" default="false"/>
-        </in-parameters>
-        <out-parameters><parameter name="productId"/></out-parameters>
-        <actions>
-            <if condition="copyStandardFeatures">
-                <entity-find entity-name="mantle.product.feature.ProductFeatureAppl" list="standardFeatureList">
-                    <date-filter/><econdition field-name="productId" from="product.productId"/>
-                    <econdition field-name="applTypeEnumId" value="PfatStandard"/></entity-find>
-            </if>
-            <if condition="copyCategoryMembers">
-                <entity-find entity-name="mantle.product.category.ProductCategoryMember" list="pcmList">
-                    <date-filter/><econdition field-name="productId" from="product.productId"/></entity-find>
-            </if>
-
-            <script><![CDATA[
-                productId = product.pseudoId || product.productId
-                let productName = product.productName
-                for (const feature of featureList) {
-                    productId = productId + "_" + (feature.abbrev || feature.productFeatureId)
-                    productName = productName + " " + feature.description
-                }
-
-                // see if product exists (by ID) before creating
-                const existingProduct = ec.entity.find("mantle.product.Product").condition("productId", productId).one()
-                if (existingProduct) return
-
-                // see if variant with the same features exists
-                const conditions = ec.entity.conditionFactory
-                const allVariants = ec.entity.find("mantle.product.ProductAssoc")
-                        .condition({productId: product.productId, productAssocTypeEnumId: "PatVariant"})
-                        .condition(conditions.makeConditionDate("fromDate", "thruDate", null, false, "false")).list()
-                let checkProductIds = [...new Set(Array.from(allVariants, (assoc) => assoc.toProductId))]
-                for (const feature of featureList) {
-                    if (checkProductIds.length == 0) break
-                    const remainingWithFeature = ec.entity.find("mantle.product.feature.ProductFeatureAppl")
-                            .condition(conditions.makeActionConditionDirect("productId", "in", checkProductIds, null, null,
-                                false, false, false, "false"))
-                            .condition("productFeatureId", feature.productFeatureId).list()
-                    checkProductIds = [...new Set(Array.from(remainingWithFeature, (appl) => appl.productId))]
-                }
-                if (checkProductIds.length > 0) {
-                    productId = checkProductIds[0]
-                    return
-                }
-
-                const newProduct = product.cloneValue()
-                newProduct.productName = productName; newProduct.productId = productId
-                if (productTypeEnumId) newProduct.productTypeEnumId = productTypeEnumId
-                if (assetTypeEnumId) newProduct.assetTypeEnumId = assetTypeEnumId
-                if (assetClassEnumId) newProduct.assetClassEnumId = assetClassEnumId
-                newProduct.pseudoId = null
-                newProduct.create()
-
-                ec.service.sync().name("create#mantle.product.ProductAssoc")
-                        .parameters({productId: product.productId, toProductId: newProduct.productId,
-                                     productAssocTypeEnumId: "PatVariant", fromDate: ec.user.nowTimestamp}).call()
-
-                for (const feature of featureList) {
-                    ec.service.sync().name("create#mantle.product.feature.ProductFeatureAppl")
-                            .parameters({productId: newProduct.productId, productFeatureId: feature.productFeatureId,
-                                         fromDate: ec.user.nowTimestamp, applTypeEnumId: "PfatDistinguishing"}).call()
-                }
-
-                for (const feature of (standardFeatureList ?? [])) {
-                    ec.service.sync().name("create#mantle.product.feature.ProductFeatureAppl")
-                            .parameters({productId: newProduct.productId, productFeatureId: feature.productFeatureId,
-                                         fromDate: ec.user.nowTimestamp, applTypeEnumId: "PfatStandard"}).call()
-                }
-
-                for (const pcm of (pcmList ?? [])) {
-                    ec.service.sync().name("create#mantle.product.category.ProductCategoryMember")
-                            .parameters({productId: newProduct.productId, productCategoryId: pcm.productCategoryId,
-                                         fromDate: ec.user.nowTimestamp}).call()
-                }
-
-                ec.logger.info(`Created variant of ${product.productId}: ${newProduct.productId}:${newProduct.productName}`)
-            ]]></script>
-        </actions>
+        <parameter name="copyFields" type="List"/><parameter name="allowedFeatureIds" type="List"/><parameter name="allowedCategoryIds" type="List"/><parameter name="filterFeatureIds" type="List"/><parameter name="requiredOwnerPartyId"/><parameter name="policyStamp"/><parameter name="previewRevision"/><parameter name="productFeatureIds" type="List"/><parameter name="productFeatureGroupIdSet" type="Set"/></in-parameters>
+        <out-parameters><parameter name="productId"/><parameter name="featureKey"/><parameter name="result"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('createOne',context))</script></actions>
     </service>
 
     <service verb="delete" noun="VariantProducts">
@@ -700,7 +577,7 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find-one entity-name="mantle.product.Product" value-field="product"/>
             <if condition="product != null">
                 <script>deletedProduct = product.deleteWithRelated(['assocs', 'toAssocs', 'contents', 'dimensions', 'geos',
-                                                                   'identifications', 'parties', 'prices', 'categories', 'features'])</script>
+                                                                   'identifications', 'parties', 'prices', 'categories', 'features', 'variantIdentities', 'baseVariantIdentities'])</script>
                 <if condition="deletedProduct"><then><message>Deleted product ${product.pseudoId}: ${product.productName}</message></then>
                     <else><message>Not deleting product ${product.pseudoId}: ${product.productName}, has records that use it</message></else></if>
             </if>
