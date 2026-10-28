@@ -1,13 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
-    <entity entity-name="ProductCatalogSetting" package="mantle.product" create-only="true">
-        <description>Immutable organization catalog policy revisions; writes lock the organization and compare the expected revision.</description>
+    <entity entity-name="ProductCatalogSetting" package="mantle.product">
+        <description>Organization catalog policy effective at a date. Successors close the prior row; key fields retain their audit history.</description>
         <field name="organizationPartyId" type="id" is-pk="true"/>
-        <field name="settingType" type="text-short" is-pk="true"/>
-        <field name="versionSeqId" type="number-integer" is-pk="true"/>
-        <field name="settingsJson" type="text-very-long"/>
-        <field name="createdDate" type="date-time" default="ec.user.nowTimestamp"/>
-        <field name="createdByUserId" type="id" default="ec.user.userId"/>
+        <field name="fromDate" type="date-time" is-pk="true" enable-audit-log="true"/>
+        <field name="thruDate" type="date-time" enable-audit-log="true"/>
+        <field name="defaultProductTypeEnumId" type="id" enable-audit-log="true"/>
+        <field name="defaultAmountUomId" type="id" enable-audit-log="true"/>
+        <field name="defaultCurrencyUomId" type="id" enable-audit-log="true"/>
+        <field name="requiredFields" type="text-long" enable-audit-log="true"/>
+        <field name="allowCostSelfApproval" type="text-indicator" enable-audit-log="true"/>
+        <field name="variantsEnabled" type="text-indicator" enable-audit-log="true"/>
+        <field name="packagingEnabled" type="text-indicator" enable-audit-log="true"/>
+        <field name="priceListsEnabled" type="text-indicator" enable-audit-log="true"/>
+        <field name="idPolicy" type="text-short" enable-audit-log="true"/>
+        <field name="changeReason" type="text-long" enable-audit-log="true"/>
         <relationship type="one" related="mantle.party.Party"><key-map field-name="organizationPartyId" related="partyId"/></relationship>
     </entity>
     <entity entity-name="ProductVariantSetting" package="mantle.product">
