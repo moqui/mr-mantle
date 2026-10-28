@@ -287,18 +287,17 @@ const fail = (kind, message) => {
                     .name(schema[op].service)
                     .parameters({ input })
                     .call().result
-                if (op === 'getAttachment') {
-                    response.setContentType(result.attachment.mimeType)
+                if (op === 'getAttachment' || op === 'getExport') {
+                    const file = result.attachment || result.export
+                    response.setContentType(file.mimeType)
+                    response.setHeader('Cache-Control', 'no-store')
                     response.setHeader(
                         'Content-Disposition',
-                        (result.attachment.variant === 'thumbnail'
+                        (file.variant === 'thumbnail'
                             ? 'inline'
                             : 'attachment') +
                             '; filename="' +
-                            String(result.attachment.filename).replace(
-                                /["\\\r\n]/g,
-                                '_',
-                            ) +
+                            String(file.filename).replace(/["\\\r\n]/g, '_') +
                             '"',
                     )
                     const stream = ec.resource

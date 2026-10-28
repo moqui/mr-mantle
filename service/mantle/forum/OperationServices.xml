@@ -56,6 +56,9 @@
         try{ec.service.sync().throwOnError(true).name('delete#mantle.forum.ForumCursor').parameters({cursorId:row.cursorId}).requireNewTransaction(true).call()}
         catch(error){ec.message.clearErrors();ec.logger.error('Forum cursor cleanup failed for '+row.cursorId)}
     }
+    // Expired export downloads and their files, each isolated.
+    try{ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').cleanupExports()}
+    catch(error){ec.message.clearErrors();ec.logger.error('Forum export cleanup failed: '+String(error?.message || error).split('\n')[0])}
     // Expired email opt-out tokens can no longer be redeemed; one bulk delete, isolated from the cursors above.
     try{ec.service.sync().throwOnError(true).name('mantle.forum.OperationServices.cleanup#OptOutTokens').requireNewTransaction(true).call()}
     catch(error){ec.message.clearErrors();ec.logger.error('Forum opt-out token cleanup failed: '+String(error?.message || error).split('\n')[0])}
@@ -68,6 +71,161 @@
       <script><![CDATA[
     ec.entity.find('mantle.forum.ForumOptOut').condition('expiresAt','less',ec.user.nowTimestamp).disableAuthz().deleteAll()
   ]]></script>
+    </actions>
+  </service>
+  <service verb="get" noun="RetentionPolicy" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('getRetentionPolicy',input || {})</script>
+    </actions>
+  </service>
+  <service verb="store" noun="RetentionPolicy" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('storeRetentionPolicy',input || {})</script>
+    </actions>
+  </service>
+  <service verb="preview" noun="Operation" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('previewOperation',input || {})</script>
+    </actions>
+  </service>
+  <service verb="start" noun="Operation" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('startOperation',input || {})</script>
+    </actions>
+  </service>
+  <service verb="request" noun="PersonalDataAction" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('requestPersonalDataAction',input || {})</script>
+    </actions>
+  </service>
+  <service verb="find" noun="DataRequests" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findDataRequests',input || {})</script>
+    </actions>
+  </service>
+  <service verb="decide" noun="DataRequest" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('decideDataRequest',input || {})</script>
+    </actions>
+  </service>
+  <service verb="find" noun="Exports" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findExports',input || {})</script>
+    </actions>
+  </service>
+  <service verb="get" noun="Export" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('getExport',input || {})</script>
+    </actions>
+  </service>
+  <service verb="get" noun="Activity" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('getActivity',input || {})</script>
+    </actions>
+  </service>
+  <service verb="export" noun="Report" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('exportReport',input || {})</script>
+    </actions>
+  </service>
+  <service verb="dispatch" noun="Jobs" authenticate="false" allow-remote="false">
+    <description>Scheduled (pass_dispatch_operations): advances pending operation runs (counter rebuild, delivery retry,
+      retention, site and personal exports, erasure) a page of items at a time, each item in its own transaction.</description>
+    <in-parameters>
+      <parameter name="budget" type="Integer"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="processed" type="Integer"/>
+    </out-parameters>
+    <actions>
+      <script>processed=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').dispatchJobs({budget}).processed</script>
+    </actions>
+  </service>
+  <service verb="advance" noun="Run" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="runId" required="true"/>
+      <parameter name="budget" type="Integer"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="processed" type="Integer"/>
+    </out-parameters>
+    <actions>
+      <script>processed=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').advanceRun(runId, budget).processed</script>
+    </actions>
+  </service>
+  <service verb="run" noun="JobItem" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="runId" required="true"/>
+      <parameter name="itemId" required="true"/>
+    </in-parameters>
+    <actions>
+      <script>ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').runJobItem(runId, itemId)</script>
     </actions>
   </service>
 </services>

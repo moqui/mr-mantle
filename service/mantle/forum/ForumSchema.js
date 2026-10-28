@@ -807,4 +807,70 @@
         service: 'mantle.forum.ModerationServices.find#ModerationScopes',
         fields: [],
     },
+    getRetentionPolicy: {
+        service: 'mantle.forum.OperationServices.get#RetentionPolicy',
+        fields: ['siteId'],
+    },
+    storeRetentionPolicy: {
+        service: 'mantle.forum.OperationServices.store#RetentionPolicy',
+        fields: [
+            'siteId',
+            'deliveryDays',
+            'inboundDays',
+            'deletedPostDays',
+            'jobDays',
+            'invitationDays',
+            'expectedRevision',
+            'reason',
+        ],
+    },
+    previewOperation: {
+        service: 'mantle.forum.OperationServices.preview#Operation',
+        fields: ['siteId', 'operation', 'contactListId'],
+    },
+    startOperation: {
+        service: 'mantle.forum.OperationServices.start#Operation',
+        fields: [
+            'siteId',
+            'operation',
+            'contactListId',
+            'dryRun',
+            'expectedRevision',
+            'reason',
+        ],
+    },
+    requestPersonalDataAction: {
+        service: 'mantle.forum.OperationServices.request#PersonalDataAction',
+        fields: ['siteId', 'kind', 'reason', 'confirm'],
+    },
+    findDataRequests: {
+        service: 'mantle.forum.OperationServices.find#DataRequests',
+        fields: ['siteId', 'mine', 'limit', 'cursor'],
+    },
+    decideDataRequest: {
+        service: 'mantle.forum.OperationServices.decide#DataRequest',
+        fields: [
+            'siteId',
+            'requestId',
+            'decision',
+            'reason',
+            'expectedRevision',
+        ],
+    },
+    findExports: {
+        service: 'mantle.forum.OperationServices.find#Exports',
+        fields: ['siteId'],
+    },
+    getExport: {
+        service: 'mantle.forum.OperationServices.get#Export',
+        fields: ['siteId', 'exportId'],
+    },
+    getActivity: {
+        service: 'mantle.forum.OperationServices.get#Activity',
+        fields: ['siteId', 'contactListId', 'fromDate', 'thruDate', 'interval'],
+    },
+    exportReport: {
+        service: 'mantle.forum.OperationServices.export#Report',
+        fields: ['siteId', 'report', 'contactListId', 'fromDate', 'thruDate'],
+    },
 })

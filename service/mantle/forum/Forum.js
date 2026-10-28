@@ -225,6 +225,9 @@ const moderation = ec.resource.script(
 const integration = ec.resource.script(
     'component://mr-mantle/service/mantle/forum/ForumIntegration.js',
 )(core, methods)
+const operations = ec.resource.script(
+    'component://mr-mantle/service/mantle/forum/ForumOperations.js',
+)(core, methods, moderation)
 methods.findSites = (p) => {
     if (p.siteId) site(p.siteId, true)
     const pg = page(p, 'sites:' + (p.siteId || 'operator')),
@@ -5316,6 +5319,11 @@ function execute(operation, p) {
         'toRevision',
         'revision',
         'slowIntervalSeconds',
+        'deliveryDays',
+        'inboundDays',
+        'deletedPostDays',
+        'jobDays',
+        'invitationDays',
     ])
     const booleans = new Set([
         'confirm',
@@ -5327,6 +5335,8 @@ function execute(operation, p) {
         'active',
         'locked',
         'includeOwn',
+        'dryRun',
+        'mine',
     ])
     const listFields = new Set([
         'attachmentIds',
@@ -5438,5 +5448,9 @@ function execute(operation, p) {
     postInbound,
     replyAddress,
     applySubscription: integration.applySubscription,
+    dispatchJobs: operations.dispatchJobs,
+    advanceRun: operations.advanceRun,
+    runJobItem: operations.runItem,
+    cleanupExports: operations.cleanupExports,
     sourceGate,
 })

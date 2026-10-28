@@ -2017,6 +2017,7 @@
         return total
     }
     return {
+        recount,
         recomputeTrust,
         recomputeMemberTrust,
         classifyPosts,

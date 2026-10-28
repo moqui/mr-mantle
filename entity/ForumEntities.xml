@@ -70,6 +70,7 @@
     <field name="deletedAt" type="date-time"/>
     <field name="deletedByPartyId" type="id"/>
     <field name="deleteReason" type="text-long"/>
+    <field name="textRemovedAt" type="date-time"><description>When retention replaced the text of this deleted or rejected post and its revisions with a tombstone.</description></field>
     <field name="wiki" type="text-indicator"/>
     <field name="reactionCount" type="number-integer"/>
     <field name="reactionCounts" type="text-medium"/>
@@ -559,6 +560,70 @@
       <index-field name="state"/>
     </index>
   </entity>
+  <entity entity-name="ForumExport" package="mantle.forum">
+    <description>A generated download: a site archive, a member's personal data archive or a staff report. The download
+      rechecks the requester's current authority and the expiry; cleanup removes the file after it expires.</description>
+    <field name="exportId" type="id" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="partyId" type="id"/>
+    <field name="kind" type="id"/>
+    <field name="contactListId" type="id"/>
+    <field name="runId" type="id"/>
+    <field name="location" type="text-medium"/>
+    <field name="filename" type="text-medium"/>
+    <field name="mimeType" type="text-short"/>
+    <field name="checksum" type="text-medium"/>
+    <field name="byteSize" type="number-integer"/>
+    <field name="schemaVersion" type="number-integer"/>
+    <field name="state" type="id"/>
+    <field name="createdAt" type="date-time"/>
+    <field name="expiresAt" type="date-time"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <index name="FORUM_EXPORT_PARTY">
+      <index-field name="siteId"/>
+      <index-field name="partyId"/>
+      <index-field name="createdAt"/>
+    </index>
+    <index name="FORUM_EXPORT_EXPIRY">
+      <index-field name="expiresAt"/>
+    </index>
+  </entity>
+  <entity entity-name="ForumDataRequest" package="mantle.forum">
+    <description>A member's request to export their data (run at once) or to erase their profile (decided by a site owner,
+      then run as a job that anonymizes rather than deletes).</description>
+    <field name="requestId" type="id" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="partyId" type="id"/>
+    <field name="kind" type="id"/>
+    <field name="state" type="id"/>
+    <field name="reason" type="text-medium"/>
+    <field name="decisionReason" type="text-medium"/>
+    <field name="decidedByPartyId" type="id"/>
+    <field name="decidedAt" type="date-time"/>
+    <field name="runId" type="id"/>
+    <field name="exportId" type="id"/>
+    <field name="createdAt" type="date-time"/>
+    <field name="revision" type="number-integer"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <index name="FORUM_DATA_REQUEST_SITE">
+      <index-field name="siteId"/>
+      <index-field name="state"/>
+      <index-field name="createdAt"/>
+    </index>
+  </entity>
+  <entity entity-name="ForumRetentionPolicy" package="mantle.forum">
+    <description>Days to keep each class of forum operational data; 0 keeps it. Retention runs only when started by a site
+      owner, after a preview; nothing prunes automatically.</description>
+    <field name="siteId" type="id" is-pk="true"/>
+    <field name="deliveryDays" type="number-integer"/>
+    <field name="inboundDays" type="number-integer"/>
+    <field name="deletedPostDays" type="number-integer"/>
+    <field name="jobDays" type="number-integer"/>
+    <field name="invitationDays" type="number-integer"/>
+    <field name="revision" type="number-integer"/>
+    <field name="updatedAt" type="date-time"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+  </entity>
   <entity entity-name="ForumPermalink" package="mantle.forum">
     <field name="oldRootCommEventId" type="id" is-pk="true"/>
     <field name="siteId" type="id"/>
@@ -717,6 +782,7 @@
     <alias entity-alias="E" name="contactListId"/>
     <alias entity-alias="T" name="siteId"/>
     <alias entity-alias="T" name="unlisted"/>
+    <alias entity-alias="T" name="kind"/>
   </view-entity>
   <view-entity entity-name="ForumReceiptState" package="mantle.forum">
     <member-entity entity-alias="R" entity-name="mantle.party.communication.CommunicationEventParty"/>
