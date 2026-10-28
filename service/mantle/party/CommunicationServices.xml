@@ -335,7 +335,9 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters>
             <parameter name="threadMap" type="Map"><description>Root id to {rootCommEventId, root, subject, contactListId,
-                contactListName, isMailbox, isClosed, takesPart, canReadAll, canPost, canModerate, messageList}</description></parameter>
+                contactListName, isMailbox, isClosed, takesPart, canReadAll, canPost, canModerate, forum, messageList}; forum
+                is the PASS topic state ({siteId, kind category or private, acceptedAnswerId, pinned, unlisted, closed}) or
+                null.</description></parameter>
         </out-parameters>
         <actions><script><![CDATA[
             const cf = ec.entity.conditionFactory
@@ -417,6 +419,12 @@ along with this software (see the LICENSE.md file). If not, see
                         catch(error) { if(error.moquiErrorKind==='NotFound') continue; throw error }
                     }
                 }
+                // A PASS private conversation is read only by its current participants, in Comms as on the site.
+                const forumTopic = ec.entity.find('mantle.forum.ForumTopic').condition('rootCommEventId',threadId).one()
+                if (forumTopic?.kind === 'private') {
+                    try { ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').topic(threadId,forumTopic.siteId) }
+                    catch(error) { if(error.moquiErrorKind==='NotFound') continue; throw error }
+                }
                 const listId = root?.contactListId || null
                 const access = listId ? accessOf(listId) : null
                 const isMailbox = !!access?.isMailbox
@@ -425,6 +433,9 @@ along with this software (see the LICENSE.md file). If not, see
                     isClosed: isMailbox && root?.statusId === 'CeResolved', takesPart: takesPart,
                     canReadAll: isMailbox ? access.canReadAll : null, canPost: isMailbox ? access.canPost : null,
                     canModerate: isMailbox ? access.canModerate : false,
+                    forum: forumTopic ? {siteId: forumTopic.siteId, kind: forumTopic.kind,
+                        acceptedAnswerId: forumTopic.acceptedAnswerId || null, pinned: forumTopic.pinned === 'Y',
+                        unlisted: forumTopic.unlisted === 'Y', closed: root?.statusId === 'CeResolved'} : null,
                     messageList: visible.map((event) => {
                         const publicState=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').legacyReading(event,partyId)
                         return Object.assign({}, event, {publicState:publicState,myRowList:publicState ? [] : myRows.get(event.communicationEventId) || [],
@@ -850,6 +861,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="isClosed" type="Boolean"/>
             <parameter name="canReply" type="Boolean"/>
             <parameter name="canModerate" type="Boolean"/>
+            <parameter name="forum" type="Map"><description>PASS topic state of a forum-bound thread or private conversation:
+                {siteId, kind, acceptedAnswerId, pinned, unlisted, closed}; null otherwise.</description></parameter>
             <parameter name="unreadCount" type="Integer"/>
             <parameter name="messageList" type="List"><parameter name="message" type="Map">
                 <parameter name="communicationEventId"/><parameter name="parentCommEventId"/><parameter name="rootCommEventId"/>
@@ -886,6 +899,7 @@ along with this software (see the LICENSE.md file). If not, see
             contactListName = thread.isMailbox ? thread.contactListName : null
             isClosed = thread.isClosed
             canModerate = thread.canModerate
+            forum = thread.forum || null
             canReply = !isClosed && (!thread.isMailbox || thread.canPost === true)
             unreadCount = 0
             const participants = []
