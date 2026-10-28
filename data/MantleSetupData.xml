@@ -145,6 +145,7 @@ along with this software (see the LICENSE.md file). If not, see
         <filters entityFilterId="MANTLE_USER_ORG_A" entityName="mantle.product.Product" filterMap="({ownerPartyId: filterOrgIds})"/>
         <filters entityFilterId="MANTLE_USER_ORG_B" entityName="mantle.product.category.ProductCategory" filterMap="({ownerPartyId: filterOrgIds})"/>
         <filters entityFilterId="MANTLE_USER_ORG_C" entityName="mantle.product.feature.ProductFeature" filterMap="({ownerPartyId: filterOrgIds})"/>
+        <filters entityFilterId="MANTLE_USER_ORG_FG" entityName="mantle.product.feature.ProductFeatureGroup" filterMap="({_join:'or',_list:[{ownerPartyId:null},{ownerPartyId:['_NA_'].concat(filterOrgIds || [])}]})"/>
         <filters entityFilterId="MANTLE_USER_ORG_D" entityName="mantle.product.store.ProductStore" filterMap="({organizationPartyId: filterOrgIds})"/>
         <filters entityFilterId="MANTLE_USER_ORG_F" entityName="mantle.facility.Facility" filterMap="({ownerPartyId: filterOrgIds})"/>
     </moqui.security.EntityFilterSet>
@@ -180,6 +181,7 @@ along with this software (see the LICENSE.md file). If not, see
                 filterMap="({ownerPartyId: (activeOrgId ? [activeOrgId, '_NA_'] : null)})"/>
         <filters entityFilterId="MANTLE_ACTIVE_ORG_C" entityName="mantle.product.feature.ProductFeature"
                 filterMap="({ownerPartyId: (activeOrgId ? [activeOrgId, '_NA_'] : null)})"/>
+        <filters entityFilterId="MANTLE_ACTIVE_ORG_FG" entityName="mantle.product.feature.ProductFeatureGroup" filterMap="({_join:'or',_list:[{ownerPartyId:null},{ownerPartyId:(activeOrgId ? [activeOrgId,'_NA_'] : null)}]})"/>
         <filters entityFilterId="MANTLE_ACTIVE_ORG_D" entityName="mantle.product.store.ProductStore"
                 filterMap="({organizationPartyId: (activeOrgId ? [activeOrgId, '_NA_'] : null)})"/>
         <!-- allow these for 3rd party facilities regardless of active org:

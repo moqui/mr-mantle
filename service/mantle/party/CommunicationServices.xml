@@ -2364,10 +2364,10 @@ along with this software (see the LICENSE.md file). If not, see
                 if (entityName === PARTY) return !value.privateOwnerUserId || value.privateOwnerUserId === ec.user.userId
                 // Catalog record mounts/drive links also enforce owner scope without an active-org filter. A catalog
                 // user's internal file/room callback retains this rule even when artifact authorization is disabled.
-                if (['mantle.product.Product', 'mantle.product.category.ProductCategory', 'mantle.product.feature.ProductFeature'].includes(entityName)
+                if (['mantle.product.Product', 'mantle.product.category.ProductCategory', 'mantle.product.feature.ProductFeature', 'mantle.product.feature.ProductFeatureGroup'].includes(entityName)
                         && (authzOn || (!!ec.user.userId && ec.user.isInGroup('BOSS_PRODUCTS')))) {
                     const catalog = ec.service.sync().name('mantle.product.ProductServices.get#CatalogOwnerScope').disableAuthz().call() || {}
-                    if (!catalog.systemAdmin && !Array.from(catalog.ownerPartyIds || []).includes(value.ownerPartyId)) return false
+                    if (!catalog.systemAdmin && !Array.from(catalog.ownerPartyIds || []).includes(value.ownerPartyId || (entityName === 'mantle.product.feature.ProductFeatureGroup' ? '_NA_' : null))) return false
                 }
                 if (!authzOn) return true
                 if (entityName === COMM_EVENT) return commEventVisible(value, depth)

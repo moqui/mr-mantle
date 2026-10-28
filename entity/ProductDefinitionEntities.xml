@@ -778,6 +778,7 @@ along with this software (see the LICENSE.md file). If not, see
         <seed-data>
             <!-- Product Category Type -->
             <moqui.basic.EnumerationType description="Product Category Type" enumTypeId="ProductCategoryType"/>
+            <moqui.basic.Enumeration enumId="PctTag" enumTypeId="ProductCategoryType" description="Tag"/>
             <moqui.basic.Enumeration description="Catalog" enumId="PctCatalog" enumTypeId="ProductCategoryType"/>
             <moqui.basic.Enumeration description="Industry" enumId="PctIndustry" enumTypeId="ProductCategoryType"/>
             <moqui.basic.Enumeration description="Internal" enumId="PctInternal" enumTypeId="ProductCategoryType"/>
@@ -1229,6 +1230,8 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="applTypeEnumId"/></relationship>
     </entity>
     <entity entity-name="ProductFeatureGroup" package="mantle.product.feature" short-alias="featureGroups">
+        <field name="ownerPartyId" type="id" enable-audit-log="update" default="'_NA_'"/>
+        <relationship type="one" title="Owner" related="mantle.party.Party"><key-map field-name="ownerPartyId"/></relationship>
         <field name="productFeatureGroupId" type="id" is-pk="true"/>
         <field name="description" type="text-medium"/>
         <relationship type="many" related="mantle.product.feature.ProductFeatureGroupAppl" short-alias="features">
