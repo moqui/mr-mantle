@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <entity entity-name="WarehousePolicy" package="mantle.facility">
+        <description>Dated Warehouse policy by organization and optional facility/product scope. _NA_ is the all-scope key. Tracking is the first policy family; changes preserve prior rows and audits.</description>
+        <field name="organizationPartyId" type="id" is-pk="true"/>
+        <field name="policyType" type="text-short" is-pk="true" default="'tracking'"/>
+        <field name="facilityId" type="id" is-pk="true" default="'_NA_'"/>
+        <field name="productId" type="id" is-pk="true" default="'_NA_'"/>
+        <field name="fromDate" type="date-time" is-pk="true" enable-audit-log="true"/>
+        <field name="thruDate" type="date-time" enable-audit-log="true"/>
+        <field name="lotRequired" type="text-indicator" enable-audit-log="true"/>
+        <field name="serialRequired" type="text-indicator" enable-audit-log="true"/>
+        <field name="expiryBlock" type="text-indicator" enable-audit-log="true"/>
+        <field name="serialPattern" type="text-medium" enable-audit-log="true"/>
+        <field name="lotPattern" type="text-medium" enable-audit-log="true"/>
+        <field name="shelfLifeDays" type="number-integer" enable-audit-log="true"/>
+        <field name="nearExpiryDays" type="number-integer" enable-audit-log="true"/>
+        <field name="minimumRemainingShelfLifeDays" type="number-integer" enable-audit-log="true"/>
+        <field name="changeReason" type="text-long" enable-audit-log="true"/>
+        <relationship type="one" related="mantle.party.Party"><key-map field-name="organizationPartyId" related="partyId"/></relationship>
+        <relationship type="one-nofk" related="mantle.facility.Facility"/>
+        <relationship type="one-nofk" related="mantle.product.Product"/>
+    </entity>
+</entities>

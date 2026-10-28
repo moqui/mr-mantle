@@ -323,9 +323,13 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="ProductFacility" package="mantle.facility" cache="never">
         <field name="productId" type="id" is-pk="true"/>
         <field name="facilityId" type="id" is-pk="true"/>
-        <field name="minimumStock" type="number-decimal"/>
-        <field name="reorderQuantity" type="number-decimal"/>
-        <field name="daysToShip" type="number-integer"/>
+        <field name="minimumStock" enable-audit-log="true" type="number-decimal"/>
+        <field name="reorderQuantity" enable-audit-log="true" type="number-decimal"/>
+        <field name="daysToShip" enable-audit-log="true" type="number-integer"/>
+        <field name="maximumStock" type="number-decimal" enable-audit-log="true"/>
+        <field name="reorderMethodEnumId" type="id" enable-audit-log="true"/>
+        <field name="abcClassEnumId" type="id" enable-audit-log="true"/>
+        <field name="changeReason" type="text-long" enable-audit-log="true"/>
         <relationship type="one" related="mantle.product.Product" short-alias="product"/>
         <relationship type="one" related="mantle.facility.Facility" short-alias="facility"/>
     </entity>
@@ -333,8 +337,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="productId" type="id" is-pk="true"/>
         <field name="facilityId" type="id" is-pk="true"/>
         <field name="locationSeqId" type="id" is-pk="true"/>
-        <field name="minimumStock" type="number-decimal"/>
-        <field name="moveQuantity" type="number-decimal"/>
+        <field name="minimumStock" enable-audit-log="true" type="number-decimal"/>
+        <field name="moveQuantity" enable-audit-log="true" type="number-decimal"/>
+        <field name="changeReason" type="text-long" enable-audit-log="true"/>
         <relationship type="one" related="mantle.product.Product" short-alias="product"/>
         <relationship type="one" related="mantle.facility.FacilityLocation" short-alias="location">
             <key-map field-name="facilityId"/><key-map field-name="locationSeqId"/></relationship>

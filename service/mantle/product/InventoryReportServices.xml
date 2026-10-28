@@ -18,6 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="productIdList" type="List" required="true"/>
             <parameter name="facilityId"/>
+            <parameter name="organizationPartyId"><description>Optional stock/planning owner. Only documents with this verified owner contribute.</description></parameter>
             <parameter name="estThruDate" type="Timestamp"><description>Limits order item by requiredByDate, run
                 consume/produce by estimatedStartDate, production estimate by readyDate. Allows requiredByDate
                 and estimatedStartDate to be null (missing).</description></parameter>
@@ -84,6 +85,7 @@ along with this software (see the LICENSE.md file). If not, see
             function sumsByProduct(documentType, clauses, sumFields) {
                 clauses = [{field: {name: 'productId', op: 'in', values: productIdList}}].concat(clauses)
                 if (facilityId) clauses.push({field: {name: 'facilityId', op: 'eq', value: facilityId}})
+                if (organizationPartyId) clauses.push({field: {name: 'ownerPartyId', op: 'eq', value: organizationPartyId}})
                 const sums = {}
                 for (const [name, field] of Object.entries(sumFields)) sums[name] = {sum: {field: field}}
                 const result = ec.search.aggregate({documentType: documentType, filter: {bool: {all: clauses}},

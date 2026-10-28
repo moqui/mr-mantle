@@ -1,0 +1,56 @@
+<?xml version="1.0" ?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    
+    
+    <service verb="resolve" noun="WarehousePolicy" allow-remote="false">
+        <description>Warehouse tracking policy by effective date, with organization, facility and product sources. Operation and reservation policy are added by Warehouse.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="facilityId"/>
+            <parameter name="productId"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="facilityId"/>
+            <parameter name="productId"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+            <parameter name="trackingPolicy" type="Map"/>
+            <parameter name="configuredPolicy" type="Map"/>
+            <parameter name="sources" type="Map"/>
+            <parameter name="sourceRows" type="List"/>
+            <parameter name="history" type="List"/>
+            <parameter name="canPlan" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/facility/WarehousePolicy.js').execute('resolve',context))</script>
+        </actions>
+    </service>
+    
+    
+    <service verb="store" noun="TrackingPolicy" allow-remote="false">
+        <description>Warehouse tracking policy by effective date, with organization, facility and product sources. Operation and reservation policy are added by Warehouse.</description>
+        <in-parameters>
+            <auto-parameters entity-name="mantle.facility.WarehousePolicy" include="all"/>
+            <parameter name="expectedFromDate" type="Timestamp"/>
+            <parameter name="changeReason" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="facilityId"/>
+            <parameter name="productId"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+            <parameter name="trackingPolicy" type="Map"/>
+            <parameter name="configuredPolicy" type="Map"/>
+            <parameter name="sources" type="Map"/>
+            <parameter name="sourceRows" type="List"/>
+            <parameter name="history" type="List"/>
+            <parameter name="canPlan" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/facility/WarehousePolicy.js').execute('storeTracking',context))</script>
+        </actions>
+    </service>
+    
+
+</services>

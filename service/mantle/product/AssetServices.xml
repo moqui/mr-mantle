@@ -62,6 +62,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="productId" required="true"/>
             <parameter name="facilityId"/>
+            <parameter name="ownerPartyIdList" type="List"><description>Optional strict stock-owner scope, applied even when a facility allows other owners. Empty means legacy behavior.</description></parameter>
             <parameter name="productStoreId"><description>If specified get facilities and vendor from store, must specify products or categories separately</description></parameter>
             <parameter name="vendorPartyId"><description>Defaults to ProductStore.organizationPartyId; used for ownerPartyId filter and AssetPool lookup by Vendor</description></parameter>
             <parameter name="customerPartyId"><description>Used for AssetPool lookup by Customer</description></parameter>
@@ -106,7 +107,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             <!-- compile set of assetPoolId values -->
             <service-call name="mantle.product.AssetServices.get#AssetPools" out-map="poolsOut"
-                    in-map="{productStoreId:productStoreId, vendorPartyId:vendorPartyId, customerPartyId:customerPartyId}"/>
+                    in-map="{productStoreId:productStoreId, vendorPartyId:vendorPartyId, customerPartyId:customerPartyId, ownerPartyIdList:ownerPartyIdList}"/>
             <set field="assetPoolIdSet" from="poolsOut.assetPoolIdSet"/>
 
             <set field="availableToPromiseTotal" from="toDecimal(0)"/>
@@ -116,6 +117,7 @@ along with this software (see the LICENSE.md file). If not, see
 
                 <entity-find entity-name="mantle.product.asset.AssetQuantitySummary" list="quantSumList">
                     <econdition field-name="productId"/>
+                    <econdition field-name="ownerPartyId" operator="in" from="ownerPartyIdList" ignore-if-empty="true"/>
                     <econdition field-name="facilityId"/>
                     <econdition field-name="ownerPartyId" operator="in" from="ownerPartyIdSet"
                             ignore="facility?.assetAllowOtherOwner == 'Y' || ownerPartyIdSet.length == 0"/>
@@ -139,7 +141,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <iterate list="assocList" entry="assoc">
                         <service-call name="mantle.product.AssetServices.get#AvailableInventory" out-map="compAvailOut" out-map-add-to-existing="false"
                                 in-map="{productId:assoc.toProductId, facilityId:facilityId, productStoreId:productStoreId,
-                                    vendorPartyId:vendorPartyId, customerPartyId:customerPartyId}"/>
+                                    vendorPartyId:vendorPartyId, customerPartyId:customerPartyId, ownerPartyIdList:ownerPartyIdList}"/>
                         <!-- NOTE: digits to round? asset qty can be non-integer, but most products are and we want that -->
                         <set field="compScale" from="assoc.quantity != null ? assoc.quantity.scale() : 0"/>
                         <set field="componentAvailable" from="toDecimal(compAvailOut.availableToPromiseTotal ?? 0).divide((assoc.quantity == null || toDecimal(assoc.quantity).isZero()) ? 1 : assoc.quantity, compScale, 'FLOOR')"/>

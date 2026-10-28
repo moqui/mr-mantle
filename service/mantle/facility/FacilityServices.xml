@@ -293,4 +293,49 @@ along with this software (see the LICENSE.md file). If not, see
                 <message>No Asset, Container, Location, or Product found with ID ${scanId}</message></if>
         </actions>
     </service>
+    <service verb="get" noun="ProductFacilityPolicy" allow-remote="false">
+        <description>Warehouse-owned product/facility policy; minimumStock targets the location when locationSeqId is supplied. Facility and location levels are edited separately and audit-logged.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="productId" required="true"/>
+            <parameter name="facilityId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="productId"/>
+            <parameter name="facilityId"/>
+            <parameter name="locationSeqId"/>
+            <parameter name="facilityPolicy" type="Map"/>
+            <parameter name="locationPolicies" type="List"/>
+            <parameter name="canPlan" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/facility/WarehousePolicy.js').execute('facilityRead',context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="ProductFacilityPolicy" allow-remote="false">
+        <description>Warehouse-owned product/facility policy; minimumStock targets the location when locationSeqId is supplied. Facility and location levels are edited separately and audit-logged.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="productId" required="true"/>
+            <parameter name="facilityId" required="true"/>
+            <auto-parameters entity-name="mantle.facility.ProductFacility" include="nonpk"/>
+            <parameter name="locationSeqId"/>
+            <parameter name="moveQuantity" type="BigDecimal"/>
+            <parameter name="changeReason" required="true"/>
+            <parameter name="expectedLastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="productId"/>
+            <parameter name="facilityId"/>
+            <parameter name="locationSeqId"/>
+            <parameter name="facilityPolicy" type="Map"/>
+            <parameter name="locationPolicies" type="List"/>
+            <parameter name="canPlan" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/facility/WarehousePolicy.js').execute('facilityStore',context))</script>
+        </actions>
+    </service>
 </services>

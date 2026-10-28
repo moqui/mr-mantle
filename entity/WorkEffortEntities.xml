@@ -1253,7 +1253,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="readyDate" type="date"/>
         <relationship type="one" related="mantle.product.Product"/>
         <relationship type="one" related="mantle.facility.Facility"/>
-        <relationship type="one" title="Destination" related="mantle.facility.Facility">
+        <relationship type="one" title="Destination" related="mantle.facility.Facility" short-alias="destinationFacility">
             <key-map field-name="destinationFacilityId"/></relationship>
         <relationship type="one" title="Quantity" related="moqui.basic.Uom">
             <key-map field-name="quantityUomId"/></relationship>

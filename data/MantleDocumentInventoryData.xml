@@ -93,6 +93,7 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldSeqId="30" fieldPath="header:placedDate"/><fields fieldSeqId="31" fieldPath="header:currencyUomId" fieldNameAlias="currencyUomId"/>
     
         <conditions conditionSeqId="01" fieldNameAlias="productId" operator="is-not-null" fieldValue=""/>
+            <fields fieldSeqId="90" fieldPath="part:vendorPartyId" fieldNameAlias="ownerPartyId"/>
     </dataDocuments>
 
     <!-- Production Run Estimate - Consume -->
@@ -117,6 +118,7 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldSeqId="23" fieldPath="workEffort:facility:parentFacilityId" fieldNameAlias="facilityId"/>
     
         <conditions conditionSeqId="01" fieldNameAlias="typeEnumId" fieldValue="WeptConsume"/>
+            <fields fieldSeqId="90" fieldPath="workEffort:ownerPartyId" fieldNameAlias="ownerPartyId"/>
     </dataDocuments>
 
     <!-- Production Run Estimate - Produce -->
@@ -141,6 +143,7 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldSeqId="23" fieldPath="workEffort:facility:parentFacilityId" fieldNameAlias="facilityId"/>
     
         <conditions conditionSeqId="01" fieldNameAlias="typeEnumId" fieldValue="WeptProduce"/>
+            <fields fieldSeqId="90" fieldPath="workEffort:ownerPartyId" fieldNameAlias="ownerPartyId"/>
     </dataDocuments>
 
     <!-- Production Estimate -->
@@ -153,6 +156,7 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldSeqId="03" fieldPath="destinationFacilityId" fieldNameAlias="facilityId"/>
         <fields fieldSeqId="04" fieldPath="quantity" fieldNameAlias="prodEstQuantity"/>
         <fields fieldSeqId="05" fieldPath="readyDate"/>
+            <fields fieldSeqId="90" fieldPath="destinationFacility:ownerPartyId" fieldNameAlias="ownerPartyId"/>
     </dataDocuments>
 
     <!-- DataFeed -->
