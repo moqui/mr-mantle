@@ -49,6 +49,7 @@ function validate(r,ignoreIds=[]){
   const u=one('moqui.basic.Uom',{uomId:r.quantityUomId})
   if(!u||u.uomTypeEnumId==='UT_CURRENCY_MEASURE'||/PACK|CASE|BOX/.test(u.uomTypeEnumId||'')||(u.uomTypeEnumId==='UT_OTHER_MEASURE'&&!['OTH_ea','OTH_ct','OTH_pp'].includes(r.quantityUomId)))throw new Error('Use a stock quantity unit; a case or pack offer prices its pack product')
  }
+ for(const [field,type] of [['preferredOrderEnumId','SupplierPreferredOrder'],['supplierRatingTypeEnumId','SupplierRatingType']])if(r[field]&&one('moqui.basic.Enumeration',{enumId:r[field]})?.enumTypeId!==type)throw new Error('Choose a valid '+field)
  if(r.termUomId&&!one('moqui.basic.Uom',{uomId:r.termUomId}))throw new Error('Choose a term unit')
  for(const k of ['quantityIncrement','quantityIncluded','standardLeadTimeDays'])if(r[k]!=null&&toDecimal(r[k]).compare(0)<0)throw new Error(k+' cannot be negative')
  for(const k of ['taxInPrice','canDropShip'])if(r[k]!=null&&!['Y','N'].includes(r[k]))throw new Error('Choose Yes or No for '+k)
