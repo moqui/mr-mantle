@@ -129,4 +129,15 @@
     ['POST', 'access-grants/{grantId}/end', 'endAccessGrant'],
     ['GET', 'subscription-bindings', 'findSubscriptionBindings'],
     ['POST', 'subscription-bindings', 'storeSubscriptionBinding'],
+    ['GET', 'topics/{rootCommEventId}/links', 'getTopicLinks'],
+    ['POST', 'integrations/cases', 'createCaseFromTopic'],
+    [
+        'POST',
+        'integrations/cases/{requestId}/reply/preview',
+        'previewCaseReply',
+    ],
+    ['POST', 'integrations/cases/{requestId}/reply', 'publishCaseReply'],
+    ['POST', 'integrations/discussions', 'linkDiscussion'],
+    ['POST', 'integrations/discussions/{linkId}/detach', 'detachDiscussion'],
+    ['POST', 'integrations/article-drafts', 'draftArticleFromTopic'],
 ]

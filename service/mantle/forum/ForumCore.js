@@ -264,6 +264,41 @@ function category(id, siteId) {
         missing()
     return a
 }
+/* An article is readable when it has a published version and, if a subscription resource is bound to it, the
+   party holds a current grant for it. Paid articles arrive with Publishing; the rule is fixed now. */
+function articleReadable(siteId, wikiPageId, partyId) {
+    const page = one('moqui.resource.wiki.WikiPage', { wikiPageId })
+    if (!page?.publishedVersionName) return false
+    if (
+        !one(S + 'PublicSubscriptionBinding', {
+            siteId,
+            targetType: 'article',
+            targetId: wikiPageId,
+        })
+    )
+        return true
+    return rows(S + 'PublicAccessGrant', {
+        siteId,
+        partyId,
+        targetType: 'article',
+        targetId: wikiPageId,
+    }).some(grantActive)
+}
+/* A discussion linked with a narrowing gate is readable only while its source is: an article's comments close
+   when the article is withdrawn. Every reader path (topic reads, lists, search, feeds, email) applies this. */
+function sourceGate(rootCommEventId, partyId = me()) {
+    for (const link of rows(S + 'PublicDiscussionLink', {
+        rootCommEventId,
+        gate: 'narrow',
+        detachedAt: null,
+    }))
+        if (
+            link.sourceType === 'article' &&
+            !articleReadable(link.siteId, link.sourceId, partyId)
+        )
+            return false
+    return true
+}
 function topic(root, siteId, lock = false) {
     const t = one(F + 'ForumTopic', { rootCommEventId: root }, lock)
     if (!t || t.siteId !== siteId) missing()
@@ -283,6 +318,7 @@ function topic(root, siteId, lock = false) {
         event.fromPartyId !== me()
     )
         missing()
+    if (!a.canModerate && !sourceGate(root)) missing()
     const state = one(F + 'ForumPostState', { communicationEventId: root })
     if (
         state &&
@@ -895,6 +931,8 @@ function privateTopic(t) {
     categoryAccess,
     evaluateCategoryAccess,
     category,
+    articleReadable,
+    sourceGate,
     topic,
     postVisible,
     trustLevel,

@@ -38,6 +38,7 @@ const {
     withAccessMemo,
     categoryAccess,
     category,
+    sourceGate,
     topic,
     postVisible,
     trustLevel,
@@ -305,9 +306,22 @@ methods.updateSite = (p) => {
         invalid(
             'The subscription page must be an https address or a local path',
         )
+    if (
+        p.publishingWikiSpaceId &&
+        !one('moqui.resource.wiki.WikiSpace', {
+            wikiSpaceId: p.publishingWikiSpaceId,
+        })
+    )
+        missing()
     update(s, {
         ...Object.fromEntries(
-            ['name', 'locale', 'timeZone', 'subscriptionUrl']
+            [
+                'name',
+                'locale',
+                'timeZone',
+                'subscriptionUrl',
+                'publishingWikiSpaceId',
+            ]
                 .filter((k) => p[k] != null)
                 .map((k) => [k, p[k]]),
         ),
@@ -3286,7 +3300,8 @@ methods.getFeed = (p) => {
             event &&
             state?.visibility === 'approved' &&
             t.unlisted !== 'Y' &&
-            publicCategories.includes(event.contactListId)
+            publicCategories.includes(event.contactListId) &&
+            sourceGate(t.rootCommEventId, null)
         )
             topics.push({
                 id: t.rootCommEventId,
@@ -5423,4 +5438,5 @@ function execute(operation, p) {
     postInbound,
     replyAddress,
     applySubscription: integration.applySubscription,
+    sourceGate,
 })

@@ -128,6 +128,8 @@ function audience(box, partyId) {
             )
         )
             return null
+        // A discussion gated by its source (a withdrawn article) sends nothing while the source is unreadable.
+        if (!policy().sourceGate(st.rootCommEventId, partyId)) return null
         const rootState = one(F + 'ForumPostState', {
                 communicationEventId: st.rootCommEventId,
             }),
@@ -567,6 +569,7 @@ function digestTopics(siteId, partyId, rootIds) {
         if (t.unlisted === 'Y') continue
         const a = policy().categoryAccess(t.contactListId, partyId)
         if (!a?.canRead) continue
+        if (!policy().sourceGate(rootCommEventId, partyId)) continue
         const rootState = one(F + 'ForumPostState', {
             communicationEventId: rootCommEventId,
         })

@@ -18,6 +18,7 @@
             'timeZone',
             'state',
             'subscriptionUrl',
+            'publishingWikiSpaceId',
         ],
     },
     getMembership: {
@@ -718,6 +719,7 @@
             'thruDate',
             'reason',
             'operationId',
+            'wikiPageId',
         ],
     },
     endAccessGrant: {
@@ -736,10 +738,69 @@
             'targetType',
             'contactListId',
             'reason',
+            'wikiPageId',
         ],
     },
     findSubscriptionBindings: {
         service: 'mantle.public.SiteServices.find#SubscriptionBindings',
         fields: ['siteId'],
+    },
+    getTopicLinks: {
+        service: 'mantle.forum.ForumServices.get#TopicLinks',
+        fields: ['siteId', 'rootCommEventId'],
+    },
+    createCaseFromTopic: {
+        service: 'mantle.forum.ForumServices.create#CaseFromTopic',
+        fields: [
+            'siteId',
+            'rootCommEventId',
+            'postIds',
+            'requestCategoryId',
+            'reason',
+            'operationId',
+        ],
+    },
+    previewCaseReply: {
+        service: 'mantle.forum.ForumServices.preview#CaseReply',
+        fields: ['siteId', 'rootCommEventId', 'requestId', 'body'],
+    },
+    publishCaseReply: {
+        service: 'mantle.forum.ForumServices.publish#CaseReply',
+        fields: [
+            'siteId',
+            'rootCommEventId',
+            'requestId',
+            'body',
+            'previewHash',
+            'operationId',
+        ],
+    },
+    linkDiscussion: {
+        service: 'mantle.forum.ForumServices.link#Discussion',
+        fields: [
+            'siteId',
+            'rootCommEventId',
+            'sourceType',
+            'sourceId',
+            'gate',
+            'reason',
+            'operationId',
+        ],
+    },
+    detachDiscussion: {
+        service: 'mantle.forum.ForumServices.detach#Discussion',
+        fields: ['siteId', 'linkId', 'confirmAudience', 'reason'],
+    },
+    draftArticleFromTopic: {
+        service: 'mantle.forum.ForumServices.draft#ArticleFromTopic',
+        fields: [
+            'siteId',
+            'rootCommEventId',
+            'postIds',
+            'title',
+            'reviewerUsername',
+            'reason',
+            'operationId',
+        ],
     },
 })

@@ -7,6 +7,7 @@
     const {
         F,
         S,
+        E,
         now,
         millis,
         id,
@@ -30,6 +31,11 @@
         audit,
         systemAudit,
         grantActive,
+        hash,
+        topic,
+        internalParty,
+        articleReadable,
+        plainText,
     } = core
     const SUB = 'mantle.product.subscription.'
     const HANDLERS = {
@@ -42,9 +48,17 @@
         destroyServiceName:
             'mantle.forum.EntitlementServices.destroy#ForumAccess',
     }
-    /* The scope a grant or binding names: the whole site, or one of its categories. */
-    function grantTarget(siteId, targetType, contactListId) {
+    /* The scope a grant or binding names: the whole site, one of its categories, or an article. */
+    function grantTarget(siteId, targetType, contactListId, wikiPageId) {
         if (targetType === 'site') return { targetType, targetId: siteId }
+        if (targetType === 'article') {
+            if (
+                !wikiPageId ||
+                !one('moqui.resource.wiki.WikiPage', { wikiPageId })
+            )
+                missing()
+            return { targetType, targetId: wikiPageId }
+        }
         if (targetType !== 'category' || !contactListId)
             invalid('Choose the site or one of its categories')
         const c = one(F + 'ForumCategory', { contactListId })
@@ -76,7 +90,12 @@
     methods.setAccessGrant = (p) =>
         receipt(p, 'setAccessGrant', () => {
             site(p.siteId)
-            const target = grantTarget(p.siteId, p.targetType, p.contactListId)
+            const target = grantTarget(
+                p.siteId,
+                p.targetType,
+                p.contactListId,
+                p.wikiPageId,
+            )
             staff(p.siteId, scopeList(target))
             if (!p.reason) invalid('A reason is required')
             if (p.thruDate != null && millis(p.thruDate) <= millis(now()))
@@ -196,7 +215,12 @@
             true,
         )
         if (!resource) missing()
-        const target = grantTarget(p.siteId, p.targetType, p.contactListId)
+        const target = grantTarget(
+            p.siteId,
+            p.targetType,
+            p.contactListId,
+            p.wikiPageId,
+        )
         for (const [field, name] of Object.entries(HANDLERS))
             if (resource[field] && resource[field] !== name)
                 fail(
@@ -337,6 +361,453 @@
             if (!was) ec.artifactExecution.enableAuthz()
         }
     }
+    /* ---- Support and discussion links (design §13.2-13.4) ---- */
+    const activeLinks = (fields) =>
+        rows(S + 'PublicDiscussionLink', { ...fields, detachedAt: null })
+    /* A product is public on a site only while a store mounted on the site carries it within its sales dates. */
+    function productPublic(siteId, productId) {
+        const product = one('mantle.product.Product', { productId })
+        if (!product) return false
+        const t = millis(now())
+        if (
+            (product.salesIntroductionDate &&
+                millis(product.salesIntroductionDate) > t) ||
+            (product.salesDiscontinuationDate &&
+                millis(product.salesDiscontinuationDate) <= t)
+        )
+            return false
+        return rows(S + 'PublicSiteApp', { siteId, app: 'store' }).some(
+            (mount) =>
+                mount.enabled !== 'N' &&
+                !!mount.targetId &&
+                !!one('mantle.product.store.ProductStoreProduct', {
+                    productStoreId: mount.targetId,
+                    productId,
+                }),
+        )
+    }
+    /* Internal staff who moderate the topic: the only people who see or make case links. */
+    const caseStaff = (a) => a.canModerate && internalParty(me())
+    methods.getTopicLinks = (p) => {
+        const { a } = topic(p.rootCommEventId, p.siteId)
+        const staffView = caseStaff(a)
+        const cards = []
+        for (const link of activeLinks({
+            siteId: p.siteId,
+            rootCommEventId: p.rootCommEventId,
+        })) {
+            if (link.sourceType === 'product') {
+                const published = productPublic(p.siteId, link.sourceId)
+                if (!published && !a.canModerate) continue
+                cards.push({
+                    linkId: link.linkId,
+                    sourceType: 'product',
+                    sourceId: link.sourceId,
+                    title:
+                        one('mantle.product.Product', {
+                            productId: link.sourceId,
+                        })?.productName || '',
+                    published,
+                })
+            } else if (link.sourceType === 'article') {
+                const page = one('moqui.resource.wiki.WikiPage', {
+                    wikiPageId: link.sourceId,
+                })
+                const published = articleReadable(p.siteId, link.sourceId, me())
+                if (!page || (!published && !a.canModerate)) continue
+                cards.push({
+                    linkId: link.linkId,
+                    sourceType: 'article',
+                    sourceId: link.sourceId,
+                    title: page.pagePath || '',
+                    published,
+                })
+            } else if (link.sourceType === 'case' && staffView) {
+                const request = one('mantle.request.Request', {
+                    requestId: link.sourceId,
+                })
+                if (request)
+                    cards.push({
+                        linkId: link.linkId,
+                        sourceType: 'case',
+                        sourceId: link.sourceId,
+                        title: request.requestName || '',
+                        statusId: request.statusId,
+                    })
+            }
+        }
+        const s = one(S + 'PublicSite', { siteId: p.siteId })
+        return {
+            linkList: cards,
+            capabilities: {
+                canCreateCase: staffView,
+                canReplyFromCase: staffView && a.canReply,
+                canLinkDiscussion: a.isOwner || isOperator(),
+                canDraftArticle: staffView && !!s?.publishingWikiSpaceId,
+            },
+        }
+    }
+    /* The selected posts with author and post number: plain text for a private case comment, sanitized HTML for
+       an article draft. */
+    function selectedText(t, postIds, html) {
+        if (!postIds?.length) invalid('Select at least one post')
+        const parts = []
+        for (const postId of postIds) {
+            const st = one(F + 'ForumPostState', {
+                communicationEventId: postId,
+            })
+            const event = one(E + 'CommunicationEvent', {
+                communicationEventId: postId,
+            })
+            if (
+                !st ||
+                !event ||
+                st.rootCommEventId !== t.rootCommEventId ||
+                st.visibility !== 'approved'
+            )
+                invalid('Only visible posts of this topic can be selected')
+            const author =
+                one(S + 'PublicSiteProfile', {
+                    siteId: t.siteId,
+                    partyId: event.fromPartyId,
+                })?.handle || 'member'
+            parts.push(
+                html
+                    ? '<blockquote><p>' +
+                          author +
+                          ' · post ' +
+                          st.ordinal +
+                          '</p>' +
+                          StringUtilities.cleanHtml(event.body || '') +
+                          '</blockquote>'
+                    : author +
+                          ' · post ' +
+                          st.ordinal +
+                          ':\n' +
+                          plainText(event.body || ''),
+            )
+        }
+        return parts.join(html ? '\n' : '\n\n')
+    }
+    /* A service call that turns message errors into a refusal naming the first error. */
+    function serviceCall(name, input, kind = 'Conflict') {
+        const out = ec.service.sync().name(name).parameters(input).call()
+        if (ec.message.hasError()) {
+            const message = ec.message.getErrorsString()
+            ec.message.clearErrors()
+            fail(kind, message.split('\n')[0])
+        }
+        return out
+    }
+    methods.createCaseFromTopic = (p) =>
+        receipt(p, 'createCaseFromTopic', () => {
+            const { t, event, a } = topic(p.rootCommEventId, p.siteId)
+            if (!caseStaff(a))
+                fail(
+                    'Unauthorized',
+                    'Internal staff who moderate this topic create cases',
+                )
+            if (!p.reason) invalid('A reason is required')
+            const body = selectedText(t, p.postIds)
+            const created = serviceCall(
+                'mantle.request.RequestServices.create#Request',
+                {
+                    requestTypeEnumId: 'RqtSupport',
+                    requestName: String(event.subject || 'Forum topic').slice(
+                        0,
+                        255,
+                    ),
+                    description: p.reason,
+                    requestCategoryId: p.requestCategoryId || null,
+                    customerPartyId: event.fromPartyId,
+                },
+            )
+            // The selected public posts become one private comment; nothing of the case returns to the forum.
+            serviceCall('mantle.request.RequestServices.add#RequestComment', {
+                requestId: created.requestId,
+                subject: 'From forum topic ' + t.rootCommEventId,
+                body,
+            })
+            create('mantle.request.RequestCommEvent', {
+                requestId: created.requestId,
+                communicationEventId: t.rootCommEventId,
+            })
+            const linkId = id()
+            create(S + 'PublicDiscussionLink', {
+                linkId,
+                siteId: p.siteId,
+                sourceType: 'case',
+                sourceId: created.requestId,
+                rootCommEventId: t.rootCommEventId,
+                gate: 'none',
+                createdByPartyId: me(),
+                createdAt: now(),
+                revision: 1,
+            })
+            audit(
+                p.siteId,
+                event.contactListId,
+                'topic',
+                t.rootCommEventId,
+                'create-case',
+                p.reason,
+                null,
+                null,
+            )
+            return { requestId: created.requestId, linkId }
+        })
+    /* A public reply from a case: the CSR's own posting rights, the exact sanitized body and audience, and a hash
+       binding the publish to what the preview showed. */
+    function caseReply(p) {
+        const { t, event, a } = topic(p.rootCommEventId, p.siteId)
+        if (!caseStaff(a) || !a.canReply)
+            fail(
+                'Unauthorized',
+                'Internal staff with posting rights reply from a case',
+            )
+        if (
+            !activeLinks({
+                siteId: p.siteId,
+                rootCommEventId: t.rootCommEventId,
+                sourceType: 'case',
+                sourceId: p.requestId,
+            }).length
+        )
+            missing()
+        const body = StringUtilities.cleanHtml(p.body || '')
+        if (!body.trim()) invalid('The reply is empty')
+        const c = one(F + 'ForumCategory', {
+            contactListId: event.contactListId,
+        })
+        const list = one('mantle.marketing.contact.ContactList', {
+            contactListId: event.contactListId,
+        })
+        return {
+            body,
+            audience:
+                (list?.contactListName || 'Category') + ' · ' + c.visibility,
+            previewHash: hash(
+                [body, t.rootCommEventId, c.visibility, c.policyRevision].join(
+                    '|',
+                ),
+            ),
+        }
+    }
+    methods.previewCaseReply = (p) => caseReply(p)
+    methods.publishCaseReply = (p) => {
+        const r = caseReply(p)
+        if (p.previewHash !== r.previewHash)
+            fail(
+                'Conflict',
+                'The reply or its audience changed; preview it again',
+            )
+        const published = methods.publishPost({
+            siteId: p.siteId,
+            rootCommEventId: p.rootCommEventId,
+            body: p.body,
+            operationId: p.operationId,
+        })
+        // The public reply joins the case timeline; the case's private comments never join the topic.
+        if (
+            published.postId &&
+            !one('mantle.request.RequestCommEvent', {
+                requestId: p.requestId,
+                communicationEventId: published.postId,
+            })
+        )
+            create('mantle.request.RequestCommEvent', {
+                requestId: p.requestId,
+                communicationEventId: published.postId,
+            })
+        return published
+    }
+    methods.linkDiscussion = (p) =>
+        receipt(p, 'linkDiscussion', () => {
+            site(p.siteId, true)
+            const { t, event } = topic(p.rootCommEventId, p.siteId)
+            if (t.kind !== 'category') invalid('Link a category topic')
+            if (!['product', 'article'].includes(p.sourceType))
+                invalid('Link a product or an article')
+            if (
+                p.sourceType === 'product' &&
+                !one('mantle.product.Product', { productId: p.sourceId })
+            )
+                missing()
+            if (
+                p.sourceType === 'article' &&
+                !one('moqui.resource.wiki.WikiPage', { wikiPageId: p.sourceId })
+            )
+                missing()
+            // An article's comments follow the article unless the owner links it without a gate.
+            const gate =
+                p.sourceType === 'article' && p.gate !== 'none'
+                    ? 'narrow'
+                    : 'none'
+            const c = one(F + 'ForumCategory', {
+                contactListId: event.contactListId,
+            })
+            // A paid article's discussion must not show its title in a public listing.
+            if (
+                p.sourceType === 'article' &&
+                c.visibility === 'public' &&
+                one(S + 'PublicSubscriptionBinding', {
+                    siteId: p.siteId,
+                    targetType: 'article',
+                    targetId: p.sourceId,
+                })
+            )
+                fail(
+                    'Conflict',
+                    'Discuss a paid article in a restricted category',
+                )
+            const existing = activeLinks({
+                siteId: p.siteId,
+                sourceType: p.sourceType,
+                sourceId: p.sourceId,
+            })[0]
+            if (existing) {
+                if (existing.rootCommEventId !== t.rootCommEventId)
+                    fail('Conflict', 'This source already has a discussion')
+                return { linkId: existing.linkId }
+            }
+            const linkId = id()
+            create(S + 'PublicDiscussionLink', {
+                linkId,
+                siteId: p.siteId,
+                sourceType: p.sourceType,
+                sourceId: p.sourceId,
+                rootCommEventId: t.rootCommEventId,
+                gate,
+                createdByPartyId: me(),
+                createdAt: now(),
+                revision: 1,
+            })
+            if (
+                p.sourceType === 'product' &&
+                !one(E + 'CommunicationEventProduct', {
+                    communicationEventId: t.rootCommEventId,
+                    productId: p.sourceId,
+                })
+            )
+                create(E + 'CommunicationEventProduct', {
+                    communicationEventId: t.rootCommEventId,
+                    productId: p.sourceId,
+                })
+            audit(
+                p.siteId,
+                event.contactListId,
+                'topic',
+                t.rootCommEventId,
+                'link-' + p.sourceType,
+                p.reason || 'Discussion linked',
+                null,
+                1,
+            )
+            bump(p.siteId)
+            return { linkId }
+        })
+    methods.detachDiscussion = (p) => {
+        site(p.siteId, true)
+        const link = one(
+            S + 'PublicDiscussionLink',
+            { siteId: p.siteId, linkId: p.linkId },
+            true,
+        )
+        if (!link || link.detachedAt) missing()
+        if (p.confirmAudience !== true)
+            invalid(
+                'Detaching opens the discussion to its category audience: confirm the audience',
+            )
+        if (!p.reason) invalid('A reason is required')
+        update(link, {
+            detachedAt: now(),
+            revision: Number(link.revision || 1) + 1,
+        })
+        audit(
+            p.siteId,
+            null,
+            'topic',
+            link.rootCommEventId,
+            'detach-' + link.sourceType,
+            p.reason,
+            null,
+            null,
+        )
+        bump(p.siteId)
+        return { linkId: link.linkId }
+    }
+    /* An editorial draft in the site's publishing wiki space: the wiki checks the staff member's own space access,
+       the page has no published version, and a named internal reviewer is asked to review it. */
+    methods.draftArticleFromTopic = (p) =>
+        receipt(p, 'draftArticleFromTopic', () => {
+            const s = one(S + 'PublicSite', { siteId: p.siteId })
+            const { t, event, a } = topic(p.rootCommEventId, p.siteId)
+            if (!caseStaff(a))
+                fail(
+                    'Unauthorized',
+                    'Internal staff who moderate this topic draft articles',
+                )
+            if (!s?.publishingWikiSpaceId)
+                fail('Conflict', 'This site has no publishing space')
+            const reviewer = p.reviewerUsername
+                ? one('moqui.security.UserAccount', {
+                      username: p.reviewerUsername,
+                  })
+                : null
+            if (!reviewer || !internalParty(reviewer.partyId))
+                invalid('Name an internal reviewer')
+            const title = String(p.title || event.subject || 'Article')
+                .replace(/[^\w.\-,':()!? ]+/g, ' ')
+                .trim()
+                .slice(0, 120)
+            if (!title) invalid('A title is required')
+            const page = serviceCall(
+                'org.moqui.impl.WikiServices.update#WikiPage',
+                {
+                    wikiSpaceId: s.publishingWikiSpaceId,
+                    pageName: title,
+                    wikiType: 'html',
+                    pageText:
+                        '<p>Drafted from a community discussion.</p>\n' +
+                        selectedText(t, p.postIds, true),
+                    versionNote: 'Draft from forum topic ' + t.rootCommEventId,
+                },
+                'Unauthorized',
+            )
+            serviceCall(
+                'org.moqui.impl.WikiServices.request#WikiPageReview',
+                {
+                    wikiPageId: page.wikiPageId,
+                    reviewerUserId: reviewer.userId,
+                    note: p.reason || 'Article drafted from a forum discussion',
+                },
+                'Unauthorized',
+            )
+            const linkId = id()
+            // The topic is the article's source, not its comment thread: no gate.
+            create(S + 'PublicDiscussionLink', {
+                linkId,
+                siteId: p.siteId,
+                sourceType: 'article',
+                sourceId: page.wikiPageId,
+                rootCommEventId: t.rootCommEventId,
+                gate: 'none',
+                createdByPartyId: me(),
+                createdAt: now(),
+                revision: 1,
+            })
+            audit(
+                p.siteId,
+                event.contactListId,
+                'topic',
+                t.rootCommEventId,
+                'draft-article',
+                p.reason || 'Article drafted',
+                null,
+                null,
+            )
+            return { wikiPageId: page.wikiPageId, linkId }
+        })
     /* Whether a party holds any current grant on a site, which lets them join a site whose registration is closed. */
     const hasSiteGrant = (siteId, partyId) =>
         !!partyId &&

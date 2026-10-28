@@ -12,6 +12,7 @@
     <field name="registrationMode" type="id"/>
     <field name="approvalRequired" type="text-indicator"/>
     <field name="generation" type="number-integer"/>
+    <field name="publishingWikiSpaceId" type="id"><description>Wiki space that receives editorial article drafts made from forum topics; empty disables article handoff.</description></field>
     <field name="subscriptionUrl" type="text-medium"><description>Registered page where members manage a paid subscription; Forum links to it and implements no checkout.</description></field>
   </entity>
   <entity entity-name="PublicSiteHost" package="mantle.public">
@@ -124,6 +125,30 @@
       <index-field name="targetType"/>
       <index-field name="targetId"/>
       <index-field name="thruDate"/>
+    </index>
+  </entity>
+  <entity entity-name="PublicDiscussionLink" package="mantle.public">
+    <description>A forum topic linked to a source record: a product, an article or a support case. A narrowing gate makes
+      the topic readable only while its source is. Product and article sources have at most one active discussion.</description>
+    <field name="linkId" type="id" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="sourceType" type="id"/>
+    <field name="sourceId" type="id"/>
+    <field name="rootCommEventId" type="id"/>
+    <field name="gate" type="id"/>
+    <field name="createdByPartyId" type="id"/>
+    <field name="createdAt" type="date-time"/>
+    <field name="detachedAt" type="date-time"/>
+    <field name="revision" type="number-integer"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <index name="PASS_LINK_SOURCE">
+      <index-field name="siteId"/>
+      <index-field name="sourceType"/>
+      <index-field name="sourceId"/>
+    </index>
+    <index name="PASS_LINK_TOPIC">
+      <index-field name="rootCommEventId"/>
+      <index-field name="gate"/>
     </index>
   </entity>
   <entity entity-name="PublicSubscriptionBinding" package="mantle.public">
