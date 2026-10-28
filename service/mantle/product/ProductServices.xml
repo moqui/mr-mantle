@@ -14,6 +14,22 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
+    <service verb="get" noun="CatalogOwnerScope" allow-remote="false">
+        <description>Trusted catalog owner scope from the current user's organization memberships. Shared masters use _NA_.
+            No request-supplied organization list or user-context cache is accepted.</description>
+        <out-parameters>
+            <parameter name="systemAdmin" type="Boolean"/><parameter name="ownerPartyIds" type="List"/>
+            <parameter name="organizationPartyIds" type="List"/><parameter name="activeOrganizationPartyId"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            systemAdmin = !!ec.user.userId && ec.user.isInGroup('ADMIN')
+            const org = ec.service.sync().name('mantle.party.PartyServices.get#PartyOrganizationInfo').disableAuthz().call() || {}
+            organizationPartyIds = Array.from(org.userOrgIds || [])
+            activeOrganizationPartyId = org.activeOrgId || null
+            ownerPartyIds = ['_NA_'].concat(activeOrganizationPartyId ? [activeOrganizationPartyId] : organizationPartyIds)
+        ]]></script></actions>
+    </service>
+
     <service verb="find" noun="ProductByIdValue">
         <in-parameters>
             <parameter name="idValue" required="true"/>
