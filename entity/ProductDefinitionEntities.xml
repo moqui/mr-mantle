@@ -34,20 +34,22 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="productClassEnumId" type="id"/>
         <field name="assetTypeEnumId" type="id"/>
         <field name="assetClassEnumId" type="id"/>
-        <field name="statusId" type="id"/>
+        <field name="statusId" enable-audit-log="true" type="id"/>
         <field name="ownerPartyId" type="id" enable-audit-log="update" default="'_NA_'">
             <description>Brand or other organization that owns the product design, IP, etc.
                 There may be multiple suppliers, manufacturers, etc for a product but only one that 'owns' it.</description></field>
 
-        <field name="productName" type="text-medium"/>
+        <field name="productName" enable-audit-log="true" type="text-medium"/>
         <field name="description" type="text-long"/>
         <field name="comments" type="text-long"/>
 
         <field name="salesIntroductionDate" type="date-time"/>
-        <field name="salesDiscontinuationDate" type="date-time"/>
+        <field name="salesDiscontinuationDate" enable-audit-log="true" type="date-time"/>
         <field name="salesDiscWhenNotAvail" type="text-indicator"/>
         <field name="supportDiscontinuationDate" type="date-time"/>
 
+        <field name="salesAllowed" type="text-indicator"><description>Null permits legacy sales; N prevents new sales demand.</description></field>
+        <field name="purchaseAllowed" type="text-indicator"><description>Null permits legacy purchasing; N prevents new purchase demand.</description></field>
         <field name="requireInventory" type="text-indicator"/>
         <field name="chargeShipping" type="text-indicator"><description>Set to N to not charge shipping (ie defaults to Y)</description></field>
         <field name="signatureRequiredEnumId" type="id"/>
@@ -87,6 +89,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" title="Amount" related="moqui.basic.Uom" short-alias="amountUom">
             <key-map field-name="amountUomId"/></relationship>
 
+        <relationship type="many" related="mantle.product.ProductUomDimension" short-alias="uomDimensions"><key-map field-name="productId"/></relationship>
         <!-- explicit many relationship, used in MantleProduct DataDocument -->
         <relationship type="many" related="mantle.product.ProductAssoc" short-alias="assocs">
             <key-map field-name="productId"/></relationship>
@@ -151,6 +154,15 @@ along with this software (see the LICENSE.md file). If not, see
 
             <!-- Product Status -->
             <moqui.basic.StatusType description="Product" statusTypeId="Product"/>
+            <moqui.basic.StatusItem statusId="PrdDraft" statusTypeId="Product" description="Draft" sequenceNum="1"/>
+            <moqui.basic.StatusItem statusId="PrdActive" statusTypeId="Product" description="Active" sequenceNum="2"/>
+            <moqui.basic.StatusItem statusId="PrdDiscontinued" statusTypeId="Product" description="Discontinued" sequenceNum="3"/>
+            <moqui.basic.StatusItem statusId="PrdObsolete" statusTypeId="Product" description="Obsolete" sequenceNum="4"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="PrdDraft" toStatusId="PrdActive" transitionName="Activate"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="PrdActive" toStatusId="PrdDiscontinued" transitionName="Discontinue"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="PrdDiscontinued" toStatusId="PrdActive" transitionName="Reactivate"/>
+            <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="PrdDiscontinued" toStatusId="PrdObsolete" transitionName="Obsolete"/>
+
 
             <!-- Product Class - used to classify products with similar Content types, Dimension types, Feature types, and Feature Groups -->
             <moqui.basic.EnumerationType description="Product Class" enumTypeId="ProductClass"/>

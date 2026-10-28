@@ -14,6 +14,26 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
+    <service verb="check" noun="ProductUsable" allow-remote="false" authenticate="anonymous-view">
+        <in-parameters><parameter name="productId" required="true"/><parameter name="usage" required="true"/><parameter name="quantity" type="BigDecimal" default="1"/><parameter name="facilityId"/><parameter name="productStoreId"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/></in-parameters>
+        <out-parameters><parameter name="usable" type="Boolean"/><parameter name="reason"/><parameter name="statusId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('usable', context))</script></actions>
+    </service>
+    <service verb="check" noun="OrderProductUsable" allow-remote="false" authenticate="anonymous-view">
+        <in-parameters><parameter name="productId" required="true"/><parameter name="orderId"/><parameter name="orderPartSeqId"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/><parameter name="quantity" type="BigDecimal" default="1"/></in-parameters>
+        <out-parameters><parameter name="usable" type="Boolean"/><parameter name="statusId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('orderUsable', context))</script></actions>
+    </service>
+    <service verb="store" noun="ProductIdentifier" allow-remote="false">
+        <in-parameters><parameter name="productId" required="true"/><parameter name="productIdTypeEnumId" required="true"/><parameter name="idValue" required="true"/><parameter name="productOtherIdentId"/><parameter name="other" type="Boolean" default="false"/><parameter name="productStoreId"/><parameter name="marketSegmentId"/></in-parameters>
+        <out-parameters><parameter name="productOtherIdentId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('identifier', context))</script></actions>
+    </service>
+    <service verb="store" noun="KitComponent" allow-remote="false">
+        <in-parameters><parameter name="productId" required="true"/><parameter name="toProductId" required="true"/><parameter name="fromDate" type="Timestamp" default="ec.user.nowTimestamp"/><parameter name="thruDate" type="Timestamp"/><parameter name="quantity" type="BigDecimal" required="true"/><parameter name="sequenceNum" type="Long"/></in-parameters>
+        <out-parameters><parameter name="fromDate" type="Timestamp"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('kit', context))</script></actions>
+    </service>
     <service verb="get" noun="CatalogOwnerScope" allow-remote="false">
         <description>Trusted catalog owner scope from the current user's organization memberships. Shared masters use _NA_.
             No request-supplied organization list or user-context cache is accepted.</description>
@@ -983,6 +1003,18 @@ along with this software (see the LICENSE.md file). If not, see
                 </if>
             </iterate>
 
+            <!-- Public product documents never index supplier-only or private counterparty codes. BOSS searches
+                 authorized supplier codes separately, under its supplier-price grant. -->
+            <entity-find entity-name="mantle.product.ProductParty" list="catalogIndexParties">
+                <date-filter/><econdition field-name="productId"/>
+                <econdition field-name="roleTypeId" operator="in" from="['Customer','Manufacturer','Distributor']"/>
+            </entity-find>
+            <script><![CDATA[
+                document.parties = Array.from(catalogIndexParties).filter(row => {
+                    const party = ec.entity.find('mantle.party.Party').condition({partyId:row.partyId}).disableAuthz().one()
+                    return party && !party.privateOwnerUserId && (party.ownerPartyId === '_NA_' || party.ownerPartyId === document.ownerPartyId || party.partyId === document.ownerPartyId)
+                }).map(row => ({partyId:row.partyId, otherPartyItemId:row.otherPartyItemId, otherPartyItemName:row.otherPartyItemName}))
+            ]]></script>
             <set field="document.contents" from="contents"/>
         </actions>
     </service>

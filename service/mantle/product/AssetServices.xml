@@ -135,6 +135,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <econdition field-name="productAssocTypeEnumId" value="PatMfgBom"/>
                     </entity-find>
                     <set field="availableFromComponents" from="toDecimal(0)"/>
+                    <set field="firstKitComponent" from="true"/>
                     <iterate list="assocList" entry="assoc">
                         <service-call name="mantle.product.AssetServices.get#AvailableInventory" out-map="compAvailOut" out-map-add-to-existing="false"
                                 in-map="{productId:assoc.toProductId, facilityId:facilityId, productStoreId:productStoreId,
@@ -143,8 +144,9 @@ along with this software (see the LICENSE.md file). If not, see
                         <set field="compScale" from="assoc.quantity != null ? assoc.quantity.scale() : 0"/>
                         <set field="componentAvailable" from="toDecimal(compAvailOut.availableToPromiseTotal ?? 0).divide((assoc.quantity == null || toDecimal(assoc.quantity).isZero()) ? 1 : assoc.quantity, compScale, 'FLOOR')"/>
                         <!-- <log level="warn" message="comp prod ${assoc.toProductId} ATP ${compAvailOut.availableToPromiseTotal} comp qty ${assoc.quantity} (scale ${compScale}) calc avail ${componentAvailable}"/> -->
-                        <if condition="availableFromComponents.isZero() || availableFromComponents.compare(componentAvailable) &gt; 0">
+                        <if condition="firstKitComponent || availableFromComponents.compare(componentAvailable) &gt; 0">
                             <set field="availableFromComponents" from="componentAvailable"/></if>
+                        <set field="firstKitComponent" from="false"/>
                     </iterate>
                     <!-- <log level="warn" message="available pre add availableToPromiseTotal ${availableToPromiseTotal} availableFromComponents ${availableFromComponents}"/> -->
                     <set field="availableToPromiseTotal" from="toDecimal(availableToPromiseTotal).add(availableFromComponents)"/>

@@ -156,6 +156,10 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldSeqId="07" fieldPath="supportDiscontinuationDate"/>
         <fields fieldSeqId="08" fieldPath="ownerPartyId"/>
 
+        <fields fieldSeqId="09" fieldPath="statusId"/>
+        <fields fieldSeqId="091" fieldPath="salesAllowed"/><fields fieldSeqId="092" fieldPath="purchaseAllowed"/>
+        <fields fieldSeqId="093" fieldPath="parties:otherPartyItemId"/><fields fieldSeqId="094" fieldPath="parties:partyId"/>
+        <fields fieldSeqId="095" fieldPath="parties:otherPartyItemName"/>
         <fields fieldSeqId="10" fieldPath="productTypeEnumId"/>
         <fields fieldSeqId="11" fieldPath="type:description" fieldNameAlias="type" searchRole="category" sortable="Y"/>
         <fields fieldSeqId="12" fieldPath="productClassEnumId"/>
@@ -184,11 +188,11 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldSeqId="43" fieldPath="features:applTypeEnumId"/>
         <fields fieldSeqId="44" fieldPath="features:feature:description" fieldNameAlias="feature"/>
     
-        <fields fieldSeqId="50" fieldPath="dimensions:dimensionTypeId"/>
-        <fields fieldSeqId="51" fieldPath="dimensions:type:description" fieldNameAlias="dimensionTypeDescription"/>
-        <fields fieldSeqId="52" fieldPath="dimensions:value" fieldNameAlias="dimensionValue"/>
-        <fields fieldSeqId="53" fieldPath="dimensions:valueUomId" fieldNameAlias="dimensionUomId"/>
-        <fields fieldSeqId="54" fieldPath="dimensions:valueUom:description" fieldNameAlias="dimensionUomDescription"/>
+        <fields fieldSeqId="50" fieldPath="uomDimensions:uomDimensionTypeId"/>
+        <fields fieldSeqId="51" fieldPath="uomDimensions:type:description" fieldNameAlias="dimensionTypeDescription"/>
+        <fields fieldSeqId="52" fieldPath="uomDimensions:value" fieldNameAlias="dimensionValue"/>
+        <fields fieldSeqId="53" fieldPath="uomDimensions:uomId" fieldNameAlias="dimensionUomId"/>
+        <fields fieldSeqId="54" fieldPath="uomDimensions:uom:description" fieldNameAlias="dimensionUomDescription"/>
     
         <fields fieldSeqId="60" fieldPath="identifications:idValue"/>
         <fields fieldSeqId="61" fieldPath="identifications:productIdTypeEnumId"/>

@@ -269,6 +269,11 @@ General Order Placement and eCommerce Usage
                 <set field="isProductItem" from="productItemTypes.includes(itemTypeEnumId)"/>
             </if>
 
+            <if condition="productId &amp;&amp; isProductItem">
+                <service-call name="mantle.product.ProductServices.check#OrderProductUsable" in-map="{productId:productId, orderId:orderId, orderPartSeqId:orderPartSeqId, quantity:quantity}"/>
+                <if condition="ec.message.hasError()"><return/></if>
+            </if>
+
             <!-- if requireInventory check available inventory (for store/facility, product) -->
             <if condition="isProductItem &amp;&amp; quantity != null &amp;&amp; !toDecimal(quantity).isZero()">
                 <service-call name="mantle.order.OrderServices.check#AvailableInventory"
@@ -679,6 +684,8 @@ General Order Placement and eCommerce Usage
                 </if>
             </if>
 
+            <service-call name="mantle.product.ProductServices.check#OrderProductUsable" in-map="{productId:productId,orderId:orderId,orderPartSeqId:orderPartSeqId,quantity:quantity}"/>
+            <if condition="ec.message.hasError()"><return/></if>
             <!-- calculate the price based on quantity, etc, -->
             <if condition="unitAmount == null"><then>
                 <!-- use PriceServices.get#OrderProductPrice instead of calling to get price directly, for pricePurposeEnumId override for recurring orders and other future behavior:
