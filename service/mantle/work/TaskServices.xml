@@ -14,6 +14,46 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
+    <service verb="get" noun="MyTasks">
+        <description>The current user's open tasks (assigned to their party, not complete, closed or cancelled), by priority:
+            what a developer's tools show as "my tasks", such as Dev AIDE's task panel on another instance.</description>
+        <in-parameters>
+            <parameter name="rootWorkEffortId"><description>Only this project's tasks</description></parameter>
+            <parameter name="pageSize" type="Integer" default="200"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="taskList" type="List"><parameter name="task" type="Map">
+                <parameter name="workEffortId"/><parameter name="workEffortName"/><parameter name="statusId"/>
+                <parameter name="priority" type="Long"/><parameter name="rootWorkEffortId"/><parameter name="projectName"/>
+            </parameter></parameter>
+        </out-parameters>
+        <actions>
+            <set field="taskList" from="[]"/>
+            <set field="partyId" from="ec.user.userAccount &amp;&amp; ec.user.userAccount.partyId"/>
+            <if condition="!partyId"><return/></if>
+            <entity-find entity-name="mantle.work.effort.WorkEffortAndParty" list="assignedList" limit="pageSize">
+                <econdition field-name="partyId"/>
+                <econdition field-name="workEffortTypeEnumId" value="WetTask"/>
+                <econdition field-name="statusId" operator="not-in" value="WeComplete,WeClosed,WeCancelled"/>
+                <econdition field-name="rootWorkEffortId" ignore-if-empty="true"/>
+                <date-filter/>
+                <order-by field-name="priority"/><order-by field-name="workEffortId"/>
+            </entity-find>
+            <set field="projectNames" from="{}"/>
+            <iterate list="assignedList" entry="assigned">
+                <if condition="taskList.some((task) => task.workEffortId == assigned.workEffortId)"><continue/></if>
+                <if condition="assigned.rootWorkEffortId &amp;&amp; projectNames[assigned.rootWorkEffortId] == null">
+                    <entity-find-one entity-name="mantle.work.effort.WorkEffort" value-field="project">
+                        <field-map field-name="workEffortId" from="assigned.rootWorkEffortId"/></entity-find-one>
+                    <script>projectNames[assigned.rootWorkEffortId] = (project &amp;&amp; project.workEffortName) || ''</script>
+                </if>
+                <script>taskList.push({workEffortId: assigned.workEffortId, workEffortName: assigned.workEffortName,
+                    statusId: assigned.statusId, priority: assigned.priority, rootWorkEffortId: assigned.rootWorkEffortId,
+                    projectName: assigned.rootWorkEffortId ? projectNames[assigned.rootWorkEffortId] : null})</script>
+            </iterate>
+        </actions>
+    </service>
+
     <service verb="get" noun="FullCalendarData">
         <description>Get data to display WorkEffort tasks by due date (estimatedCompletionDate) with the FullCalender JS library (see http://fullcalendar.io/)</description>
         <in-parameters>
