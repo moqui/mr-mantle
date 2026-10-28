@@ -209,6 +209,12 @@
         )
     }
 
+    /* Job types other modules add (registerJob): {next(run, config), item(run, config, itemId), finish(run, config,
+       failed)}. An item may return a patch for the run's checkpoint, such as the byte offset an import reached. */
+    const handlers = {}
+    const registerJob = (jobType, handler) => {
+        handlers[jobType] = handler
+    }
     /* ---- Operation preview and runs ---- */
     function startRun(siteId, jobType, config) {
         const runId = id()
@@ -310,6 +316,8 @@
     /* The next item of a run after its checkpoint, or null when the run has no more; may move a retention run to its
        next class. */
     function nextItem(run, config) {
+        if (handlers[run.jobType])
+            return handlers[run.jobType].next(run, config)
         const after = (q, key) =>
             Array.from(
                 (config.after ? q.condition(key, 'greater', config.after) : q)
@@ -364,6 +372,8 @@
             const run = one(F + 'ForumJobRun', { runId })
             if (!run) missing()
             const config = JSON.parse(run.checkpoint || '{}')
+            if (handlers[run.jobType])
+                return handlers[run.jobType].item(run, config, itemId) || null
             switch (run.jobType) {
                 case 'op-rebuild-counters': {
                     const t = one(
@@ -924,6 +934,8 @@
     /* A run with a failed item stays failed, with no archive, until a retry finishes every item. */
     function finishRun(run, config) {
         const failed = Number(run.failedCount || 0) > 0
+        if (handlers[run.jobType]?.finish)
+            handlers[run.jobType].finish(run, config, failed)
         if (!failed && run.jobType === 'op-export-site')
             exportSettings(run.siteId, exportDir(config.exportId))
         if (!failed && run.jobType === 'op-export-site')
@@ -981,15 +993,16 @@
                 }
                 break
             }
-            let error = null
+            let error = null,
+                patch = null
             try {
-                ec.service
+                patch = ec.service
                     .sync()
                     .throwOnError(true)
                     .name('mantle.forum.OperationServices.run#JobItem')
                     .parameters({ runId, itemId: next })
                     .requireNewTransaction(true)
-                    .call()
+                    .call()?.patch
             } catch (e) {
                 error = firstLine(e)
                 ec.message.clearErrors()
@@ -1017,10 +1030,24 @@
                     itemId: next,
                     ...itemFields,
                 })
-            config.after =
-                run.jobType === 'op-retention'
-                    ? next.slice(next.indexOf(':') + 1)
-                    : next
+            // A handler's job keeps its own checkpoint: the item's patch on success, its onFailure patch otherwise.
+            if (handlers[run.jobType])
+                Object.assign(
+                    config,
+                    (error
+                        ? handlers[run.jobType].onFailure?.(
+                              config,
+                              next,
+                              error,
+                              run,
+                          )
+                        : patch) || {},
+                )
+            else
+                config.after =
+                    run.jobType === 'op-retention'
+                        ? next.slice(next.indexOf(':') + 1)
+                        : next
             update(run, {
                 checkpoint: JSON.stringify(config),
                 successCount: Number(run.successCount || 0) + (error ? 0 : 1),
@@ -1059,7 +1086,8 @@
                         'Forum operation run ' +
                             run.runId +
                             ' failed: ' +
-                            firstLine(error),
+                            firstLine(error) +
+                            (error?.stack ? '\n' + error.stack : ''),
                     )
                 }
             }
@@ -1453,5 +1481,13 @@
             if (!was) ec.artifactExecution.enableAuthz()
         }
     }
-    return { dispatchJobs, advanceRun, runItem, cleanupExports }
+    return {
+        dispatchJobs,
+        advanceRun,
+        runItem,
+        cleanupExports,
+        registerJob,
+        startRun,
+        storageRoot,
+    }
 }

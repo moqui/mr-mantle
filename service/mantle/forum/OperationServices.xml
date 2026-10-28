@@ -224,8 +224,11 @@
       <parameter name="runId" required="true"/>
       <parameter name="itemId" required="true"/>
     </in-parameters>
+    <out-parameters>
+      <parameter name="patch" type="Map"/>
+    </out-parameters>
     <actions>
-      <script>ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').runJobItem(runId, itemId)</script>
+      <script>patch=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').runJobItem(runId, itemId)</script>
     </actions>
   </service>
 </services>

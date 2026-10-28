@@ -624,6 +624,76 @@
     <field name="updatedAt" type="date-time"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
   </entity>
+  <entity entity-name="ForumImportRun" package="mantle.forum">
+    <description>A Discourse import into a disabled staging site: the operator-supplied archive and its checksum, the stage
+      reached (registered, staged, imported, reconciled, active or cancelled), the preflight and reconciliation reports and
+      the operator and site-owner approvals of one reconciliation revision.</description>
+    <field name="importId" type="id" is-pk="true"/>
+    <field name="siteId" type="id"/>
+    <field name="sourceName" type="text-medium"/>
+    <field name="archiveName" type="text-medium"/>
+    <field name="checksum" type="text-medium"/>
+    <field name="discourseVersion" type="text-short"/>
+    <field name="schemaVersion" type="text-short"/>
+    <field name="stage" type="id"/>
+    <field name="stagingLocation" type="text-medium"/>
+    <field name="stageRunId" type="id"/>
+    <field name="importRunId" type="id"/>
+    <field name="preflightJson" type="text-very-long"/>
+    <field name="reconciliationJson" type="text-very-long"/>
+    <field name="reconciliationRevision" type="number-integer"/>
+    <field name="reportExportId" type="id"/>
+    <field name="operatorPartyId" type="id"/>
+    <field name="operatorRevision" type="number-integer"/>
+    <field name="ownerPartyId" type="id"/>
+    <field name="ownerRevision" type="number-integer"/>
+    <field name="backupReference" type="text-medium"/>
+    <field name="createdAt" type="date-time"/>
+    <field name="revision" type="number-integer"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+  </entity>
+  <entity entity-name="ForumImportMap" package="mantle.forum">
+    <description>One staged source row and where it went: keyed by site, source table and source id, so a replay of the same
+      snapshot finds its earlier mapping instead of duplicating, and a changed row is flagged for reconciliation.</description>
+    <field name="siteId" type="id" is-pk="true"/>
+    <field name="sourceType" type="id" is-pk="true"/>
+    <field name="sourceId" type="id" is-pk="true"/>
+    <field name="importId" type="id"/>
+    <field name="payload" type="text-very-long"/>
+    <field name="checksum" type="text-short"/>
+    <field name="changedPayload" type="text-very-long"/>
+    <field name="targetId" type="id"/>
+    <field name="state" type="id"/>
+    <field name="errorText" type="text-long"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <index name="FORUM_IMPORT_MAP_STATE">
+      <index-field name="siteId"/>
+      <index-field name="sourceType"/>
+      <index-field name="state"/>
+    </index>
+  </entity>
+  <entity entity-name="ForumImportMapping" package="mantle.forum">
+    <description>An operator decision for one source identity, group, staff member or feature: map, create, inactive, grant,
+      snapshot, deny, a site role, preserve or defer.</description>
+    <field name="importId" type="id" is-pk="true"/>
+    <field name="mappingType" type="id" is-pk="true"/>
+    <field name="sourceId" type="id" is-pk="true"/>
+    <field name="decision" type="id"/>
+    <field name="targetId" type="id"/>
+    <field name="reason" type="text-medium"/>
+    <field name="decidedByPartyId" type="id"/>
+    <field name="decidedAt" type="date-time"/>
+    <relationship type="one" related="mantle.forum.ForumImportRun"/>
+  </entity>
+  <entity entity-name="ForumLegacyUrl" package="mantle.forum">
+    <description>An old URL path of an imported community and what it now names; resolving it checks current access.</description>
+    <field name="siteId" type="id" is-pk="true"/>
+    <field name="sourcePath" type="text-medium" is-pk="true"/>
+    <field name="targetType" type="id"/>
+    <field name="targetId" type="id"/>
+    <field name="importId" type="id"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+  </entity>
   <entity entity-name="ForumPermalink" package="mantle.forum">
     <field name="oldRootCommEventId" type="id" is-pk="true"/>
     <field name="siteId" type="id"/>

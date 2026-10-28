@@ -228,6 +228,12 @@ const integration = ec.resource.script(
 const operations = ec.resource.script(
     'component://mr-mantle/service/mantle/forum/ForumOperations.js',
 )(core, methods, moderation)
+ec.resource.script('component://mr-mantle/service/mantle/forum/ForumImport.js')(
+    core,
+    methods,
+    operations,
+    moderation,
+)
 methods.findSites = (p) => {
     if (p.siteId) site(p.siteId, true)
     const pg = page(p, 'sites:' + (p.siteId || 'operator')),
@@ -5337,6 +5343,7 @@ function execute(operation, p) {
         'includeOwn',
         'dryRun',
         'mine',
+        'sourceFrozen',
     ])
     const listFields = new Set([
         'attachmentIds',
@@ -5374,6 +5381,31 @@ function execute(operation, p) {
         } else if (key === 'poll') {
             if (typeof value !== 'object' || Array.isArray(value))
                 invalid('Invalid poll')
+        } else if (key === 'mappings') {
+            // Import decisions: a bounded list of plain objects of short strings.
+            if (
+                !Array.isArray(value) ||
+                value.length > 1000 ||
+                value.some(
+                    (m) =>
+                        !m ||
+                        typeof m !== 'object' ||
+                        Array.isArray(m) ||
+                        Object.entries(m).some(
+                            ([k, v]) =>
+                                ![
+                                    'mappingType',
+                                    'sourceId',
+                                    'decision',
+                                    'targetId',
+                                    'reason',
+                                ].includes(k) ||
+                                (v != null &&
+                                    (typeof v !== 'string' || v.length > 200)),
+                        ),
+                )
+            )
+                invalid('Invalid import mappings')
         } else if (key === 'config') {
             if (typeof value !== 'object' || Array.isArray(value))
                 invalid('Invalid policy configuration')

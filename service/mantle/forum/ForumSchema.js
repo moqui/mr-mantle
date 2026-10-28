@@ -873,4 +873,54 @@
         service: 'mantle.forum.OperationServices.export#Report',
         fields: ['siteId', 'report', 'contactListId', 'fromDate', 'thruDate'],
     },
+    registerImport: {
+        service: 'mantle.forum.ImportServices.register#Import',
+        fields: ['siteId', 'archiveName', 'checksum', 'sourceName'],
+    },
+    stageImport: {
+        service: 'mantle.forum.ImportServices.stage#Import',
+        fields: ['siteId', 'importId'],
+    },
+    storeImportMappings: {
+        service: 'mantle.forum.ImportServices.store#ImportMappings',
+        fields: ['siteId', 'importId', 'mappings', 'reason'],
+    },
+    findImports: {
+        service: 'mantle.forum.ImportServices.find#Imports',
+        fields: ['siteId'],
+    },
+    getImport: {
+        service: 'mantle.forum.ImportServices.get#Import',
+        fields: ['siteId', 'importId'],
+    },
+    runImport: {
+        service: 'mantle.forum.ImportServices.run#Import',
+        fields: ['siteId', 'importId', 'reason'],
+    },
+    reconcileImport: {
+        service: 'mantle.forum.ImportServices.reconcile#Import',
+        fields: ['siteId', 'importId'],
+    },
+    approveImport: {
+        service: 'mantle.forum.ImportServices.approve#Import',
+        fields: ['siteId', 'importId', 'role', 'expectedRevision', 'reason'],
+    },
+    activateImport: {
+        service: 'mantle.forum.ImportServices.activate#Import',
+        fields: [
+            'siteId',
+            'importId',
+            'sourceFrozen',
+            'backupReference',
+            'confirm',
+        ],
+    },
+    cancelImport: {
+        service: 'mantle.forum.ImportServices.cancel#Import',
+        fields: ['siteId', 'importId', 'reason'],
+    },
+    resolvePermalink: {
+        service: 'mantle.forum.ImportServices.resolve#Permalink',
+        fields: ['siteId', 'path'],
+    },
 })
