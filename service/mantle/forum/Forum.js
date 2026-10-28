@@ -1849,6 +1849,34 @@ methods.publishPost = (p) => {
             })
         }
         queueClassification(p.siteId, postId)
+        // Writing in a topic tracks it, unless the member already chose a level for that topic.
+        const trackKey = {
+            siteId: p.siteId,
+            partyId: me(),
+            scopeType: 'topic',
+            scopeId: root,
+        }
+        const inherited = [
+            ['category', a.category.contactListId],
+            ['site', '_SITE_'],
+        ].map(
+            ([scopeType, scopeId]) =>
+                scopeId &&
+                one(F + 'ForumPreference', {
+                    ...trackKey,
+                    scopeType,
+                    scopeId,
+                })?.watchLevel,
+        )
+        if (
+            !one(F + 'ForumPreference', trackKey) &&
+            !inherited.includes('Watching')
+        )
+            create(F + 'ForumPreference', {
+                ...trackKey,
+                watchLevel: 'Tracking',
+                revision: 1,
+            })
         if (savedDraft) savedDraft.delete()
         return {
             postId,
@@ -2947,7 +2975,10 @@ methods.getPreferences = (p) => {
         delivery = one(F + 'ForumDeliveryPreference', key)
     return {
         preferences: pick(preference, 'watchLevel revision'),
-        delivery: pick(delivery, 'emailMode includeOwn suppressed revision'),
+        delivery: pick(
+            delivery,
+            'emailMode digestPeriod includeOwn suppressed revision',
+        ),
         revision: Math.max(
             Number(preference?.revision || 0),
             Number(delivery?.revision || 0),
@@ -2996,14 +3027,38 @@ methods.setPreferences = (p) => {
             ? update(oldPreference, values)
             : create(F + 'ForumPreference', values)
     }
-    if (p.emailMode != null) {
-        if (!['None', 'Notifications'].includes(p.emailMode))
-            invalid('Stage 1 email mode must be None or Notifications')
+    if (p.emailMode != null || p.digestPeriod != null || p.includeOwn != null) {
+        const emailMode =
+            p.emailMode ?? oldDelivery?.emailMode ?? 'Notifications'
+        if (
+            !['None', 'Notifications', 'Digest', 'EveryPost'].includes(
+                emailMode,
+            )
+        )
+            invalid(
+                'Email mode must be None, Notifications, Digest or EveryPost',
+            )
+        if (emailMode === 'EveryPost' && key.scopeType === 'topic')
+            invalid('Every post is a category or site mailing-list mode')
+        if (
+            p.digestPeriod != null &&
+            !['daily', 'weekly'].includes(p.digestPeriod)
+        )
+            invalid('Digest period must be daily or weekly')
+        // Choosing a mode again is the explicit change that lifts an earlier opt-out.
         const values = {
             ...key,
-            emailMode: p.emailMode,
-            includeOwn: 'N',
-            suppressed: 'N',
+            emailMode,
+            digestPeriod:
+                p.digestPeriod ?? oldDelivery?.digestPeriod ?? 'daily',
+            includeOwn:
+                p.includeOwn != null
+                    ? p.includeOwn === true
+                        ? 'Y'
+                        : 'N'
+                    : (oldDelivery?.includeOwn ?? 'N'),
+            suppressed:
+                p.emailMode != null ? 'N' : (oldDelivery?.suppressed ?? 'N'),
             revision: current + 1,
         }
         oldDelivery
@@ -3491,15 +3546,28 @@ methods.inspectOptOut = (p) => {
     } else if (v.scopeType === 'topic') scope = 'one discussion'
     return {
         valid: true,
+        scopeType: v.scopeType,
         optOut: {
             'Stops email for': scope,
+            'Or choose': 'all forum email from this site',
             Keeps: 'Your membership, your access and in-app notifications',
         },
     }
 }
 methods.applyOptOut = (p) => {
-    const v = optOut(p),
-        key = pick(v, 'siteId partyId scopeType scopeId'),
+    const v = optOut(p)
+    if (p.scopeType != null && !['site', v.scopeType].includes(p.scopeType))
+        invalid('Choose this scope or the whole site')
+    // The recipient may widen the stop to the whole site; the token never reaches another person's preferences.
+    const key =
+            p.scopeType === 'site'
+                ? {
+                      siteId: v.siteId,
+                      partyId: v.partyId,
+                      scopeType: 'site',
+                      scopeId: '_SITE_',
+                  }
+                : pick(v, 'siteId partyId scopeType scopeId'),
         old = one(F + 'ForumDeliveryPreference', key, true),
         values = {
             ...key,
@@ -3721,6 +3789,7 @@ methods.findNotifications = (p) => {
             const { event } = topic(st.rootCommEventId, p.siteId)
             visible.push({
                 deliveryId: item.deliveryId,
+                reason: box.eventType === 'reminder' ? 'reminder' : item.reason,
                 postId: st.communicationEventId,
                 rootCommEventId: st.rootCommEventId,
                 title: event.subject,
@@ -7101,6 +7170,7 @@ function execute(operation, p) {
         'all',
         'active',
         'locked',
+        'includeOwn',
     ])
     const listFields = new Set([
         'attachmentIds',
@@ -7201,4 +7271,6 @@ function execute(operation, p) {
     memberMutes,
     memberBlocks,
     policy,
+    mentionHandles,
+    plainText,
 })

@@ -10,4 +10,5 @@
   <moqui.service.job.ServiceJob jobName="pass_recompute_trust" description="Promote members who meet their site's trust thresholds" serviceName="mantle.forum.ModerationWorkerServices.recompute#Trust" cronExpression="0 */10 * * * ?" paused="N" errorHistoryOnly="Y"/>
   <moqui.service.job.ServiceJob jobName="pass_fire_topic_timers" description="Apply due topic timers after rechecking scope" serviceName="mantle.forum.ModerationWorkerServices.fire#TopicTimers" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
   <moqui.service.job.ServiceJob jobName="pass_classify_posts" description="Send queued posts to the configured classifier for review" serviceName="mantle.forum.ModerationWorkerServices.classify#Posts" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+  <moqui.service.job.ServiceJob jobName="pass_send_digests" description="Prepare due forum digests from currently accessible topics" serviceName="mantle.forum.DeliveryWorkerServices.send#Digests" cronExpression="0 0 * * * ?" paused="N" errorHistoryOnly="Y"/>
 </entity-facade-xml>

@@ -138,6 +138,7 @@
     <field name="scopeType" type="id" is-pk="true"/>
     <field name="scopeId" type="id" is-pk="true"/>
     <field name="emailMode" type="id"/>
+    <field name="digestPeriod" type="id"/>
     <field name="includeOwn" type="text-indicator"/>
     <field name="suppressed" type="text-indicator"/>
     <field name="optOutAt" type="date-time"/>
@@ -343,6 +344,7 @@
     <field name="attempts" type="number-integer"/>
     <field name="dueAt" type="date-time"/>
     <field name="providerId" type="text-medium"/>
+    <field name="reason" type="id"/>
     <field name="lastError" type="text-long"/>
     <relationship type="one" related="mantle.public.PublicSite"/>
     <relationship type="one" related="mantle.party.Party"/>
@@ -418,6 +420,14 @@
     <field name="errorText" type="text-long"/>
     <field name="attempts" type="number-integer"/>
     <relationship type="one" related="mantle.forum.ForumJobRun"/>
+  </entity>
+  <entity entity-name="ForumDigestState" package="mantle.forum">
+    <field name="siteId" type="id" is-pk="true"/>
+    <field name="partyId" type="id" is-pk="true"/>
+    <field name="lastSentAt" type="date-time"/>
+    <field name="lastOutboxId" type="id"/>
+    <relationship type="one" related="mantle.public.PublicSite"/>
+    <relationship type="one" related="mantle.party.Party"/>
   </entity>
   <entity entity-name="ForumParticipant" package="mantle.forum">
     <field name="rootCommEventId" type="id" is-pk="true"/>

@@ -53,4 +53,25 @@
       <script>result = ec.resource.script('component://mr-mantle/service/mantle/forum/DeliveryWorker.js').execute('reconcile',{deliveryId})</script>
     </actions>
   </service>
+  <service verb="send" noun="Digests" authenticate="false" allow-remote="false">
+    <description>Prepare each member's due forum digest as a pending delivery; dispatch#Outbox sends it.</description>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script('component://mr-mantle/service/mantle/forum/DeliveryWorker.js').execute('digests',{})</script>
+    </actions>
+  </service>
+  <service verb="prepare" noun="Digest" authenticate="false" allow-remote="false">
+    <in-parameters>
+      <parameter name="siteId" required="true"/>
+      <parameter name="partyId" required="true"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result = ec.resource.script('component://mr-mantle/service/mantle/forum/DeliveryWorker.js').execute('prepareDigest',{siteId:siteId,partyId:partyId})</script>
+    </actions>
+  </service>
 </services>

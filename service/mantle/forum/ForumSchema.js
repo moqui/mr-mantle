@@ -343,6 +343,8 @@
             'watchLevel',
             'emailMode',
             'expectedRevision',
+            'digestPeriod',
+            'includeOwn',
         ],
     },
     findDeliveries: {
@@ -365,7 +367,7 @@
     },
     applyOptOut: {
         service: 'mantle.forum.DeliveryServices.apply#OptOut',
-        fields: ['siteId', 'token'],
+        fields: ['siteId', 'token', 'scopeType'],
     },
     getHealth: {
         service: 'mantle.forum.OperationServices.get#Health',
