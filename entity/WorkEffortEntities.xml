@@ -192,6 +192,16 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="isTemplate" type="text-indicator"><description>Y for a project kept as a template to copy
             (ProjectServices.clone#Project), left out of the lists of projects and work</description></field>
 
+        <field name="methodDraft" type="text-indicator" enable-audit-log="true"/>
+        <field name="methodRemoved" type="text-indicator" enable-audit-log="true"/>
+        <field name="methodFromDate" type="date-time" enable-audit-log="true"/>
+        <field name="methodBatchQuantity" type="number-decimal" enable-audit-log="true"/>
+        <field name="methodQuantityUomId" type="id" enable-audit-log="true"/>
+        <field name="methodMachineSetupTime" type="number-decimal" enable-audit-log="true"/>
+        <field name="methodMachineRunTime" type="number-decimal" enable-audit-log="true"/>
+        <field name="methodWorkCenterId" type="id" enable-audit-log="true"/>
+        <field name="methodPredecessorIds" type="text-long" enable-audit-log="true"/>
+        <field name="methodChangeReason" type="text-medium" enable-audit-log="true"/>
         <field name="workEffortName" type="text-medium"/>
         <field name="description" type="text-long"/>
         <field name="location" type="text-medium"/>
@@ -550,6 +560,16 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sequenceNum" type="number-integer"/>
         <field name="lagDays" type="number-decimal"><description>For WeatDependsOn (workEffortId depends on toWorkEffortId,
             finish to start): the working days between the end of toWorkEffortId and the start of workEffortId</description></field>
+        <field name="setupTime" type="number-decimal" enable-audit-log="true"/>
+        <field name="runTime" type="number-decimal" enable-audit-log="true"/>
+        <field name="machineSetupTime" type="number-decimal" enable-audit-log="true"/>
+        <field name="machineRunTime" type="number-decimal" enable-audit-log="true"/>
+        <field name="batchQuantity" type="number-decimal" enable-audit-log="true"/>
+        <field name="quantityUomId" type="id" enable-audit-log="true"/>
+        <field name="timeUomId" type="id" enable-audit-log="true"/>
+        <field name="workCenterFacilityId" type="id" enable-audit-log="true"/>
+        <field name="predecessorWorkEffortIds" type="text-long" enable-audit-log="true"/>
+        <field name="methodReleaseDecisionId" type="id" enable-audit-log="true"/>
         <relationship type="one" related="mantle.work.effort.WorkEffort" short-alias="workEffort"/>
         <relationship type="one" title="To" related="mantle.work.effort.WorkEffort" short-alias="toWorkEffort">
             <key-map field-name="toWorkEffortId"/></relationship>

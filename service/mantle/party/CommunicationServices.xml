@@ -2092,6 +2092,7 @@ along with this software (see the LICENSE.md file). If not, see
             const content = (entityName, keyField, typeField, dateField) =>
                     ({entityName: entityName, keyField: keyField, typeField: typeField, dateField: dateField || 'contentDate'})
             const contentEntities = {
+                'mantle.product.bom.ProductBom': content('mantle.product.bom.ProductBomContent', 'productBomId', 'productBomContentTypeEnumId', 'fromDate'),
                 'mantle.party.agreement.Agreement': content('mantle.party.agreement.AgreementContent', 'agreementId', 'contentTypeEnumId'),
                 'mantle.product.maintenance.AssetMaintenance': content('mantle.product.maintenance.AssetMaintenanceContent',
                         'assetMaintenanceId', 'contentTypeEnumId'),
@@ -2385,6 +2386,38 @@ along with this software (see the LICENSE.md file). If not, see
                     const catalog = ec.service.sync().name('mantle.product.ProductServices.get#CatalogOwnerScope').disableAuthz().call() || {}
                     if (!catalog.systemAdmin && !Array.from(catalog.ownerPartyIds || []).includes(value.ownerPartyId || (entityName === 'mantle.product.feature.ProductFeatureGroup' ? '_NA_' : null))) return false
                 }
+                if (['mantle.product.bom.ProductBomItem','mantle.product.bom.ProductBomContent'].includes(entityName)) return !!ec.service.sync()
+                        .name('mantle.product.BomServices.get#BomAccess').parameters({productBomId:value.productBomId}).disableAuthz().call()?.recordVisible
+                if (entityName === 'mantle.work.method.MethodReleaseDecision') {
+                    if (value.methodEntityName === 'mantle.product.bom.ProductBom') return !!ec.service.sync().name('mantle.product.BomServices.get#BomAccess')
+                            .parameters({productBomId:value.methodId}).disableAuthz().call()?.recordVisible
+                    if (value.methodEntityName === WORK_EFFORT) return !!ec.service.sync().name('mantle.work.RoutingServices.get#RoutingAccess')
+                            .parameters({workEffortId:value.methodId}).disableAuthz().call()?.recordVisible
+                    return false
+                }
+                if (['mantle.work.production.WorkCenter','mantle.work.production.WorkCenterRate'].includes(entityName)) {
+                    const facility = ec.entity.find('mantle.facility.Facility').condition('facilityId',value.facilityId).disableAuthz().one()
+                    if (!facility) return false
+                    const methods = ec.resource.script('component://mr-mantle/service/mantle/product/MethodPolicy.js')
+                    const methodScope = methods.scope({organizationPartyId:facility.ownerPartyId},entityName.endsWith('WorkCenterRate')?'costRead':'read')
+                    return facility.ownerPartyId === methodScope.organizationPartyId
+                }
+                // A raw audit row carries its source's visibility, including the independent financial grant.
+                if (entityName === 'moqui.entity.EntityAuditLog') {
+                    if (depth > 5 || !value.changedEntityName || !value.pkPrimaryValue) return false
+                    const sourceKeys = Object.keys(ec.entity.makeValue(value.changedEntityName).getPrimaryKeys())
+                    if (sourceKeys.length !== 1 || !visible(value.changedEntityName,sourceKeys[0],value.pkPrimaryValue,depth+1)) return false
+                    if (value.changedEntityName === WORK_EFFORT && /cost|rate|amount/i.test(value.changedFieldName || '')) {
+                        const source = ec.entity.find(WORK_EFFORT).condition('workEffortId',value.pkPrimaryValue).disableAuthz().one()
+                        if (source && ['WepRouting','WepRoutingTask'].includes(source.purposeEnumId)) ec.resource.script('component://mr-mantle/service/mantle/product/MethodPolicy.js')
+                                .scope({organizationPartyId:source.ownerPartyId},'costRead')
+                    }
+                    return true
+                }
+                if (entityName === 'mantle.product.bom.ProductBom') return !!ec.service.sync()
+                        .name('mantle.product.BomServices.get#BomAccess').parameters({productBomId:id}).disableAuthz().call()?.recordVisible
+                if (entityName === WORK_EFFORT && ['WepRouting','WepRoutingTask'].includes(value.purposeEnumId)) return !!ec.service.sync()
+                        .name('mantle.work.RoutingServices.get#RoutingAccess').parameters({workEffortId:id}).disableAuthz().call()?.recordVisible
                 if (!authzOn) return true
                 if (entityName === COMM_EVENT) return commEventVisible(value, depth)
                 if (entityName === WIKI_PAGE) return wikiPageVisible(value)
