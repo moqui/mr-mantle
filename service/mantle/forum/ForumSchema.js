@@ -184,7 +184,14 @@
     },
     searchForum: {
         service: 'mantle.forum.ForumServices.search#Forum',
-        fields: ['siteId', 'contactListId', 'query', 'limit', 'cursor'],
+        fields: [
+            'siteId',
+            'contactListId',
+            'query',
+            'limit',
+            'cursor',
+            'scope',
+        ],
     },
     storeDraft: {
         service: 'mantle.forum.ForumServices.store#Draft',
@@ -373,6 +380,7 @@
             'file',
             'altText',
             'purpose',
+            'rootCommEventId',
         ],
     },
     removeStagedAttachment: {
@@ -627,5 +635,44 @@
     findMyReviews: {
         service: 'mantle.forum.ModerationServices.find#MyReviews',
         fields: ['siteId'],
+    },
+    createConversation: {
+        service: 'mantle.forum.ForumServices.create#Conversation',
+        fields: [
+            'siteId',
+            'participantHandles',
+            'title',
+            'body',
+            'attachmentIds',
+            'operationId',
+        ],
+    },
+    findConversations: {
+        service: 'mantle.forum.ForumServices.find#Conversations',
+        fields: ['siteId', 'view', 'limit', 'cursor'],
+    },
+    updateParticipants: {
+        service: 'mantle.forum.ForumServices.update#Participants',
+        fields: [
+            'siteId',
+            'rootCommEventId',
+            'participantHandles',
+            'targetHandles',
+            'ownerHandles',
+            'confirm',
+            'expectedRevision',
+        ],
+    },
+    setConversationState: {
+        service: 'mantle.forum.ForumServices.set#ConversationState',
+        fields: ['siteId', 'rootCommEventId', 'action'],
+    },
+    setMemberPreference: {
+        service: 'mantle.forum.ForumServices.set#MemberPreference',
+        fields: ['siteId', 'targetHandle', 'preference', 'expiresAt'],
+    },
+    escalateReview: {
+        service: 'mantle.forum.ModerationServices.escalate#Review',
+        fields: ['siteId', 'reviewId', 'reason', 'active'],
     },
 })

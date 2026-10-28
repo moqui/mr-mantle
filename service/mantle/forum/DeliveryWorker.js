@@ -48,6 +48,35 @@ function audience(box, partyId) {
         event.fromPartyId === partyId
     )
         return null
+    // A member who muted or blocked the author hears nothing of that author's posts.
+    if (policy().memberMutes(box.siteId, partyId, event.fromPartyId))
+        return null
+    const topicRow = one(F + 'ForumTopic', {
+        rootCommEventId: st.rootCommEventId,
+    })
+    if (topicRow?.kind === 'private') {
+        if (!policy().conversationAccess(topicRow, partyId).canRead) return null
+        let watch = null,
+            email = null
+        for (const [scopeType, scopeId] of [
+            ['topic', st.rootCommEventId],
+            ['site', '_SITE_'],
+        ]) {
+            const key = { siteId: box.siteId, partyId, scopeType, scopeId }
+            watch = watch || one(F + 'ForumPreference', key)?.watchLevel
+            const pref = one(F + 'ForumDeliveryPreference', key)
+            if (pref?.suppressed === 'Y') email = 'None'
+            email = email || pref?.emailMode
+        }
+        if (watch === 'Muted') return null
+        return {
+            event,
+            st,
+            private: true,
+            email: email || 'Notifications',
+            scope: { scopeType: 'topic', scopeId: st.rootCommEventId },
+        }
+    }
     const a = policy().categoryAccess(event.contactListId, partyId)
     if (
         !a ||
@@ -117,6 +146,24 @@ function candidateSources(box) {
             communicationEventId: box.communicationEventId,
         })
     if (!event || !st) return []
+    // Every current participant of a private conversation is a candidate; nobody else is.
+    if (
+        one(F + 'ForumTopic', { rootCommEventId: st.rootCommEventId })?.kind ===
+        'private'
+    )
+        return [
+            (after, limit) =>
+                Array.from(
+                    find(F + 'ForumParticipant', {
+                        rootCommEventId: st.rootCommEventId,
+                        endedAt: null,
+                    })
+                        .condition('partyId', 'greater', after || '')
+                        .orderBy('partyId')
+                        .limit(limit)
+                        .list(),
+                ).map((row) => row.partyId),
+        ]
     const parent = event.parentCommEventId
         ? one(E + 'CommunicationEvent', {
               communicationEventId: event.parentCommEventId,
@@ -136,8 +183,7 @@ function candidateSources(box) {
                 .list(),
         ).map((row) => row.partyId)
     return [
-        (after) =>
-            !after && parent?.fromPartyId ? [parent.fromPartyId] : [],
+        (after) => (!after && parent?.fromPartyId ? [parent.fromPartyId] : []),
         watchers('topic', st.rootCommEventId),
         watchers('category', event.contactListId),
         watchers('site', '_SITE_'),
@@ -314,7 +360,10 @@ function deliver(p) {
             bodyParameters: {
                 unsubscribeUrl,
                 postUrl,
-                title: allowed.event.subject,
+                // Private conversation mail is a minimal notice: no subject or text leaves the site.
+                title: allowed.private
+                    ? 'New private message'
+                    : allowed.event.subject,
                 siteId: v.siteId,
                 rootCommEventId: allowed.st.rootCommEventId,
                 postId: allowed.st.communicationEventId,

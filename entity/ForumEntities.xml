@@ -419,6 +419,36 @@
     <field name="attempts" type="number-integer"/>
     <relationship type="one" related="mantle.forum.ForumJobRun"/>
   </entity>
+  <entity entity-name="ForumParticipant" package="mantle.forum">
+    <field name="rootCommEventId" type="id" is-pk="true"/>
+    <field name="partyId" type="id" is-pk="true"/>
+    <field name="role" type="id"/>
+    <field name="addedByPartyId" type="id"/>
+    <field name="addedAt" type="date-time"/>
+    <field name="endedAt" type="date-time"/>
+    <field name="archivedAt" type="date-time"/>
+    <relationship type="one" related="mantle.forum.ForumTopic"/>
+    <relationship type="one" related="mantle.party.Party"/>
+    <index name="FORUM_PARTICIPANT_PARTY">
+      <index-field name="partyId"/>
+      <index-field name="endedAt"/>
+    </index>
+  </entity>
+  <view-entity entity-name="ForumConversationMember" package="mantle.forum">
+    <member-entity entity-alias="P" entity-name="mantle.forum.ForumParticipant"/>
+    <member-entity entity-alias="T" entity-name="mantle.forum.ForumTopic" join-from-alias="P">
+      <key-map field-name="rootCommEventId"/>
+    </member-entity>
+    <alias entity-alias="P" name="rootCommEventId"/>
+    <alias entity-alias="P" name="partyId"/>
+    <alias entity-alias="P" name="role"/>
+    <alias entity-alias="P" name="endedAt"/>
+    <alias entity-alias="P" name="archivedAt"/>
+    <alias entity-alias="T" name="siteId"/>
+    <alias entity-alias="T" name="kind"/>
+    <alias entity-alias="T" name="lastActivity"/>
+    <alias entity-alias="T" name="visiblePostCount"/>
+  </view-entity>
   <entity entity-name="ForumMemberPreference" package="mantle.forum">
     <field name="siteId" type="id" is-pk="true"/>
     <field name="partyId" type="id" is-pk="true"/>

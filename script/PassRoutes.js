@@ -109,4 +109,14 @@
     ['POST', 'reviews/decisions', 'decideReviews'],
     ['POST', 'reviews/{reviewId}/appeal', 'appealReview'],
     ['GET', 'me/reviews', 'findMyReviews'],
+    ['GET', 'conversations', 'findConversations'],
+    ['POST', 'conversations', 'createConversation'],
+    [
+        'PATCH',
+        'conversations/{rootCommEventId}/participants',
+        'updateParticipants',
+    ],
+    ['POST', 'conversations/{rootCommEventId}/state', 'setConversationState'],
+    ['PATCH', 'me/member-preferences', 'setMemberPreference'],
+    ['POST', 'reviews/{reviewId}/escalation', 'escalateReview'],
 ]

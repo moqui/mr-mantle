@@ -260,7 +260,9 @@ const slugify = (title) =>
         .replace(/^-|-$/g, '') || 'topic'
 function topic(root, siteId, lock = false) {
     const t = one(F + 'ForumTopic', { rootCommEventId: root }, lock)
-    if (!t || t.siteId !== siteId || t.kind !== 'category') missing()
+    if (!t || t.siteId !== siteId) missing()
+    if (t.kind === 'private') return privateTopic(t)
+    if (t.kind !== 'category') missing()
     const event = one(E + 'CommunicationEvent', { communicationEventId: root })
     if (!event) missing()
     const a = category(event.contactListId, siteId)
@@ -938,6 +940,14 @@ methods.getProfile = (p) => {
                 ? { discoverability: v.discoverability }
                 : {}),
         },
+        viewerPreference:
+            me() && v.partyId !== me()
+                ? one(F + 'ForumMemberPreference', {
+                      siteId: p.siteId,
+                      partyId: me(),
+                      targetPartyId: v.partyId,
+                  })?.preference || 'none'
+                : null,
     }
 }
 methods.findCategories = (p) =>
@@ -1299,10 +1309,16 @@ methods.getTopic = (p) => {
             closed: event.statusId === 'CeResolved',
             acceptedAnswerId: visibleAnswer(t, a),
             tags: topicTags(t.rootCommEventId),
-            category: categoryProjection(a),
+            kind: t.kind,
+            participants:
+                t.kind === 'private'
+                    ? participantProjection(p.siteId, t.rootCommEventId)
+                    : null,
+            category: t.kind === 'private' ? null : categoryProjection(a),
             capabilities: {
                 ...capabilities(a),
                 canReply: a.canReply && event.statusId !== 'CeResolved',
+                canManageParticipants: t.kind === 'private' && a.isOwner,
                 canAccept:
                     a.category.mode === 'qa' &&
                     (a.canModerate ||
@@ -1573,10 +1589,33 @@ methods.publishPost = (p) => {
             (savedDraft.siteId !== p.siteId || savedDraft.partyId !== me())
         )
             missing()
+        // A new private conversation names its participants instead of a category.
+        const conversation =
+            !p.rootCommEventId &&
+            !p.contactListId &&
+            Array.isArray(p.participantHandles)
         const existing = p.rootCommEventId
                 ? topic(p.rootCommEventId, p.siteId, true)
                 : null,
-            a = existing?.a || category(p.contactListId, p.siteId)
+            a =
+                existing?.a ||
+                (conversation
+                    ? startAccess(p.siteId)
+                    : category(p.contactListId, p.siteId)),
+            isPrivate = existing ? existing.t.kind === 'private' : conversation
+        const invited = conversation
+            ? recipients(p.siteId, p.participantHandles, [me()])
+            : []
+        if (
+            conversation &&
+            (!invited.length ||
+                invited.length > policy(p.siteId).privateRecipientLimit)
+        )
+            invalid(
+                'A conversation has 1–' +
+                    policy(p.siteId).privateRecipientLimit +
+                    ' recipients',
+            )
         if (!(existing ? a.canReply : a.canStartTopic))
             fail('Unauthorized', 'Posting is not permitted')
         if (existing?.event.statusId === 'CeResolved')
@@ -1682,10 +1721,14 @@ methods.publishPost = (p) => {
         const postId = id(),
             root = existing?.t.rootCommEventId || postId,
             ordinal = existing ? Number(existing.t.nextOrdinal) : 1
+        // Private messages are not queued for staff by default; a held rule still files a scoped review.
         const firstPost =
+                !isPrivate &&
                 Number(memberState.approvedContributions || 0) <
-                    pol.firstContributionCount && !a.canModerate,
-            pending = firstPost || (ruled.approve && !a.canModerate)
+                    pol.firstContributionCount &&
+                !a.canModerate,
+            pending =
+                firstPost || (!isPrivate && ruled.approve && !a.canModerate)
         create(E + 'CommunicationEvent', {
             communicationEventId: postId,
             communicationEventTypeId: 'Message',
@@ -1715,7 +1758,7 @@ methods.publishPost = (p) => {
                 rootCommEventId: root,
                 siteId: p.siteId,
                 contactListId: a.category.contactListId,
-                kind: 'category',
+                kind: isPrivate ? 'private' : 'category',
                 revision: 1,
                 nextOrdinal: 2,
                 visiblePostCount: pending ? 0 : 1,
@@ -1746,7 +1789,12 @@ methods.publishPost = (p) => {
         })
 
         attachToPost(p.siteId, postId, p.attachmentIds)
-        if (!existing)
+        if (conversation) {
+            addParticipant(root, me(), 'owner')
+            for (const partyId of invited)
+                addParticipant(root, partyId, 'member')
+        }
+        if (!existing && !isPrivate)
             setTopicTags(
                 p.siteId,
                 root,
@@ -1780,7 +1828,7 @@ methods.publishPost = (p) => {
                 firstPost ? 'first-post' : 'rule',
             )
         else {
-            if (ruled.flag)
+            if (ruled.flag || (isPrivate && ruled.approve))
                 review(
                     p.siteId,
                     a.category.contactListId,
@@ -1789,7 +1837,8 @@ methods.publishPost = (p) => {
                     1,
                     'rule',
                 )
-            allocateInternal(postId, a.category.contactListId, me())
+            if (isPrivate) allocatePrivate(postId, root, me())
+            else allocateInternal(postId, a.category.contactListId, me())
             create(F + 'ForumOutbox', {
                 outboxId: id(),
                 siteId: p.siteId,
@@ -1812,6 +1861,12 @@ methods.publishPost = (p) => {
 }
 /* A staged upload of the actor's, or one already on this post, that passed scanning and has not expired. */
 function attachToPost(siteId, postId, attachmentIds) {
+    if ((attachmentIds || []).length > policy(siteId).mediaFilesPerPost)
+        invalid(
+            'A post has at most ' +
+                policy(siteId).mediaFilesPerPost +
+                ' attachments',
+        )
     for (const attachmentId of attachmentIds || []) {
         const att = one(F + 'ForumAttachment', { attachmentId }, true)
         const usable =
@@ -2193,6 +2248,22 @@ methods.getReview = (p) => {
                                 ),
                                 revision: st.revision,
                             }
+                          : null
+                  })()
+                : null,
+        context:
+            r.targetType === 'post'
+                ? (() => {
+                      const st = one(F + 'ForumPostState', {
+                          communicationEventId: r.targetId,
+                      })
+                      const t = st
+                          ? one(F + 'ForumTopic', {
+                                rootCommEventId: st.rootCommEventId,
+                            })
+                          : null
+                      return t?.kind === 'private'
+                          ? privateContext(r, st)
                           : null
                   })()
                 : null,
@@ -3456,7 +3527,9 @@ methods.stageAttachment = (p) => {
             )
     } else {
         if (p.purpose && p.purpose !== 'post') invalid('Unknown upload purpose')
-        const a = category(p.contactListId, p.siteId)
+        const a = p.rootCommEventId
+            ? topic(p.rootCommEventId, p.siteId).a
+            : category(p.contactListId, p.siteId)
         if (!a.canUpload) fail('Unauthorized', 'Uploads are not permitted')
     }
     const partyId = requireUser(),
@@ -3466,8 +3539,9 @@ methods.stageAttachment = (p) => {
         if (draft && (draft.partyId !== partyId || draft.siteId !== p.siteId))
             missing()
     }
-    if (!file || Number(file.size) > 10485760 || Number(file.size) < 1)
-        invalid('Upload must contain 1 byte to 10 MiB')
+    const maxBytes = Math.min(10485760, policy(p.siteId).mediaMaxBytes)
+    if (!file || Number(file.size) > maxBytes || Number(file.size) < 1)
+        invalid('Upload must contain 1 byte to ' + maxBytes + ' bytes')
     const type = String(file.contentType || 'application/octet-stream')
     if (
         ![
@@ -4324,8 +4398,20 @@ methods.searchForum = (p) =>
             String(p.query).length > 200
         )
             invalid('Search needs 2–200 characters')
+        if (p.scope && p.scope !== 'private') invalid('Invalid search scope')
+        // Private search is opt-in and covers only the actor's own current conversations.
+        const ownConversations =
+            p.scope === 'private'
+                ? rows(
+                      F + 'ForumParticipant',
+                      { partyId: requireUser(), endedAt: null },
+                      500,
+                  ).map((v) => v.rootCommEventId)
+                : null
         const allowed = []
-        for (const c of rows(F + 'ForumCategory', { siteId: p.siteId }, 1000)) {
+        for (const c of ownConversations
+            ? []
+            : rows(F + 'ForumCategory', { siteId: p.siteId }, 1000)) {
             const a = categoryAccess(c.contactListId)
             if (
                 a &&
@@ -4334,7 +4420,8 @@ methods.searchForum = (p) =>
             )
                 allowed.push(c.contactListId)
         }
-        if (!allowed.length) return { topicList: [], nextCursor: null }
+        if (!(ownConversations || allowed).length)
+            return { topicList: [], nextCursor: null }
         const pg = page(
                 p,
                 'search:' +
@@ -4342,7 +4429,9 @@ methods.searchForum = (p) =>
                     ':' +
                     p.query +
                     ':' +
-                    (p.contactListId || ''),
+                    (p.contactListId || '') +
+                    ':' +
+                    (p.scope || ''),
             ),
             cf = ec.entity.conditionFactory
         const candidates = Array.from(
@@ -4350,7 +4439,11 @@ methods.searchForum = (p) =>
                 siteId: p.siteId,
                 visibility: 'approved',
             })
-                .condition('contactListId', 'in', allowed)
+                .condition(
+                    ownConversations ? 'rootCommEventId' : 'contactListId',
+                    'in',
+                    ownConversations || allowed,
+                )
                 .condition(
                     cf.makeCondition('unlisted', 'not-equals', 'Y', true),
                 )
@@ -4569,6 +4662,8 @@ methods.getPostLocation = (p) => {
         rootCommEventId: state.rootCommEventId,
         slug: slugify(event.subject),
         postId: p.postId,
+        kind: one(F + 'ForumTopic', { rootCommEventId: state.rootCommEventId })
+            ?.kind,
     }
 }
 methods.getEditablePost = (p) => {
@@ -6495,6 +6590,430 @@ function memberBlocks(siteId, partyId, targetPartyId) {
         (!v.expiresAt || millis(v.expiresAt) > millis(now()))
     )
 }
+/* ---- Stage 2 private conversations: explicit participants, no category, no staff browsing ---- */
+/* Access to a private topic comes only from an active participant row and current site membership. */
+function conversationAccess(t, actor = me()) {
+    const s = one(S + 'PublicSite', { siteId: t.siteId }),
+        m = member(t.siteId, actor),
+        joined =
+            active(m) &&
+            m.state === 'active' &&
+            !sanctioned(t.siteId, actor, null, 'suspend'),
+        part = actor
+            ? one(F + 'ForumParticipant', {
+                  rootCommEventId: t.rootCommEventId,
+                  partyId: actor,
+              })
+            : null,
+        participant = !!(joined && part && !part.endedAt),
+        pol = policy(t.siteId),
+        write =
+            participant &&
+            !sanctioned(t.siteId, actor, null, 'silence') &&
+            (pol.privateEnabled || pol.privateExistingReplies)
+    return {
+        category: {
+            contactListId: null,
+            siteId: t.siteId,
+            visibility: 'private',
+            mode: 'discussion',
+            policyRevision: 0,
+        },
+        site: s,
+        isOwner: participant && part.role === 'owner',
+        canDiscover: participant,
+        canRead: participant,
+        canReadOwn: false,
+        canStartTopic: false,
+        canReply: write,
+        canEdit: write,
+        canUpload: write,
+        canFlag: participant,
+        canReact: write,
+        canVote: write,
+        canModerate: false,
+        canInvite: participant && part.role === 'owner',
+    }
+}
+function privateTopic(t) {
+    const event = one(E + 'CommunicationEvent', {
+        communicationEventId: t.rootCommEventId,
+    })
+    const a = conversationAccess(t)
+    if (!event || !a.canRead) missing()
+    return { t, event, a }
+}
+/* Starting a conversation is a separate permission: site policy, minimum trust and current sanctions. */
+function startAccess(siteId) {
+    const m = member(siteId),
+        pol = policy(siteId)
+    if (
+        !active(m) ||
+        m.state !== 'active' ||
+        sanctioned(siteId, me(), null, 'suspend') ||
+        sanctioned(siteId, me(), null, 'silence')
+    )
+        fail('Unauthorized', 'Messaging is not permitted')
+    if (!pol.privateEnabled)
+        fail('Unauthorized', 'Private messages are turned off on this site')
+    if (trustRank(trustLevel(siteId)) < trustRank(pol.privateMinTrust))
+        fail(
+            'Unauthorized',
+            'Your trust level cannot start private messages yet',
+        )
+    return {
+        ...conversationAccess({ siteId, rootCommEventId: '' }),
+        canStartTopic: true,
+        canReply: true,
+        canEdit: true,
+        canUpload: true,
+    }
+}
+/* Recipients are active members of this site, named by handle. One generic error never reveals which name failed. */
+function recipients(siteId, handles, exclude) {
+    if (!Array.isArray(handles) || !handles.length)
+        invalid('Name at least one recipient')
+    const out = []
+    for (const handle of [...new Set(handles.map((h) => String(h).trim()))]) {
+        const v = handle
+                ? one(S + 'PublicSiteProfile', { siteId, handle })
+                : null,
+            m = v ? member(siteId, v.partyId) : null
+        if (
+            !v ||
+            !active(m) ||
+            m.state !== 'active' ||
+            sanctioned(siteId, v.partyId, null, 'suspend') ||
+            memberBlocks(siteId, v.partyId, me()) ||
+            memberBlocks(siteId, me(), v.partyId)
+        )
+            invalid('One or more recipients cannot receive private messages')
+        if (!exclude.includes(v.partyId)) out.push(v.partyId)
+    }
+    return [...new Set(out)]
+}
+function addParticipant(root, partyId, role) {
+    const old = one(
+        F + 'ForumParticipant',
+        { rootCommEventId: root, partyId },
+        true,
+    )
+    if (old) {
+        if (old.endedAt)
+            update(old, {
+                endedAt: null,
+                role,
+                addedByPartyId: me(),
+                addedAt: now(),
+            })
+        return
+    }
+    create(F + 'ForumParticipant', {
+        rootCommEventId: root,
+        partyId,
+        role,
+        addedByPartyId: me(),
+        addedAt: now(),
+    })
+}
+const activeParticipants = (root) =>
+    rows(F + 'ForumParticipant', { rootCommEventId: root, endedAt: null }, 100)
+/* Internal participants keep per-message receipts in Comms; public participants use topic markers only. */
+function allocatePrivate(postId, root, author) {
+    for (const v of activeParticipants(root)) {
+        if (v.partyId === author || !internalParty(v.partyId)) continue
+        create(E + 'CommunicationEventParty', {
+            communicationEventId: postId,
+            partyId: v.partyId,
+            roleTypeId: 'MessageTo',
+            statusId: 'CepReceived',
+        })
+    }
+}
+function participantProjection(siteId, root) {
+    return activeParticipants(root).map((v) => ({
+        ...pick(
+            one(S + 'PublicSiteProfile', { siteId, partyId: v.partyId }),
+            'handle displayName',
+        ),
+        role: v.role,
+        addedAt: v.addedAt,
+    }))
+}
+methods.createConversation = (p) =>
+    methods.publishPost({
+        siteId: p.siteId,
+        participantHandles: p.participantHandles,
+        title: p.title,
+        body: p.body,
+        attachmentIds: p.attachmentIds,
+        operationId: p.operationId,
+    })
+methods.findConversations = (p) => {
+    site(p.siteId)
+    const partyId = requireUser(),
+        view = p.view || 'inbox'
+    if (!['inbox', 'archived'].includes(view)) invalid('Invalid view')
+    const pg = page(p, 'conversations:' + p.siteId + ':' + view)
+    let q = find(F + 'ForumConversationMember', {
+        siteId: p.siteId,
+        partyId,
+        kind: 'private',
+        endedAt: null,
+    })
+    q = q.condition(
+        'archivedAt',
+        view === 'inbox' ? 'equals' : 'not-equals',
+        null,
+    )
+    const list = Array.from(
+        q
+            .orderBy('-lastActivity,rootCommEventId')
+            .offset(pg.offset)
+            .limit(pg.limit + 1)
+            .list(),
+    )
+    return {
+        conversationList: list.slice(0, pg.limit).map((v) => {
+            const event = one(E + 'CommunicationEvent', {
+                    communicationEventId: v.rootCommEventId,
+                }),
+                marker = readingBoundary(v.rootCommEventId, p.siteId, null)
+            return {
+                rootCommEventId: v.rootCommEventId,
+                title: event?.subject,
+                lastActivity: v.lastActivity,
+                visiblePostCount: v.visiblePostCount,
+                participants: participantProjection(p.siteId, v.rootCommEventId)
+                    .map((x) => x.displayName || x.handle)
+                    .filter(Boolean)
+                    .slice(0, 10),
+                unreadCount: find(F + 'ForumPostSearch', {
+                    rootCommEventId: v.rootCommEventId,
+                    visibility: 'approved',
+                })
+                    .condition(
+                        'ordinal',
+                        'greater',
+                        Number(marker?.consumedOrdinal || 0),
+                    )
+                    .condition('fromPartyId', 'not-equals', partyId)
+                    .count(),
+            }
+        }),
+        nextCursor:
+            list.length > pg.limit ? pg.next(pg.offset + pg.limit) : null,
+    }
+}
+/* Owners add people (who then see the whole history, so it is confirmed), remove people and name other owners. */
+methods.updateParticipants = (p) => {
+    requireUser()
+    site(p.siteId)
+    const { t, a } = topic(p.rootCommEventId, p.siteId, true)
+    if (t.kind !== 'private') missing()
+    if (!a.isOwner)
+        fail('Unauthorized', 'Only a conversation owner changes participants')
+    revision(t, p.expectedRevision)
+    const pol = policy(p.siteId),
+        current = activeParticipants(t.rootCommEventId).map((v) => v.partyId)
+    if (p.participantHandles?.length) {
+        if (p.confirm !== true)
+            invalid(
+                'Confirm that new participants will see the whole conversation',
+            )
+        if (!pol.privateEnabled)
+            fail('Unauthorized', 'Private messages are turned off on this site')
+        const added = recipients(p.siteId, p.participantHandles, current)
+        if (current.length + added.length > pol.privateRecipientLimit + 1)
+            invalid(
+                'A conversation has at most ' +
+                    pol.privateRecipientLimit +
+                    ' recipients',
+            )
+        for (const partyId of added)
+            addParticipant(t.rootCommEventId, partyId, 'member')
+    }
+    const byHandle = (handle) => {
+        const v = one(S + 'PublicSiteProfile', { siteId: p.siteId, handle })
+        const row = v
+            ? one(
+                  F + 'ForumParticipant',
+                  {
+                      rootCommEventId: t.rootCommEventId,
+                      partyId: v.partyId,
+                  },
+                  true,
+              )
+            : null
+        if (!row || row.endedAt) invalid('Not a current participant: ' + handle)
+        return row
+    }
+    for (const handle of p.ownerHandles || [])
+        update(byHandle(handle), { role: 'owner' })
+    for (const handle of p.targetHandles || [])
+        update(byHandle(handle), { endedAt: now() })
+    if (!activeParticipants(t.rootCommEventId).some((v) => v.role === 'owner'))
+        fail('Conflict', 'A conversation keeps at least one owner')
+    update(t, { revision: Number(t.revision) + 1 })
+    bump(p.siteId)
+    return {
+        revision: Number(t.revision),
+        participants: participantProjection(p.siteId, t.rootCommEventId),
+    }
+}
+/* Archive is a personal list preference; leaving ends the participant's access, including old attachments. */
+methods.setConversationState = (p) => {
+    requireUser()
+    site(p.siteId)
+    const { t } = topic(p.rootCommEventId, p.siteId, true)
+    if (t.kind !== 'private') missing()
+    const row = one(
+        F + 'ForumParticipant',
+        { rootCommEventId: t.rootCommEventId, partyId: me() },
+        true,
+    )
+    if (p.action === 'archive' || p.action === 'unarchive')
+        update(row, { archivedAt: p.action === 'archive' ? now() : null })
+    else if (p.action === 'leave') {
+        const others = activeParticipants(t.rootCommEventId).filter(
+            (v) => v.partyId !== me(),
+        )
+        if (
+            row.role === 'owner' &&
+            others.length &&
+            !others.some((v) => v.role === 'owner')
+        )
+            fail('Conflict', 'Make another participant an owner before leaving')
+        update(row, { endedAt: now() })
+        bump(p.siteId)
+    } else invalid('Invalid conversation action')
+    return { state: p.action }
+}
+/* A member's own mute or block of another member; it is never shown to the other member. */
+methods.setMemberPreference = (p) => {
+    site(p.siteId)
+    const partyId = requireUser()
+    if (!active(member(p.siteId)) || member(p.siteId).state !== 'active')
+        fail('Unauthorized', 'Active membership is required')
+    const v = one(S + 'PublicSiteProfile', {
+        siteId: p.siteId,
+        handle: p.targetHandle,
+    })
+    if (!v || v.partyId === partyId) missing()
+    if (!['mute', 'block', 'none'].includes(p.preference))
+        invalid('Preference must be mute, block or none')
+    if (p.expiresAt != null && !(millis(p.expiresAt) > millis(now())))
+        invalid('An expiry is in the future')
+    const key = { siteId: p.siteId, partyId, targetPartyId: v.partyId },
+        old = one(F + 'ForumMemberPreference', key, true)
+    if (p.preference === 'none') {
+        if (old) old.delete()
+    } else if (old)
+        update(old, {
+            preference: p.preference,
+            expiresAt: p.expiresAt ?? null,
+            revision: Number(old.revision || 0) + 1,
+        })
+    else
+        create(F + 'ForumMemberPreference', {
+            ...key,
+            preference: p.preference,
+            expiresAt: p.expiresAt ?? null,
+            revision: 1,
+        })
+    return { preference: p.preference }
+}
+const memberMutes = (siteId, partyId, targetPartyId) => {
+    const v =
+        partyId && targetPartyId
+            ? one(F + 'ForumMemberPreference', {
+                  siteId,
+                  partyId,
+                  targetPartyId,
+              })
+            : null
+    return (
+        !!v &&
+        ['mute', 'block'].includes(v.preference) &&
+        (!v.expiresAt || millis(v.expiresAt) > millis(now()))
+    )
+}
+/* A report on a private post lets scoped staff see that post and one visible post on each side. Wider context needs a
+   recorded escalation and a site owner's approval; every view of private evidence is audited. */
+function privateContext(r, st) {
+    const detail = json(r.detail, {})
+    const span = detail.escalation?.approvedBy ? 10 : 1
+    const near = (op, order) =>
+        Array.from(
+            find(F + 'ForumPostSearch', {
+                rootCommEventId: st.rootCommEventId,
+                visibility: 'approved',
+            })
+                .condition('ordinal', op, Number(st.ordinal))
+                .orderBy(order)
+                .limit(span)
+                .list(),
+        )
+    const context = [
+        ...near('less', '-ordinal').reverse(),
+        ...near('greater', 'ordinal'),
+    ]
+    systemAudit(
+        r.siteId,
+        null,
+        'review',
+        r.reviewId,
+        'private-evidence-view',
+        span > 1 ? 'Escalated context' : 'Reported post with adjacent context',
+        me(),
+    )
+    return context.map((v) => ({
+        postId: v.communicationEventId,
+        ordinal: Number(v.ordinal),
+        body: StringUtilities.cleanHtml(v.body || ''),
+    }))
+}
+methods.escalateReview = (p) => {
+    requireUser()
+    site(p.siteId)
+    const r = one(
+        F + 'ForumReviewItem',
+        { reviewId: p.reviewId, siteId: p.siteId },
+        true,
+    )
+    if (!r || r.targetType !== 'post') missing()
+    staff(p.siteId, r.contactListId)
+    if (!p.reason) invalid('A reason is required')
+    const detail = json(r.detail, {})
+    if (p.active === true) {
+        // Approval is the site owner's, recorded separately from the request.
+        site(p.siteId, true)
+        if (!detail.escalation) fail('Conflict', 'No escalation was requested')
+        detail.escalation.approvedBy = me()
+        detail.escalation.approvedAt = millis(now())
+        detail.escalation.approvalReason = p.reason
+    } else
+        detail.escalation = {
+            requestedBy: me(),
+            requestedAt: millis(now()),
+            reason: p.reason,
+        }
+    update(r, {
+        detail: JSON.stringify(detail),
+        revision: Number(r.revision) + 1,
+    })
+    audit(
+        p.siteId,
+        r.contactListId,
+        'review',
+        r.reviewId,
+        p.active === true ? 'escalation-approved' : 'escalation-requested',
+        p.reason,
+        Number(r.revision) - 1,
+        Number(r.revision),
+    )
+    return { revision: Number(r.revision), escalation: detail.escalation }
+}
 /* Policy revisions only grow, so their sum over the site and both category chains changes whenever either audience can. */
 function audienceRevision(siteId, source, target) {
     let total = Number(one(S + 'PublicSite', { siteId })?.policyRevision || 0)
@@ -6546,6 +7065,9 @@ function execute(operation, p) {
         'allowedCategories',
         'postIds',
         'reviewIds',
+        'participantHandles',
+        'targetHandles',
+        'ownerHandles',
     ])
         if (
             p?.[key] != null &&
@@ -6589,6 +7111,9 @@ function execute(operation, p) {
         'allowedCategories',
         'postIds',
         'reviewIds',
+        'participantHandles',
+        'targetHandles',
+        'ownerHandles',
     ])
     for (const [key, value] of Object.entries(p || {})) {
         if (value == null) continue
@@ -6672,4 +7197,8 @@ function execute(operation, p) {
     classifyPost,
     fireTimers,
     fireTimer,
+    conversationAccess,
+    memberMutes,
+    memberBlocks,
+    policy,
 })
