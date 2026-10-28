@@ -803,4 +803,8 @@
             'operationId',
         ],
     },
+    findModerationScopes: {
+        service: 'mantle.forum.ModerationServices.find#ModerationScopes',
+        fields: [],
+    },
 })

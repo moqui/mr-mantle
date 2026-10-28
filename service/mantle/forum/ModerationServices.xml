@@ -243,4 +243,15 @@
       <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('escalateReview',input || {})</script>
     </actions>
   </service>
+  <service verb="find" noun="ModerationScopes" authenticate="anonymous-all" allow-remote="false">
+    <in-parameters>
+      <parameter name="input" type="Map"/>
+    </in-parameters>
+    <out-parameters>
+      <parameter name="result" type="Map"/>
+    </out-parameters>
+    <actions>
+      <script>result=ec.resource.script('component://mr-mantle/service/mantle/forum/Forum.js').execute('findModerationScopes',input || {})</script>
+    </actions>
+  </service>
 </services>

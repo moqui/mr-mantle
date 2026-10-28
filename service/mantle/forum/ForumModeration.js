@@ -107,6 +107,65 @@
             )
             return { reviewId: r.reviewId, state: r.state, hidden }
         })
+    /* Where the signed-in internal user moderates, for the Comms moderation mount: sites where they are an active
+       owner or moderator, and bound categories where they are a list owner or moderator. A public account has no
+       BOSS mount, so it gets none. */
+    methods.findModerationScopes = () => {
+        const partyId = me()
+        const internal = !!partyId && core.internalParty(partyId)
+        if (!internal) return { internal: false, scopeList: [] }
+        const out = []
+        const siteName = (siteId) =>
+            one(S + 'PublicSite', { siteId })?.name || siteId
+        const siteIds = isOperator()
+            ? rows(S + 'PublicSite', {}, 200).map((s) => s.siteId)
+            : rows(S + 'PublicSiteParty', { partyId }, 200)
+                  .filter(
+                      (m) =>
+                          active(m) &&
+                          m.state === 'active' &&
+                          ['owner', 'moderator'].includes(m.role),
+                  )
+                  .map((m) => m.siteId)
+        for (const siteId of siteIds) {
+            try {
+                staff(siteId, null)
+                out.push({
+                    siteId,
+                    siteName: siteName(siteId),
+                    contactListId: null,
+                    name: siteName(siteId),
+                })
+            } catch (e) {
+                ec.message.clearErrors()
+            }
+        }
+        for (const lp of rows(
+            'mantle.marketing.contact.ContactListParty',
+            { partyId },
+            500,
+        ).filter(
+            (lp) =>
+                active(lp) &&
+                ['ListOwner', 'ListModerator'].includes(lp.roleTypeId),
+        )) {
+            const c = one(F + 'ForumCategory', {
+                contactListId: lp.contactListId,
+            })
+            if (!c || siteIds.includes(c.siteId)) continue
+            if (!categoryAccess(c.contactListId, partyId)?.canModerate) continue
+            out.push({
+                siteId: c.siteId,
+                siteName: siteName(c.siteId),
+                contactListId: c.contactListId,
+                name:
+                    one('mantle.marketing.contact.ContactList', {
+                        contactListId: c.contactListId,
+                    })?.contactListName || c.contactListId,
+            })
+        }
+        return { internal: true, scopeList: out }
+    }
     methods.findReviews = (p) => {
         site(p.siteId)
         staff(p.siteId, p.contactListId)
