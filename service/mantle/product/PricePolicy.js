@@ -36,6 +36,8 @@ function lock(r){find('moqui.basic.EnumerationType',{enumTypeId:'ProductPriceTyp
 function validate(r,ignoreIds=[]){
  const a=access(r,true)
  if(a.direction==='public')throw new Error('New or corrected prices require an explicit internal sales vendor')
+ const policy=rows(P+'ProductPricingSetting',{organizationPartyId:a.organizationPartyId}).filter(s=>(ms(s.fromDate)??-Infinity)<=ms(r.fromDate)&&(ms(s.thruDate)??Infinity)>ms(r.fromDate)).sort((a,b)=>ms(b.fromDate)-ms(a.fromDate))[0]
+ if(!ignoreIds.length&&policy?.allowedPurposeIds&&r.pricePurposeEnumId&&!String(policy.allowedPurposeIds).split(',').includes(r.pricePurposeEnumId))throw new Error('Purpose is not permitted by the dated pricing policy')
  if(one('moqui.basic.Enumeration',{enumId:r.priceTypeEnumId})?.enumTypeId!=='ProductPriceType')throw new Error('Choose a price type')
  if(r.pricePurposeEnumId&&one('moqui.basic.Enumeration',{enumId:r.pricePurposeEnumId})?.enumTypeId!=='ProductPricePurpose')throw new Error('Choose a price purpose')
  if(one('moqui.basic.Uom',{uomId:r.priceUomId})?.uomTypeEnumId!=='UT_CURRENCY_MEASURE')throw new Error('Choose a price currency')

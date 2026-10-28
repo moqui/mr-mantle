@@ -298,6 +298,12 @@ General Order Placement and eCommerce Usage
                 </if>
             </else-if></if>
 
+            <if condition="isProductItem &amp;&amp; unitAmount == null">
+                <service-call name="mantle.product.PriceServices.get#OrderProductPrice" in-map="{productId,quantity,quantityUomId,priceListId,orderId,orderPartSeqId}" out-map="priceMap"/>
+                <set field="unitAmount" from="priceMap.price"/><set field="unitListPrice" from="priceMap.listPrice"/>
+                <set field="productPriceId" from="priceMap.productPriceId"/><set field="priceListId" from="priceMap.priceListId"/><set field="priceRuleId" from="priceMap.priceRuleId"/>
+                <set field="isModifiedPrice" value="N"/>
+            </if>
             <service-call name="create#mantle.order.OrderItem" in-map="context" out-map="context"/>
         </actions>
     </service>
@@ -365,9 +371,10 @@ General Order Placement and eCommerce Usage
                                   vendorPartyId:orderPart.vendorPartyId}"/>
                     -->
                     <service-call name="mantle.product.PriceServices.get#OrderProductPrice" out-map="priceMap"
-                            in-map="{productId:productId, quantity:quantity, orderId:orderId, orderPartSeqId:orderPartSeqId}"/>
+                            in-map="{productId:productId, quantity:quantity, quantityUomId:quantityUomId || orderItem.quantityUomId, priceListId:priceListId, orderId:orderId, orderPartSeqId:orderPartSeqId}"/>
 
 
+                    <set field="productPriceId" from="priceMap.productPriceId"/><set field="priceListId" from="priceMap.priceListId"/><set field="priceRuleId" from="priceMap.priceRuleId"/>
                     <set field="unitAmount" from="priceMap.price"/>
                     <set field="unitListPrice" from="priceMap.listPrice"/>
                     <set field="isModifiedPrice" value="N"/>
@@ -489,13 +496,13 @@ General Order Placement and eCommerce Usage
                 <return/></if>
 
             <service-call name="mantle.product.PriceServices.get#OrderProductPrice" out-map="priceOut"
-                    in-map="{productId:orderItem.productId, quantity:orderItem.quantity, orderId:orderId,
+                    in-map="{productId:orderItem.productId, quantity:orderItem.quantity, quantityUomId:orderItem.quantityUomId, orderId:orderId,
                         orderPartSeqId:orderItem.orderPartSeqId}"/>
 
-            <if condition="priceOut.price != null &amp;&amp; !toDecimal(priceOut.price).isZero()"><then>
-                <if condition="orderItem.unitAmount == null || !toDecimal(priceOut.price).eq(orderItem.unitAmount)">
+            <if condition="priceOut.priceAvailable"><then>
+                <if condition="orderItem.unitAmount == null || !toDecimal(priceOut.price).eq(orderItem.unitAmount) || orderItem.productPriceId !== priceOut.productPriceId || orderItem.priceListId !== priceOut.priceListId || orderItem.priceRuleId !== priceOut.priceRuleId">
                     <service-call name="update#mantle.order.OrderItem" in-map="{orderId:orderId, orderItemSeqId:orderItem.orderItemSeqId,
-                        unitAmount:priceOut.price, unitListPrice:priceOut.listPrice, isModifiedPrice:'N'}"/>
+                        unitAmount:priceOut.price, unitListPrice:priceOut.listPrice, productPriceId:priceOut.productPriceId, priceListId:priceOut.priceListId, priceRuleId:priceOut.priceRuleId, isModifiedPrice:'N'}"/>
                 </if>
             </then><else>
                 <message type="warning">No price found for Product ${orderItem.productId} on Order Item ${orderId}:${orderItemSeqId}, not resetting</message>
@@ -606,7 +613,7 @@ General Order Placement and eCommerce Usage
             <parameter name="standardCost" type="BigDecimal"/>
             <parameter name="requiredByDate" type="Timestamp"/>
             <parameter name="otherPartyProductId"/>
-        </in-parameters>
+        <parameter name="quantityUomId"/><parameter name="priceListId"/></in-parameters>
         <out-parameters>
             <parameter name="orderId" required="true"/>
             <parameter name="orderPartSeqId" required="true"/>
@@ -694,11 +701,11 @@ General Order Placement and eCommerce Usage
                          productStoreId:productStoreId, customerPartyId:customerPartyId, vendorPartyId:vendorPartyId}"/>
                 -->
                 <service-call name="mantle.product.PriceServices.get#OrderProductPrice" out-map="priceMap"
-                        in-map="{productId:productId, quantity:quantity, orderId:orderId, orderPartSeqId:orderPartSeqId}"/>
+                        in-map="{productId:productId, quantity:quantity, quantityUomId:quantityUomId, priceListId:priceListId, orderId:orderId, orderPartSeqId:orderPartSeqId}"/>
 
                 <set field="unitAmount" from="priceMap.price"/>
                 <set field="unitListPrice" from="priceMap.listPrice"/>
-                <set field="productPriceId" from="priceMap.productPriceId"/>
+                <set field="productPriceId" from="priceMap.productPriceId"/><set field="priceListId" from="priceMap.priceListId"/><set field="priceRuleId" from="priceMap.priceRuleId"/>
                 <set field="isModifiedPrice" value="N"/>
                 <log message="OrderProductQuantity Calculated Order ${orderId}:${orderPartSeqId} Product ${productId} calculated unitAmount ${unitAmount} unitListPrice ${unitListPrice} productStoreId ${productStoreId} customerPartyId ${customerPartyId} vendorPartyId ${vendorPartyId}"/>
             </then><else>

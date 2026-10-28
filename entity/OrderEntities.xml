@@ -393,7 +393,9 @@ along with this software (see the LICENSE.md file). If not, see
 
         <field name="externalItemSeqId" type="id"/>
         <field name="fromAssetId" type="id"><description>Order for a particular Asset, not just any associated with the Product.</description></field>
-        <field name="productPriceId" type="id"/>
+        <field name="productPriceId" type="id" enable-audit-log="true"/>
+        <field name="priceListId" type="id" enable-audit-log="true"/>
+        <field name="priceRuleId" type="id" enable-audit-log="true"/>
         <field name="productCategoryId" type="id"/>
         <field name="isPromo" type="text-indicator"/>
         <field name="promoQuantity" type="number-decimal"><description>For promo items. The quantity of the parent order item
