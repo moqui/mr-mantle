@@ -448,11 +448,13 @@ function restore(p) {
     return {contentId: row[c.id], [c.id]: row[c.id]}
 }
 function translations(p) {
+    // with no target language there is nothing to compare
+    if (!p.targetLocale) return {translationRows: [], directLocalizationRows: []}
     const c = config(p),
         sources = list(Object.assign({}, p, {locale: p.sourceLocale || "en", includeInherited: false})).contentRows,
         result = []
     for (const source of sources) {
-        const candidates = rows(c.entity, {[c.owner]: source.recordId, locale: p.targetLocale || "es"}).filter(
+        const candidates = rows(c.entity, {[c.owner]: source.recordId, locale: p.targetLocale}).filter(
                 r =>
                     r[c.source] === source.contentId ||
                     (!r[c.source] &&
@@ -482,7 +484,7 @@ function translations(p) {
         })
     }
     const direct = []
-    for (const r of rows("moqui.basic.LocalizedEntityField", {locale: p.targetLocale || "es"}))
+    for (const r of rows("moqui.basic.LocalizedEntityField", {locale: p.targetLocale}))
         try {
             const allowed = {
                     "mantle.product.Product": "productId",

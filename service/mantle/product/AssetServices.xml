@@ -60,8 +60,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="get" noun="ProductStockTotals">
         <description>One product's stock at one facility for one owner: the quantity on hand, the part on hold (quarantine),
-            the part in available status, what reservations hold back, and the available to promise of get#AvailableInventory.
-            Quantities only; no valuation.</description>
+            the part in available status, what reservations hold back, the available to promise of get#AvailableInventory, and
+            what the owner's open purchase orders still bring to the facility. Quantities only; no valuation.</description>
         <in-parameters>
             <parameter name="productId" required="true"/>
             <parameter name="facilityId" required="true"/>
@@ -73,6 +73,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="availableStatusQuantity" type="BigDecimal"/>
             <parameter name="reservedQuantity" type="BigDecimal"/>
             <parameter name="availableToPromiseTotal" type="BigDecimal"/>
+            <parameter name="incomingQuantity" type="BigDecimal"><description>Ordered less accepted on the owner's open
+                purchase order parts for this facility</description></parameter>
         </out-parameters>
         <actions>
             <entity-find entity-name="mantle.product.asset.Asset" list="assetList">
@@ -92,6 +94,25 @@ along with this software (see the LICENSE.md file). If not, see
                         .condition('assetId', 'in', assets.map(asset => asset.assetId)).list()) {
                     const held = toDecimal(reservation.quantityNotIssued ?? reservation.quantity ?? 0).subtract(reservation.quantityNotAvailable ?? 0)
                     if (held.compare(0) > 0) reservedQuantity = reservedQuantity.add(held)
+                }
+                // incoming: the owner's open purchase order parts that ship to this facility, less what receipts accepted
+                incomingQuantity = toDecimal(0)
+                const parts = Array.from(ec.entity.find('mantle.order.OrderPart').condition('customerPartyId', ownerPartyId)
+                        .condition('facilityId', facilityId)
+                        .condition('statusId', 'in', ['OrderPlaced', 'OrderProcessing', 'OrderApproved', 'OrderSent', 'OrderHold']).list())
+                const openParts = new Set(parts.map(part => part.orderId + ':' + part.orderPartSeqId))
+                const items = parts.length ? Array.from(ec.entity.find('mantle.order.OrderItem').condition('productId', productId)
+                        .condition('orderId', 'in', [...new Set(parts.map(part => part.orderId))]).list())
+                        .filter(item => openParts.has(item.orderId + ':' + item.orderPartSeqId)) : []
+                const accepted = new Map()
+                if (items.length) for (const receipt of ec.entity.find('mantle.product.receipt.AssetReceipt')
+                        .condition('orderId', 'in', items.map(item => item.orderId)).condition('productId', productId).list()) {
+                    const key = receipt.orderId + ':' + receipt.orderItemSeqId
+                    accepted.set(key, toDecimal(accepted.get(key) ?? 0).add(receipt.quantityAccepted ?? 0))
+                }
+                for (const item of items) {
+                    const open = toDecimal(item.quantity ?? 0).subtract(accepted.get(item.orderId + ':' + item.orderItemSeqId) ?? 0)
+                    if (open.compare(0) > 0) incomingQuantity = incomingQuantity.add(open)
                 }
             ]]></script>
             <service-call name="mantle.product.AssetServices.get#AvailableInventory" out-map="available"

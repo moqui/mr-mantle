@@ -375,3 +375,12 @@ feature("an external category reference can be replaced by an uploaded owned res
         !after.document.contentLocation.includes("..")
     }
 })
+feature("translations need a chosen target language; none is assumed", {
+    when() {
+        return as("john.doe", () => call(S + "find#CatalogTranslations", {productId: "CND_PROD", sourceLocale: "en"}))
+    },
+    then(found) {
+        found.translationRows.length == 0
+        found.directLocalizationRows.length == 0
+    }
+})
