@@ -393,6 +393,17 @@ function earlierScopesVisible(p) {
 function execute(op, p) {
     if (["store", "replace", "expire"].includes(op))
         ec.context.putAll(Object.fromEntries(writeFields.map(field => [field + "_changeReason", p.changeReason || "New price"])))
-    return {store, replace, expire, access, validate, direction, findPrices, preview, earlierScopesVisible}[op](p)
+    return {
+        store,
+        replace,
+        expire,
+        access,
+        writeAccess: r => access(r, true),
+        validate,
+        direction,
+        findPrices,
+        preview,
+        earlierScopesVisible
+    }[op](p)
 }
 ;({execute, direction, overlaps})

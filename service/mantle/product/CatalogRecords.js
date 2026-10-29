@@ -29,7 +29,15 @@ function settings(p) {
             .filter(r => policy().active(r, at))
             .sort((a, b) => ms(b.fromDate) - ms(a.fromDate))[0],
         out = Object.assign({}, defaults)
-    if (row) for (const key of Object.keys(defaults)) if (row[key] != null) out[key] = row[key]
+    // the defaults of an organization with no policy row are CatalogSettings.js's
+    if (!row)
+        Object.assign(
+            out,
+            ec.resource
+                .script("component://mr-mantle/service/mantle/product/CatalogSettings.js")
+                .catalogPolicy(null, p.organizationPartyId)
+        )
+    else for (const key of Object.keys(defaults)) if (row[key] != null) out[key] = row[key]
     return {settings: out}
 }
 const masterFields =

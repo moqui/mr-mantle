@@ -175,3 +175,30 @@ feature("a referenced row requires a successor and stale corrections cannot repl
         item.unitAmount == 10
     }
 })
+feature("a reviewed bulk change rounds to the currency, replaces each pinned row once and refuses a changed preview", {
+    when() {
+        product("P5_BULK")
+        const source = price("P5_BULK", {price: 9.99})
+        const preview = invoke(S + "preview#PriceChanges", {
+                productIds: ["P5_BULK"],
+                organizationPartyId: "ORG_ZIZI_SERVICES",
+                direction: "sales",
+                percentChange: 3,
+                effectiveDate: new Date(time + 120000).toISOString(),
+                changeReason: "Native bulk review"
+            }),
+            wrong = invoke(S + "apply#PriceChanges", {operationKey: preview.operationKey, previewToken: "changed"}),
+            applied = invoke(S + "apply#PriceChanges", {operationKey: preview.operationKey, previewToken: preview.previewToken}),
+            retry = invoke(S + "apply#PriceChanges", {operationKey: preview.operationKey, previewToken: preview.previewToken})
+        return {source, preview, wrong, applied, retry}
+    },
+    then({source, preview, wrong, applied, retry}) {
+        source.error == ""
+        preview.readyCount == 1
+        toDecimal(preview.previewRows[0].afterPrice).compare(toDecimal("10.29")) == 0
+        wrong.error.includes("exact reviewed")
+        applied.successCount == 1
+        retry.successCount == 1
+        applied.results[0].successorProductPriceId == retry.results[0].successorProductPriceId
+    }
+})

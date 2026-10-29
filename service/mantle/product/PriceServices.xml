@@ -177,4 +177,98 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="reportContext" type="Map"/><parameter name="effectivePriceRows" type="List"/><parameter name="printHtml"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/EffectivePriceList.js').report(context))</script></actions>
     </service>
+    <!-- reviewed bulk price changes (PriceChanges.js) -->
+    <service verb="preview" noun="PriceChanges" allow-remote="false">
+        <description>Pin selected price rows and their new amounts (a fixed price, a percent or an amount change, in the currency's precision) for review; rows outside the scope or the user's grants are named as failures.</description>
+        <in-parameters>
+            <parameter name="productId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="direction"/>
+            <parameter name="priceTypeEnumId"/>
+            <parameter name="pricePurposeEnumId"/>
+            <parameter name="priceUomId"/>
+            <parameter name="vendorPartyId"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="productStoreId"/>
+            <parameter name="agreementId"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+            <parameter name="includeHistory" type="Boolean"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="productIds" type="Object"/>
+            <parameter name="productPriceIds" type="Object"/>
+            <parameter name="fixedPrice" type="BigDecimal"/>
+            <parameter name="percentChange" type="BigDecimal"/>
+            <parameter name="amountChange" type="BigDecimal"/>
+            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="changeReason"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey"/>
+            <parameter name="previewToken"/>
+            <parameter name="previewRows" type="List"/>
+            <parameter name="readyCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceChanges.js').execute('previewChanges', context))</script>
+        </actions>
+    </service>
+    <service verb="apply" noun="PriceChanges" allow-remote="false">
+        <description>Replace each reviewed row with a dated successor, each in its own transaction; a retry skips rows already replaced.</description>
+        <in-parameters>
+            <parameter name="operationKey"/>
+            <parameter name="previewToken"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey"/>
+            <parameter name="previewToken"/>
+            <parameter name="results" type="List"/>
+            <parameter name="successCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceChanges.js').execute('applyChanges', context))</script>
+        </actions>
+    </service>
+    <service verb="apply" noun="PriceChangeItem" allow-remote="false">
+        <description>One reviewed row (a new transaction of apply#PriceChanges).</description>
+        <in-parameters>
+            <parameter name="operationKey"/>
+            <parameter name="itemSeqId" type="Integer"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceChanges.js').execute('applyItem', context))</script>
+        </actions>
+    </service>
+    <service verb="fail" noun="PriceChangeItem" allow-remote="false">
+        <description>Record one reviewed row's failure (a new transaction of apply#PriceChanges).</description>
+        <in-parameters>
+            <parameter name="operationKey"/>
+            <parameter name="itemSeqId" type="Integer"/>
+            <parameter name="errorMessage"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceChanges.js').execute('failItem', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="PriceChanges" allow-remote="false">
+        <description>The reviewed rows and their outcomes, and which rows changed since the preview.</description>
+        <in-parameters>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey"/>
+            <parameter name="previewToken"/>
+            <parameter name="previewRows" type="List"/>
+            <parameter name="readyCount" type="Integer"/>
+            <parameter name="results" type="List"/>
+            <parameter name="successCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceChanges.js').execute('changeInfo', context))</script>
+        </actions>
+    </service>
 </services>

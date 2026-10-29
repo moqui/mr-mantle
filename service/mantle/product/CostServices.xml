@@ -80,7 +80,9 @@
             <parameter name="need" type="String" />
             <parameter name="calculationId" type="String" />
             <parameter name="productIds" type="List" />
-            <parameter name="methodMode" type="String" /><parameter name="transientPreview" type="Boolean"/>
+            <parameter name="methodMode" type="String" />
+            <parameter name="transientPreview" type="Boolean"/>
+            <parameter name="includePathTotals" type="Boolean"><description>Also answer pathTotals: the amount of each BOM path with its branch</description></parameter>
             <parameter name="productFeatureIds" type="List" />
         </in-parameters>
         <out-parameters>
@@ -117,7 +119,9 @@
             <parameter name="priceUomId" type="String" />
             <parameter name="asOfDate" type="Timestamp" />
             <parameter name="materialBasis" type="String" />
-            <parameter name="methodMode" type="String" /><parameter name="transientPreview" type="Boolean"/>
+            <parameter name="methodMode" type="String" />
+            <parameter name="transientPreview" type="Boolean"/>
+            <parameter name="includePathTotals" type="Boolean"><description>Also answer pathTotals: the amount of each BOM path with its branch</description></parameter>
             <parameter name="overheadBasis" type="String" />
             <parameter name="overheadPercent" type="BigDecimal" />
             <parameter name="productFeatureIds" type="List" />
@@ -130,6 +134,7 @@
             <parameter name="request" type="Map" />
             <parameter name="standardCost" type="Map" />
             <parameter name="componentRows" type="List" />
+            <parameter name="pathTotals" type="Map" />
             <parameter name="findings" type="List" />
             <parameter name="complete" type="Boolean" />
             <parameter name="inputFingerprint" type="String" />

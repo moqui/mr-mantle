@@ -969,8 +969,23 @@ function calculate(p) {
         inputFingerprint: fingerprint
     }
 }
+// The amount of each BOM path and its branch: a line counts toward its own path and every path above it.
+function pathTotals(lines) {
+    const totals = {}
+    for (const line of lines) {
+        if (!line.path || line.amount == null) continue
+        const parts = String(line.path).split("/")
+        for (let i = 1; i <= parts.length; i++) {
+            const path = parts.slice(0, i).join("/")
+            totals[path] = (totals[path] == null ? toDecimal(0) : toDecimal(totals[path])).add(line.amount)
+        }
+    }
+    for (const path of Object.keys(totals)) totals[path] = String(totals[path])
+    return totals
+}
 function preview(p) {
     const result = calculate(p)
+    if (p.includePathTotals) result.pathTotals = pathTotals(result.componentRows)
     if (p.transientPreview) return result
     const id = "pcalc-" + ec.user.randomString(24),
         now = ec.user.nowTimestamp
