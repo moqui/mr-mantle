@@ -65,6 +65,13 @@ function list(p) {
 function read(p) {
     const row = lib.record(p)
     const out = { record: map(row) }
+    if (["invoices", "bills"].includes(p.kind) && row.invoiceTotal == null)
+        Object.assign(
+            out.record,
+            call("mantle.account.InvoiceServices.get#InvoiceTotal", {
+                invoiceId: row.invoiceId,
+            }),
+        )
     if (p.kind === "accounts") {
         const scope = lib.scope(p),
             org =

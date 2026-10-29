@@ -32,3 +32,6 @@ b48e696c baseline reproduces InboxThreads, MantleSearch, WorkTimeEntries and Wor
 controls/reports, original ledger baseline, Products standard costs/revaluation and Projects billing pass 82/82.
 Journal/template/payment writers round to the selected currency; clone previews identify destination-incompatible
 mappings without blocking independent compatible rows.
+
+Authorized invoice/bill reads compute totals through the existing read-only InvoiceServices.get#InvoiceTotal when
+stored totals are absent. The parent record's permission and organization checks precede the child calculation.
