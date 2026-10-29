@@ -79,9 +79,25 @@ function costBasis(p){
  const g=get(p.workEffortId||p.routingWorkEffortId);if(!g.scope.costRead)throw new Error('Separate cost-read authority is required');const date=p.asOfDate||ec.user.nowTimestamp,r=released(g.routing.workEffortId,date),out=[],findings=[],quantity=toDecimal(p.quantity??1)
  if(quantity.compare(0)<=0)throw new Error('Cost-basis quantity must be positive')
  for(const op of r.operations.filter(o=>!p.operationWorkEffortId||o.workEffortId===p.operationWorkEffortId))try{
-  const normalized=policy().convert(quantity,p.quantityUomId||op.quantityUomId,op.quantityUomId,date).quantity,batches=normalized.divide(op.batchQuantity),labor=policy().convert(toDecimal(op.setupTime||0).add(toDecimal(op.runTime||0).multiply(batches)),op.timeUomId,'TF_hr',date).quantity,machine=policy().convert(toDecimal(op.machineSetupTime||0).add(toDecimal(op.machineRunTime||0).multiply(batches)),op.timeUomId,'TF_hr',date).quantity,hours={PccLabor:labor,PccMachine:machine,PccOverhead:machine.compare(0)>0?machine:labor}
+  const normalized=policy().convert(quantity,p.quantityUomId||op.quantityUomId,op.quantityUomId,date).quantity,batches=normalized.divide(op.batchQuantity)
+  const lot=p.costingLotQuantity==null?null:policy().convert(p.costingLotQuantity,p.costingLotUomId||p.quantityUomId||op.quantityUomId,op.quantityUomId,date).quantity
+  if(lot&&lot.compare(0)<=0)throw new Error('Costing lot size must be positive')
+  const setupCycles=lot?normalized.divide(lot):toDecimal(1),center=op.workCenterFacilityId?one(WC,{facilityId:op.workCenterFacilityId}):null,efficiency=p.applyEfficiency?toDecimal(center?.efficiencyPercent??100).divide(100):toDecimal(1)
+  if(efficiency.compare(0)<=0)throw new Error('Work-center efficiency must be positive')
+  const labor=policy().convert(toDecimal(op.setupTime||0).multiply(setupCycles).add(toDecimal(op.runTime||0).multiply(batches)),op.timeUomId,'TF_hr',date).quantity.divide(efficiency),machine=policy().convert(toDecimal(op.machineSetupTime||0).multiply(setupCycles).add(toDecimal(op.machineRunTime||0).multiply(batches)),op.timeUomId,'TF_hr',date).quantity.divide(efficiency),hours={PccLabor:labor,PccMachine:machine,PccOverhead:machine.compare(0)>0?machine:labor}
+
   if(op.workCenterFacilityId)policy().facility(op.workCenterFacilityId,g.scope)
-  for(const component of ['PccLabor','PccMachine','PccOverhead']){if(hours[component].isZero())continue;const rates=op.workCenterFacilityId?rows(RATE,{facilityId:op.workCenterFacilityId,componentTypeEnumId:component,state:'approved'}).filter(r=>active(r,date)&&(!p.priceUomId||r.priceUomId===p.priceUomId)):[],currencies=[...new Set(rates.map(r=>r.priceUomId))];if(rates.length!==1||currencies.length!==1){out.push({workEffortId:op.workEffortId,componentTypeEnumId:component,hours:String(hours[component]),amount:null,valued:false});findings.push({recordId:op.workEffortId,message:'No unique effective '+component+' hourly rate'});continue}const rate=rates[0];out.push({workEffortId:op.workEffortId,componentTypeEnumId:component,hours:String(hours[component]),rateAmount:String(rate.rateAmount),priceUomId:rate.priceUomId,workCenterRateId:rate.workCenterRateId,amount:String(hours[component].multiply(rate.rateAmount)),valued:true})}
+  const requested=p.componentTypeEnumIds||['PccLabor','PccMachine','PccOverhead']
+  if(requested.some(c=>!['PccLabor','PccMachine','PccOverhead'].includes(c)))throw new Error('Choose supported hourly cost components')
+  for(const component of requested){
+   if(hours[component].isZero())continue
+   const available=op.workCenterFacilityId?rows(RATE,{facilityId:op.workCenterFacilityId,componentTypeEnumId:component,state:'approved'}).filter(r=>active(r,date)):[]
+   const exact=p.priceUomId?available.filter(r=>r.priceUomId===p.priceUomId):available
+   const rates=exact.length||!p.allowCurrencyConversion?exact:available
+   if(rates.length!==1){out.push({workEffortId:op.workEffortId,componentTypeEnumId:component,hours:String(hours[component]),amount:null,valued:false});findings.push({recordId:op.workEffortId,message:'No unique effective '+component+' hourly rate'});continue}
+   const rate=rates[0]
+   out.push({workEffortId:op.workEffortId,componentTypeEnumId:component,hours:String(hours[component]),rateAmount:String(rate.rateAmount),priceUomId:rate.priceUomId,workCenterRateId:rate.workCenterRateId,amount:String(hours[component].multiply(rate.rateAmount)),valued:true})
+  }
  }catch(e){findings.push({recordId:op.workEffortId,message:String(e.message||e)});ec.logger.error('Routing cost basis '+op.workEffortId+': '+e)}
  return{operationCostRows:out,complete:!findings.length,findings,asOfDate:date,methodReleaseDecisionId:r.methodReleaseDecisionId}
 }

@@ -5,10 +5,10 @@ const map=r=>r?.getMap?r.getMap():Object.assign({},r||{}),ms=v=>v==null||v===''?
 const active=(r,date)=>(ms(r.fromDate)??-Infinity)<=ms(date)&&(ms(r.thruDate)??Infinity)>ms(date)
 const pick=(p,fields)=>Object.fromEntries(fields.filter(k=>Object.keys(p).includes(k)).map(k=>[k,p[k]===''?null:p[k]]))
 function capabilities(){
- const systemAdmin=!!ec.user.userId&&ec.user.isInGroup('ADMIN'),blocked=!ec.user.userId||!systemAdmin&&ec.user.isInGroup('BOSS_PROJECT_CLIENT')
- const has=g=>!blocked&&(systemAdmin||ec.user.isInGroup(g)||g.startsWith('BOSS_PRODUCTS')&&ec.user.isInGroup('BOSS_PRODUCTS_ADMIN'))
- return{systemAdmin,read:!blocked&&['BOSS_MANUFACTURING_READ','BOSS_MANUFACTURING_METHOD','BOSS_MANUFACTURING_METHOD_APPROVE','BOSS_MANUFACTURING_RESOURCE_ADMIN','BOSS_MANUFACTURING_COST'].some(has),edit:has('BOSS_MANUFACTURING_METHOD'),approve:has('BOSS_MANUFACTURING_METHOD_APPROVE'),resources:has('BOSS_MANUFACTURING_RESOURCE_ADMIN'),costRead:['BOSS_PRODUCTS_COST_READ','BOSS_PRODUCTS_COST_ESTIMATE','BOSS_PRODUCTS_COST_APPROVE','BOSS_ACCOUNTING_READ'].some(has),costWrite:['BOSS_PRODUCTS_COST_ESTIMATE','BOSS_PRODUCTS_COST_APPROVE'].some(has),costApprove:has('BOSS_PRODUCTS_COST_APPROVE')}
+ const access=ec.resource.script('component://mr-mantle/service/mantle/product/ProductAccess.js'),has=access.has
+ return{systemAdmin:access.systemAdmin(),read:['METHOD_VIEW','METHOD_EDIT','METHOD_APPROVE','METHOD_RESOURCES'].some(has),edit:has('METHOD_EDIT'),approve:has('METHOD_APPROVE'),resources:has('METHOD_RESOURCES'),costRead:['PRODUCT_COST_VIEW','PRODUCT_COST_ESTIMATE','PRODUCT_COST_APPROVE','ACCOUNTING_VIEW','ACCOUNTING_GL_POST'].some(has),costWrite:['PRODUCT_COST_ESTIMATE','PRODUCT_COST_APPROVE','METHOD_COST_EDIT'].some(has),costApprove:['PRODUCT_COST_APPROVE','METHOD_COST_APPROVE'].some(has)}
 }
+
 function scope(p={},need='read'){
  if(!['read','edit','approve','resources','costRead','costWrite','costApprove'].includes(need))throw new Error('Unknown method capability')
  const a=capabilities();if(!a.read||!a[need])throw new Error('Manufacturing '+need+' authority is required')

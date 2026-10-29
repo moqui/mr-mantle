@@ -354,7 +354,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="setup" noun="ClientProjectInfo" authenticate="anonymous-view">
         <description>
             Puts what a client contact sees (get#ClientProjectInfo) in the user context for the entity filters of an app's client
-            group (IronStone's BOSS_PROJECT_CLIENT filter set; impl-projects.md F2), as setup#UserOrganizationInfo does for the
+            permission and the application's client filter set, as setup#UserOrganizationInfo does for the
             organization filters; called per render from an app root's always-actions. clientUser is true for a client; each
             list holds _NA_ when empty, so a filter on it matches nothing. A failure leaves the user a client with empty lists.
         </description>

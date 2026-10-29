@@ -701,7 +701,7 @@
         </actions>
     </service>
     <service verb="get" noun="OperationCostBasis" allow-remote="false">
-        <in-parameters>
+        <in-parameters><parameter name="costingLotQuantity" type="BigDecimal"/><parameter name="costingLotUomId" type="String"/><parameter name="applyEfficiency" type="Boolean"/>
             <parameter name="workEffortId" type="String"/>
             <parameter name="routingWorkEffortId" type="String"/>
             <parameter name="operationWorkEffortId" type="String"/>
@@ -741,6 +741,8 @@
             <parameter name="quantity" type="BigDecimal"/>
             <parameter name="quantityUomId" type="String"/>
             <parameter name="need" type="String"/>
+            <parameter name="componentTypeEnumIds" type="List"/>
+            <parameter name="allowCurrencyConversion" type="Boolean"/>
         </in-parameters>
         <out-parameters>
             <parameter name="routing" type="Map"/>

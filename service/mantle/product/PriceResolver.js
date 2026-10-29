@@ -8,8 +8,8 @@ const active=(r,date)=>(ms(r.fromDate)??-Infinity)<=ms(date)&&(ms(r.thruDate)??I
 const policy=()=>ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js')
 const call=(name,p)=>{const out=ec.service.sync().name(name).parameters(p||{}).disableAuthz().call()||{};if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return out}
 const internal=id=>!!id&&!!one('mantle.party.PartyRole',{partyId:id,roleTypeId:'OrgInternal'})
-const has=g=>!!ec.user.userId&&(!ec.user.isInGroup('BOSS_PROJECT_CLIENT')||ec.user.isInGroup('ADMIN'))&&(ec.user.isInGroup(g)||g.startsWith('BOSS_PRODUCTS')&&ec.user.isInGroup('BOSS_PRODUCTS_ADMIN'))
-const read=(direction,cost=false)=>has('ADMIN')||(cost?['BOSS_PRODUCTS_COST_READ','BOSS_PRODUCTS_COST_ESTIMATE','BOSS_PRODUCTS_COST_APPROVE']:direction==='purchase'?['BOSS_PRODUCTS_SUPPLIER_PRICE_READ','BOSS_PRODUCTS_SUPPLIER_PRICE_EDIT']:['BOSS_PRODUCTS_PRICE_READ','BOSS_PRODUCTS_PRICE_EDIT']).some(has)
+const has=permission=>ec.resource.script('component://mr-mantle/service/mantle/product/ProductAccess.js').has(permission)
+const read=(direction,cost=false)=>has('ADMIN')||(cost?['PRODUCT_COST_VIEW','PRODUCT_COST_ESTIMATE','PRODUCT_COST_APPROVE','ACCOUNTING_VIEW','ACCOUNTING_GL_POST']:direction==='purchase'?['SUPPLIER_PRICE_VIEW','SUPPLIER_PRICE_EDIT']:['PRICE_VIEW','PRICE_EDIT']).some(has)
 function context(p){
  const out=Object.assign({},p);out.validDate=p.validDate||ec.user.nowTimestamp;out.quantity=p.quantity==null?toDecimal(1):toDecimal(p.quantity);out.priceUomId=p.priceUomId||ec.user.getPreference('CurrencyDefault')||'USD';out.pricePurposeEnumId=p.pricePurposeEnumId||'PppPurchase'
  if(!Number.isFinite(ms(out.validDate))||out.quantity.compare(0)<0)throw new Error('Choose a valid price date and nonnegative quantity')
@@ -119,18 +119,21 @@ function evaluate(list,c,path=[]){
   if(rule.baseType==='fixed')base=toDecimal(rule.fixedPrice)
   else if(rule.baseType==='typed'){source=extras(Object.assign({},c,{priceUomId:list.priceUomId}),fallback(Object.assign({},c,{priceUomId:list.priceUomId}),rule.basePriceTypeEnumId));if(!source)throw new Error('Missing '+rule.basePriceTypeEnumId+' base for rule '+rule.priceRuleId);base=source.price}
   else if(rule.baseType==='list'){const nested=policy().getList(rule.basePriceListId);if(!listEligible(nested,c))throw new Error('Base list '+rule.basePriceListId+' is not effective for this context');source=evaluate(nested,Object.assign({},c,{priceUomId:nested.priceUomId}),path.concat(list.priceListId));if(!source)throw new Error('No eligible rule in base list '+rule.basePriceListId);base=conversion(source.price,nested.priceUomId,list.priceUomId,c.validDate,c)}
-  else throw new Error('Approved standard-estimate base is not yet available')
+  else if(rule.baseType==='standard'){source=ec.resource.script('component://mr-mantle/service/mantle/product/Costs.js').pricingBase(Object.assign({},c,{priceUomId:list.priceUomId}));base=toDecimal(source.unitCost)}
+  else throw new Error('Choose a supported price-rule base')
+  const sensitive=rule.baseType==='standard'||source?.containsCostBase,hideCost=sensitive&&!read('sales',true)
   const input=base,percentage=base.multiply(toDecimal(1).add(toDecimal(rule.percentChange||0).divide(100))),adjusted=percentage.add(rule.amountChange||0)
   let rounded=adjusted;if(rule.roundingIncrement!=null)rounded=adjusted.divide(rule.roundingIncrement).setScale(0,'HALF_UP').multiply(rule.roundingIncrement)
   let bounded=rounded;if(rule.minimumPrice!=null&&bounded.compare(rule.minimumPrice)<0)bounded=toDecimal(rule.minimumPrice);if(rule.maximumPrice!=null&&bounded.compare(rule.maximumPrice)>0)bounded=toDecimal(rule.maximumPrice)
   if(bounded.compare(0)<0)throw new Error('Rule '+rule.priceRuleId+' produces a negative price')
-  step(c,{kind:'rule-base',sourceEntity:P+'ProductPriceRule',sourceId:rule.priceRuleId,eligible:true,priceUomId:list.priceUomId,afterAmount:input,operation:rule.baseType})
+  if(!hideCost){step(c,{kind:'rule-base',sourceEntity:P+'ProductPriceRule',sourceId:rule.priceRuleId,eligible:true,priceUomId:list.priceUomId,afterAmount:input,operation:rule.baseType})
   step(c,{kind:'percentage',beforeAmount:input,operand:rule.percentChange||0,afterAmount:percentage})
   step(c,{kind:'adjustment',beforeAmount:percentage,operand:rule.amountChange||0,afterAmount:adjusted})
   step(c,{kind:'rounding',beforeAmount:adjusted,operand:rule.roundingIncrement,afterAmount:rounded})
-  step(c,{kind:'bounds',beforeAmount:rounded,afterAmount:bounded})
+  step(c,{kind:'bounds',beforeAmount:rounded,afterAmount:bounded})}
+  else step(c,{kind:'restricted-standard-base',eligible:true,reason:'Cost-read authority is required for the base and intermediate amounts'})
   const stockUnit=one(P+'Product',{productId:c.productId})?.amountUomId,unitFactor=rule.baseType==='fixed'?conversion(1,c.quantityUomId||stockUnit,rule.quantityUomId||c.quantityUomId||stockUnit,c.validDate):toDecimal(1)
-  return{price:conversion(bounded.multiply(unitFactor),list.priceUomId,c.priceUomId,c.validDate,c),productPriceId:source?.productPriceId,priceListId:list.priceListId,priceRuleId:rule.priceRuleId,taxInPrice:source?.taxInPrice}
+  return{price:conversion(bounded.multiply(unitFactor),list.priceUomId,c.priceUomId,c.validDate,c),productPriceId:source?.productPriceId,priceListId:list.priceListId,priceRuleId:rule.priceRuleId,taxInPrice:source?.taxInPrice,containsCostBase:!!sensitive}
  }
  return null
 }

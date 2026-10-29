@@ -388,6 +388,7 @@ along with this software (see the LICENSE.md file). If not, see
         </field>
         <field name="unitListPrice" type="currency-precise"/>
         <field name="isModifiedPrice" type="text-indicator"/>
+        <field name="productStandardCostId" type="id" enable-audit-log="true"><description>The approved sales estimate applied when the line was created; purchase accounting keeps standardCost unchanged.</description></field>
         <field name="standardCost" type="currency-precise" enable-audit-log="true">
             <description>For purchase orders the cost for accounting purposes if different from unitAmount. Used to set Asset.acquireCost on receipt.</description></field>
 

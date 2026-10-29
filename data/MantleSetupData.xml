@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
         approve#MilestoneApproval), the gates set and the estimate sent on the projects they see -->
     <userPermissions userPermissionId="MILESTONE_APPROVE" description="Milestone Approve (record a gate's decision for its approver)"/>
     <userGroupPermissions userGroupId="ADMIN" userPermissionId="MILESTONE_APPROVE" fromDate="0"/>
-    <!-- a client contact who signs in (an app's client group holds it, IronStone's BOSS_PROJECT_CLIENT): the project services see
+    <!-- a client contact who signs in (granted by the owning application): the project services see
         for such a user only the shared part of the client projects of its organizations (mantle.work.ProjectServices
         get#ClientProjectInfo, get#VisibleProjectInfo; mantle.party.CommunicationServices get#RecordLinkInfo, get#RecordTimeline),
         whatever other group it is in. Not granted to ADMIN, nor to any group by default. The group that holds it should hold

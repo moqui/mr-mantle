@@ -7,7 +7,7 @@ const map=r=>r.getMap?r.getMap():Object.assign({},r)
 const ms=v=>v==null||v===''?null:Number.isFinite(Number(String(v)))?Number(String(v)):Date.parse(String(v))
 const call=(n,p)=>{const out=ec.service.sync().name(n).parameters(p||{}).disableAuthz().call()||{};if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return out}
 const internal=id=>!!id&&!!one('mantle.party.PartyRole',{partyId:id,roleTypeId:'OrgInternal'})
-const has=g=>!!ec.user.userId&&(!ec.user.isInGroup('BOSS_PROJECT_CLIENT')||ec.user.isInGroup('ADMIN'))&&(ec.user.isInGroup(g)||g.startsWith('BOSS_PRODUCTS')&&ec.user.isInGroup('BOSS_PRODUCTS_ADMIN'))
+const has=permission=>ec.resource.script('component://mr-mantle/service/mantle/product/ProductAccess.js').has(permission)
 const optional=['productStoreId','vendorPartyId','customerPartyId','pricePurposeEnumId','quantityUomId','termUomId','agreementId','agreementItemSeqId']
 const writeFields='productId,productStoreId,vendorPartyId,customerPartyId,priceTypeEnumId,pricePurposeEnumId,fromDate,thruDate,minQuantity,price,priceUomId,termUomId,taxInPrice,taxAmount,taxPercentage,taxAuthorityId,agreementId,agreementItemSeqId,otherPartyItemName,otherPartyItemId,comments,quantityIncrement,quantityIncluded,quantityUomId,preferredOrderEnumId,supplierRatingTypeEnumId,standardLeadTimeDays,canDropShip,changeReason'.split(',')
 const pick=(p,keys)=>Object.fromEntries(keys.filter(k=>Object.keys(p).includes(k)).map(k=>[k,p[k]===''?null:p[k]]))
@@ -25,10 +25,10 @@ function access(r,write=false){
  if(d==='invalid'||(write&&d==='public'&&!admin))throw new Error('Choose an internal sales vendor, or an external supplier and an internal buying organization')
  if(org&&!admin&&!scope.ownerPartyIds.includes(org))throw new Error('Price organization is not available')
  if(r.priceTypeEnumId==='PptAverage'){
-  if(!admin&&(write||!has('BOSS_PRODUCTS_COST_READ')&&!has('BOSS_PRODUCTS_COST_ESTIMATE')&&!has('BOSS_PRODUCTS_COST_APPROVE')))throw new Error('Cost authority is required; maintain valuation costs in their owning application')
+  if(!admin&&(write||!has('PRODUCT_COST_VIEW')&&!has('PRODUCT_COST_ESTIMATE')&&!has('PRODUCT_COST_APPROVE')&&!has('ACCOUNTING_VIEW')&&!has('ACCOUNTING_GL_POST')))throw new Error('Cost authority is required; maintain valuation costs in their owning application')
  }else{
-  const group=d==='purchase'?'BOSS_PRODUCTS_SUPPLIER_PRICE_':'BOSS_PRODUCTS_PRICE_'
-  if(!admin&&!(write?has(group+'EDIT'):has(group+'READ')||has(group+'EDIT')))throw new Error(d==='purchase'?'Supplier-price authority is required':'Sales-price authority is required')
+  const group=d==='purchase'?'SUPPLIER_PRICE_':'PRICE_'
+  if(!admin&&!(write?has(group+'EDIT'):has(group+'VIEW')||has(group+'EDIT')))throw new Error(d==='purchase'?'Supplier-price authority is required':'Sales-price authority is required')
  }
  return {direction:d,organizationPartyId:org,product:b,systemAdmin:admin,scope}
 }
@@ -105,7 +105,7 @@ function expire(p){let old=fresh(p);if(!old)throw new Error('Choose the price to
 function findPrices(p){
  const scope=call(P+'ProductServices.get#CatalogOwnerScope'),b=one(P+'Product',{productId:p.productId})
  if(!b||(!scope.systemAdmin&&!scope.ownerPartyIds.includes(b.ownerPartyId)))throw new Error('Product is not available')
- const canRead=scope.systemAdmin||['BOSS_PRODUCTS_PRICE_READ','BOSS_PRODUCTS_PRICE_EDIT','BOSS_PRODUCTS_SUPPLIER_PRICE_READ','BOSS_PRODUCTS_SUPPLIER_PRICE_EDIT','BOSS_PRODUCTS_COST_READ','BOSS_PRODUCTS_COST_ESTIMATE','BOSS_PRODUCTS_COST_APPROVE'].some(has)
+ const canRead=scope.systemAdmin||['PRICE_VIEW','PRICE_EDIT','SUPPLIER_PRICE_VIEW','SUPPLIER_PRICE_EDIT','PRODUCT_COST_VIEW','PRODUCT_COST_ESTIMATE','PRODUCT_COST_APPROVE'].some(has)
  if(!canRead)throw new Error('Price read authority is required')
  const at=ms(p.asOfDate||ec.user.nowTimestamp),out=[]
  for(const row of rows(E,{productId:p.productId})){

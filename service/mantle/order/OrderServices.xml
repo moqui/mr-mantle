@@ -304,6 +304,11 @@ General Order Placement and eCommerce Usage
                 <set field="productPriceId" from="priceMap.productPriceId"/><set field="priceListId" from="priceMap.priceListId"/><set field="priceRuleId" from="priceMap.priceRuleId"/>
                 <set field="isModifiedPrice" value="N"/>
             </if>
+            <if condition="isProductItem"><script>
+                const snapshot = ec.resource.script('component://mr-mantle/service/mantle/product/Costs.js').orderSnapshot({orderId:orderId,orderPartSeqId:orderPartSeqId,productId:productId,quantityUomId:quantityUomId})
+                productStandardCostId=snapshot.sales &amp;&amp; snapshot.costAvailable?snapshot.productStandardCostId:null
+                if(snapshot.sales &amp;&amp; snapshot.costAvailable) { standardCost=snapshot.unitCost; ec.context.putAll({standardCost_changeReason:'Approved standard estimate at line creation',productStandardCostId_changeReason:'Approved standard estimate at line creation'}) }
+            </script></if>
             <service-call name="create#mantle.order.OrderItem" in-map="context" out-map="context"/>
         </actions>
     </service>
@@ -451,6 +456,20 @@ General Order Placement and eCommerce Usage
                 </if>
             </else></if>
 
+            <script>
+                const current=ec.entity.find('mantle.order.OrderItem').condition({orderId:orderId,orderItemSeqId:orderItemSeqId}).disableAuthz().one()
+                const part=current?ec.entity.find('mantle.order.OrderPart').condition({orderId:orderId,orderPartSeqId:orderPartSeqId || current.orderPartSeqId}).disableAuthz().one():null
+                const sales=part &amp;&amp; ec.entity.find('mantle.party.PartyRole').condition({partyId:part.vendorPartyId,roleTypeId:'OrgInternal'}).disableAuthz().one() &amp;&amp; !ec.entity.find('mantle.party.PartyRole').condition({partyId:part.customerPartyId,roleTypeId:'OrgInternal'}).disableAuthz().one()
+                productStandardCostId=current?.productStandardCostId || null
+                const changed=current &amp;&amp; (productId!==current.productId || (quantityUomId &amp;&amp; quantityUomId!==current.quantityUomId) || orderPartSeqId!==current.orderPartSeqId)
+                if(sales &amp;&amp; changed) {
+                    const snapshot=ec.resource.script('component://mr-mantle/service/mantle/product/Costs.js').orderSnapshot({orderId:orderId,orderPartSeqId:orderPartSeqId,productId:productId,quantityUomId:quantityUomId || current.quantityUomId})
+                    if(snapshot.costAvailable) { standardCost=snapshot.unitCost; productStandardCostId=snapshot.productStandardCostId }
+                    else { if(current.productStandardCostId) standardCost=null; productStandardCostId=null }
+                    ec.context.putAll({standardCost_changeReason:'Approved estimate for changed product or unit',productStandardCostId_changeReason:'Approved estimate for changed product or unit'})
+                } else if(productStandardCostId &amp;&amp; sales) standardCost=current.standardCost
+                else if(!sales) productStandardCostId=null
+            </script>
             <service-call name="update#mantle.order.OrderItem" in-map="context"/>
             <!-- leave this out, may be nice to have a way to easily ignore messages from a specific service call: <message>Order item ${orderItemSeqId} updated</message> -->
         </actions>

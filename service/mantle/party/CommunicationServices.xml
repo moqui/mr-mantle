@@ -2382,9 +2382,35 @@ along with this software (see the LICENSE.md file). If not, see
                 // Catalog record mounts/drive links also enforce owner scope without an active-org filter. A catalog
                 // user's internal file/room callback retains this rule even when artifact authorization is disabled.
                 if (['mantle.product.Product', 'mantle.product.category.ProductCategory', 'mantle.product.feature.ProductFeature', 'mantle.product.feature.ProductFeatureGroup'].includes(entityName)
-                        && (authzOn || (!!ec.user.userId && ec.user.isInGroup('BOSS_PRODUCTS')))) {
+                        && !!ec.user.userId) {
                     const catalog = ec.service.sync().name('mantle.product.ProductServices.get#CatalogOwnerScope').disableAuthz().call() || {}
                     if (!catalog.systemAdmin && !Array.from(catalog.ownerPartyIds || []).includes(value.ownerPartyId || (entityName === 'mantle.product.feature.ProductFeatureGroup' ? '_NA_' : null))) return false
+                }
+                if (['mantle.product.receipt.AssetReceipt','mantle.product.issuance.AssetIssuance','mantle.product.asset.AssetDetail'].includes(entityName)) {
+                    const asset=ec.entity.find('mantle.product.asset.Asset').condition('assetId',value.assetId).disableAuthz().one()
+                    if(!asset)return false
+                    ec.resource.script('component://mr-mantle/service/mantle/product/CostPolicy.js').scope({organizationPartyId:asset.ownerPartyId,productId:asset.productId})
+                }
+                if (['mantle.product.asset.AssetBookEvent','mantle.product.asset.AssetRevaluationPreview','mantle.ledger.transaction.PostingOperation'].includes(entityName)) {
+                    const costs = ec.resource.script('component://mr-mantle/service/mantle/product/CostPolicy.js')
+                    const costScope = costs.scope(value)
+                    if (!costScope.financeRead) return false
+                    return entityName === 'mantle.product.asset.AssetBookEvent' || value.userId === ec.user.userId || costScope.systemAdmin
+                }
+                if (entityName === 'mantle.product.cost.ProductStandardCost') return !!ec.service.sync()
+                        .name('mantle.product.CostServices.get#StandardCostAccess').parameters({productStandardCostId:id}).disableAuthz().call()?.recordVisible
+                if (entityName === 'mantle.product.cost.ProductStandardCostComponent') {
+                    const cost = ec.service.sync().name('mantle.product.CostServices.get#StandardCostAccess')
+                            .parameters({productStandardCostId:value.productStandardCostId}).disableAuthz().call() || {}
+                    if (!cost.recordVisible) return false
+                    const costs = ec.resource.script('component://mr-mantle/service/mantle/product/CostPolicy.js')
+                    const capabilities = costs.scope(cost.record)
+                    return ec.resource.script('component://mr-mantle/service/mantle/product/Costs.js').sourceVisible(value,capabilities)
+                }
+                if (entityName === 'mantle.product.cost.ProductCostCalculation') {
+                    const costs = ec.resource.script('component://mr-mantle/service/mantle/product/CostPolicy.js')
+                    const costScope = costs.scope(value)
+                    return value.userId === ec.user.userId || costScope.systemAdmin
                 }
                 if (['mantle.product.bom.ProductBomItem','mantle.product.bom.ProductBomContent'].includes(entityName)) return !!ec.service.sync()
                         .name('mantle.product.BomServices.get#BomAccess').parameters({productBomId:value.productBomId}).disableAuthz().call()?.recordVisible

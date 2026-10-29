@@ -125,7 +125,7 @@ function explode(p){
  if(quantity.compare(0)<=0)throw new Error('Explosion quantity must be positive')
  if(p.facilityId)policy().facility(p.facilityId,g.scope)
  const top=headerAt(g.bom,date),entered=policy().convert(quantity,p.quantityUomId||top.header.quantityUomId,top.header.quantityUomId,date)
- function walk(header,qty,path,ids){
+ function walk(header,qty,path,ids,planning=true){
   if(ids.includes(header.productBomId))throw new Error('BOM cycle: '+[...ids,header.productBomId].join(' → '));if(ids.length>=64)throw new Error('BOM depth exceeds 64')
   const base=toDecimal(header.baseQuantity);if(base.compare(0)<=0)throw new Error('BOM base quantity is invalid')
   for(const row of items(header.productBomId,date)){
@@ -137,8 +137,10 @@ function explode(p){
     Object.assign(node,{productName:product.productName,netQuantity:String(net),grossQuantity:String(gross),inventoryQuantity:String(converted.quantity),inventoryUomId:product.amountUomId||row.quantityUomId,conversionFactor:String(converted.factor),uomConversionId:converted.uomConversionId,complete:true})
     if(row.roleEnumId==='BmirByproduct')continue
     const child=choose(row.productId,g.bom.organizationPartyId,date,row.componentProductBomId)
-    if(child){const childQty=policy().convert(gross,row.quantityUomId,child.header.quantityUomId,date);Object.assign(node,{componentProductBomId:child.header.productBomId,componentReleaseDecisionId:child.release.methodReleaseDecisionId,isPhantom:child.header.isPhantom});walk(child.header,childQty.quantity,occurrence,[...ids,header.productBomId])}
-    else{node.leaf=true;const key=row.productId+'|'+node.inventoryUomId;requirements[key]=Object.assign(requirements[key]||{productId:row.productId,quantity:toDecimal(0),quantityUomId:node.inventoryUomId},{quantity:(requirements[key]?.quantity||toDecimal(0)).add(converted.quantity)})}
+    const boundary=planning&&(!child||child.header.isPhantom!=='Y'&&!p.fullBlowThrough);node.requiredForProduction=boundary;node.planningBoundary=!!child&&boundary
+    if(boundary){const key=row.productId+'|'+node.inventoryUomId;requirements[key]=Object.assign(requirements[key]||{productId:row.productId,quantity:toDecimal(0),quantityUomId:node.inventoryUomId},{quantity:(requirements[key]?.quantity||toDecimal(0)).add(converted.quantity)})}
+    if(child){const childQty=policy().convert(gross,row.quantityUomId,child.header.quantityUomId,date);Object.assign(node,{componentProductBomId:child.header.productBomId,componentReleaseDecisionId:child.release.methodReleaseDecisionId,isPhantom:child.header.isPhantom});walk(child.header,childQty.quantity,occurrence,[...ids,header.productBomId],planning&&!boundary)}
+    else node.leaf=true
    }catch(e){node.complete=false;findings.push({recordId:row.bomItemId,path:node.path,message:String(e.message||e)});ec.logger.error('BOM explosion line '+row.bomItemId+': '+e)}
   }
  }

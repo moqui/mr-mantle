@@ -7,9 +7,9 @@ const flags=['lotRequired','serialRequired','expiryBlock'],days=['shelfLifeDays'
 const current=(r,at)=>(ms(r.fromDate)??-Infinity)<=at&&(ms(r.thruDate)??Infinity)>at
 const pick=(p,fields)=>Object.fromEntries(fields.filter(k=>Object.keys(p).includes(k)).map(k=>[k,p[k]===''?null:p[k]]))
 function guard(p,write=false){
- const s=call(P+'ProductServices.get#CatalogOwnerScope'),blocked=!s.systemAdmin&&ec.user.isInGroup('BOSS_PROJECT_CLIENT')
+ const s=call(P+'ProductServices.get#CatalogOwnerScope'),blocked=!s.systemAdmin&&ec.user.hasPermission('PROJECT_CLIENT')
  if(!ec.user.userId||blocked)throw new Error('Warehouse policy is not available')
- const canPlan=s.systemAdmin||ec.user.isInGroup('BOSS_WAREHOUSE_STOCK_PLANNER')||ec.user.isInGroup('BOSS_WAREHOUSE_MANAGER')
+ const canPlan=s.systemAdmin||ec.user.hasPermission('STOCK_POLICY_PLAN')||ec.user.hasPermission('STOCK_POLICY_MANAGE')
  if(write&&!canPlan)throw new Error('Warehouse stock-planner or manager authority is required')
  const facility=p.facilityId&&p.facilityId!=='_NA_'?one(E+'Facility',{facilityId:p.facilityId}):null
  if(p.facilityId&&p.facilityId!=='_NA_'&&!facility)throw new Error('Facility is not available')
@@ -36,7 +36,7 @@ function resolve(p){
 }
 function storeTracking(p){
  const g=guard(p,true),why=reason(p),now=ms(ec.user.nowTimestamp)
- if(g.productId==='_NA_'&&!g.scope.systemAdmin&&!ec.user.isInGroup('BOSS_WAREHOUSE_MANAGER'))throw new Error('Warehouse manager authority is required for tracking defaults')
+ if(g.productId==='_NA_'&&!g.scope.systemAdmin&&!ec.user.hasPermission('STOCK_POLICY_MANAGE'))throw new Error('Warehouse manager authority is required for tracking defaults')
  find('mantle.party.Party',{partyId:g.organizationPartyId}).forUpdate(true).one()
  const key={organizationPartyId:g.organizationPartyId,facilityId:g.facilityId,productId:g.productId,policyType:'tracking'},all=rows(W,key).sort((a,b)=>ms(a.fromDate)-ms(b.fromDate)),old=all.find(r=>current(r,now))
  if(ms(p.expectedFromDate)!==ms(old?.fromDate))throw new Error('Tracking policy changed; reload before saving')

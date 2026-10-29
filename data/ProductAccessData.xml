@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-facade-xml type="seed">
+    <moqui.security.UserPermission userPermissionId="PRODUCT_COST_VIEW" description="Product cost view"/>
+    <moqui.security.UserPermission userPermissionId="PRODUCT_COST_ESTIMATE" description="Product cost estimate"/>
+    <moqui.security.UserPermission userPermissionId="PRODUCT_COST_APPROVE" description="Product cost approve"/>
+    <moqui.security.UserPermission userPermissionId="ACCOUNTING_VIEW" description="Accounting view"/>
+    <moqui.security.UserPermission userPermissionId="ACCOUNTING_GL_POST" description="Accounting gl post"/>
+    <moqui.security.UserPermission userPermissionId="METHOD_VIEW" description="Method view"/>
+    <moqui.security.UserPermission userPermissionId="METHOD_EDIT" description="Method edit"/>
+    <moqui.security.UserPermission userPermissionId="METHOD_APPROVE" description="Method approve"/>
+    <moqui.security.UserPermission userPermissionId="METHOD_RESOURCES" description="Method resources"/>
+    <moqui.security.UserPermission userPermissionId="METHOD_COST_EDIT" description="Method cost edit"/>
+    <moqui.security.UserPermission userPermissionId="METHOD_COST_APPROVE" description="Method cost approve"/>
+    <moqui.security.UserPermission userPermissionId="STOCK_POLICY_PLAN" description="Stock policy plan"/>
+    <moqui.security.UserPermission userPermissionId="STOCK_POLICY_MANAGE" description="Stock policy manage"/>
+    <moqui.security.UserPermission userPermissionId="PRICE_VIEW" description="Price view"/>
+    <moqui.security.UserPermission userPermissionId="PRICE_EDIT" description="Price edit"/>
+    <moqui.security.UserPermission userPermissionId="SUPPLIER_PRICE_VIEW" description="Supplier price view"/>
+    <moqui.security.UserPermission userPermissionId="SUPPLIER_PRICE_EDIT" description="Supplier price edit"/>
+    <moqui.security.UserPermission userPermissionId="PRODUCT_CATALOG_ADMIN" description="Product catalog admin"/>
+</entity-facade-xml>
