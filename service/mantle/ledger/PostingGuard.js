@@ -263,6 +263,14 @@ function validate(p, lock = false) {
             }
         }
     }
+    const sourceEvidence = {}
+    for (const [field, entity, key] of [["invoiceId","mantle.account.invoice.Invoice","invoiceId"],["paymentId","mantle.account.payment.Payment","paymentId"]]) {
+        if(!tx[field])continue
+        const source = (lock && enabled ? find(entity,{[key]:tx[field]}).forUpdate(true) : find(entity,{[key]:tx[field]})).one()
+        sourceEvidence[field] = map(source)
+        if(enabled && (!source || ![source.fromPartyId,source.toPartyId].includes(tx.organizationPartyId)))
+            fail("SOURCE_SCOPE", "The posting source does not belong to this organization")
+    }
     const applicable = scopes(tx, lines)
     const locks = enabled
         ? rows("mantle.ledger.config.AccountingLock", {
@@ -312,6 +320,7 @@ function validate(p, lock = false) {
             )
     }
     const evidence = {
+        sources:sourceEvidence,
         tx: map(tx),
         lines: lines.map(map),
         periods: fiscalOut.periods.map((r) =>

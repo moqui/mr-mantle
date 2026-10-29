@@ -286,6 +286,10 @@ along with this software (see the LICENSE.md file). If not, see
             </if>
 
             <!-- ==== post the tx ==== -->
+            <script><![CDATA[
+                if (useErrorJournal && (fromPartyAcctgPreference?.postingGuardEnabled === 'Y' || toPartyAcctgPreference?.postingGuardEnabled === 'Y'))
+                    throw new Error('MAPPING_MISSING: Financial posting requires complete organization mappings')
+            ]]></script>
             <if condition="useErrorJournal"><then>
                 <!-- put in the error journal for the org -->
                 <if condition="fromPartyAcctgPreference?.errorGlJournalId">
@@ -487,6 +491,10 @@ along with this software (see the LICENSE.md file). If not, see
             </if>
 
             <!-- ==== post the tx ==== -->
+            <script><![CDATA[
+                if (useErrorJournal && (fromPartyAcctgPreference?.postingGuardEnabled === 'Y' || toPartyAcctgPreference?.postingGuardEnabled === 'Y'))
+                    throw new Error('MAPPING_MISSING: Financial posting requires complete organization mappings')
+            ]]></script>
             <if condition="useErrorJournal"><then>
                 <!-- put in the error journal for the org -->
                 <if condition="fromPartyAcctgPreference?.errorGlJournalId">
