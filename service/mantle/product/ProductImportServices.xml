@@ -1,0 +1,789 @@
+<?xml version='1.0' encoding='utf-8'?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="CatalogImportKinds" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('kinds',context))</script>
+        </actions>
+    </service>
+    <service verb="stage" noun="CatalogImport" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('stage',context))</script>
+        </actions>
+    </service>
+    <service verb="configure" noun="CatalogImport" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('configure',context))</script>
+        </actions>
+    </service>
+    <service verb="validate" noun="CatalogImport" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('validate',context))</script>
+        </actions>
+    </service>
+    <service verb="apply" noun="CatalogImport" allow-remote="false" transaction="ignore">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('apply',context))</script>
+        </actions>
+    </service>
+    <service verb="apply" noun="CatalogImportItem" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('applyItem',context))</script>
+        </actions>
+    </service>
+    <service verb="record" noun="CatalogImportFailure" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('failedItem',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="CatalogImport" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('get',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="CatalogImportReport" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('report',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="CatalogImportSample" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('sample',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="CatalogImportAccess" allow-remote="false">
+        <in-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceText" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="importFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="delimiter" type="String" />
+            <parameter name="forceNew" type="Boolean" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="selectedRowIds" type="List" />
+            <parameter name="itemSeqId" type="Integer" />
+            <parameter name="errorMessage" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="errorsOnly" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="kindId" type="String" />
+            <parameter name="kindDescription" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="fileHash" type="String" />
+            <parameter name="mappingRevision" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="reportCsv" type="String" />
+            <parameter name="dateFormat" type="String" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="resultRecordId" type="String" />
+            <parameter name="resultProductId" type="String" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="defaults" type="Map" />
+            <parameter name="valueMappings" type="Map" />
+            <parameter name="numberFormat" type="Map" />
+            <parameter name="kindOptions" type="List" />
+            <parameter name="headers" type="List" />
+            <parameter name="clearFields" type="List" />
+            <parameter name="columns" type="List" />
+            <parameter name="importRows" type="List" />
+            <parameter name="rowCount" type="Integer" />
+            <parameter name="validCount" type="Integer" />
+            <parameter name="appliedCount" type="Integer" />
+            <parameter name="errorCount" type="Integer" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+            <parameter name="changedRows" type="Integer" />
+            <parameter name="attemptedCount" type="Integer" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="alreadyApplied" type="Boolean" />
+            <parameter name="applied" type="Boolean" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('allowed',context))</script>
+        </actions>
+    </service>
+    <service verb="validate" noun="CatalogImportRow" allow-remote="false">
+        <in-parameters>
+            <parameter name="kindId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="rowParameters" type="Map" />
+            <parameter name="updateMode" type="String" />
+            <parameter name="registryFingerprint" type="String" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean" />
+            <parameter name="errors" type="List" />
+            <parameter name="warnings" type="List" />
+            <parameter name="normalizedParameters" type="Map" />
+            <parameter name="sourceFingerprint" type="String" />
+            <parameter name="changes" type="List" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImportAdapters.js').validate(context))</script>
+        </actions>
+    </service>
+    <service verb="assign" noun="ImportedIdentifier" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="idValue" type="String" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="rowParameters" type="Map" />
+            <parameter name="storeResult" type="Map" />
+        </in-parameters>
+        <out-parameters />
+        <actions>
+            <script>if(idValue)ec.service.sync().name('mantle.product.ProductServices.store#ProductIdentifier').parameters({productId:productId,productIdTypeEnumId:productIdTypeEnumId||'PidtSku',idValue:idValue,changeReason:'Catalog import confirmed identifier'}).disableAuthz().call()</script>
+        </actions>
+    </service>
+    <service verb="validate" noun="CatalogPriceRows" allow-remote="false">
+        <in-parameters><parameter name="kindId"/><parameter name="organizationPartyId"/><parameter name="importRows" type="List"/></in-parameters>
+        <out-parameters><parameter name="conflictRows" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImportAdapters.js').priceBatch(context))</script></actions>
+    </service>
+</services>

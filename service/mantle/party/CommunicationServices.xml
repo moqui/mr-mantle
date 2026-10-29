@@ -2393,6 +2393,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const catalog = ec.resource.script('component://mr-mantle/service/mantle/product/CatalogPolicy.js')
                     catalog.product(value.productId,catalog.scope())
                 }
+                if (entityName === 'mantle.product.ProductCatalogOperation' && value.operationType === 'import') return !!ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js').execute('allowed',{operationKey:value.operationKey}).recordVisible
                 if (entityName === 'mantle.product.ProductCatalogOperation' && value.operationType === 'labels') return !!ec.resource.script('component://mr-mantle/service/mantle/product/Labels.js').execute('access',{operationKey:value.operationKey}).recordVisible
                 if (['mantle.product.ProductContent','mantle.product.category.ProductCategoryContent','mantle.product.ContentEditConflict'].includes(entityName)) {
                     const content = ec.resource.script('component://mr-mantle/service/mantle/product/Content.js')

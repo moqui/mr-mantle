@@ -1,0 +1,79 @@
+<?xml version='1.0' encoding='utf-8'?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="store" noun="Product" allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="mantle.product.Product" include="all" />
+            <parameter name="createOnly" type="Boolean" />
+            <parameter name="expectedLastUpdatedStamp" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="productId" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js').execute('storeProduct',context))</script>
+        </actions>
+    </service>
+    <service verb="validate" noun="Product" allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="mantle.product.Product" include="all" />
+            <parameter name="createOnly" type="Boolean" />
+            <parameter name="expectedLastUpdatedStamp" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="normalizedParameters" type="Map" />
+            <parameter name="before" type="Map" />
+            <parameter name="catalogPolicy" type="Map" />
+        </out-parameters>
+        <actions>
+            <script>const prepared=ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js').prepareProduct(context);normalizedParameters=prepared.parameters;before=prepared.before;catalogPolicy=prepared.catalogPolicy</script>
+        </actions>
+    </service>
+    <service verb="store" noun="CatalogRow" allow-remote="false">
+        <in-parameters><parameter name="changeReason"/>
+            <auto-parameters entity-name="mantle.product.category.ProductCategoryMember" include="all" />
+            <auto-parameters entity-name="mantle.product.feature.ProductFeatureAppl" include="all" />
+            <auto-parameters entity-name="mantle.product.ProductUomDimension" include="all" />
+            <auto-parameters entity-name="mantle.product.ProductParty" include="all" />
+            <auto-parameters entity-name="mantle.product.ProductAssoc" include="all" />
+            <auto-parameters entity-name="mantle.product.ProductIdentification" include="all" />
+            <auto-parameters entity-name="mantle.product.ProductOtherIdentification" include="all" />
+            <auto-parameters entity-name="mantle.product.maintenance.ProductMeter" include="all" />
+            <auto-parameters entity-name="mantle.product.maintenance.ProductMaintenance" include="all" />
+            <parameter name="kind" type="String" />
+            <parameter name="operation" type="String" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="productUomDimensionId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="productMeterId" type="String" />
+            <parameter name="productMaintenanceId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js').execute('storeRow',context))</script>
+        </actions>
+    </service>
+    <service verb="validate" noun="CatalogRow" allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="mantle.product.category.ProductCategoryMember" include="all" />
+            <auto-parameters entity-name="mantle.product.feature.ProductFeatureAppl" include="all" />
+            <parameter name="kind" type="String" />
+            <parameter name="operation" type="String" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="normalizedParameters" type="Map" />
+            <parameter name="beforeRows" type="List" />
+            <parameter name="recordEntityName" type="String" />
+            <parameter name="product" type="Map" />
+        </out-parameters>
+        <actions>
+            <script>const prepared=ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js').prepareRow(context);normalizedParameters=prepared.parameters;beforeRows=prepared.beforeRows;recordEntityName=prepared.recordEntityName;product=prepared.product</script>
+        </actions>
+    </service>
+    <service verb="ensure" noun="CatalogAssignment" allow-remote="false">
+        <in-parameters><parameter name="kind"/><parameter name="productId"/><parameter name="productCategoryId"/><parameter name="productFeatureId"/><parameter name="applTypeEnumId"/><parameter name="fromDate" type="Timestamp"/></in-parameters>
+        <out-parameters><parameter name="productId"/><parameter name="fromDate" type="Timestamp"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js').execute('ensureRow',context))</script></actions>
+    </service>
+</services>

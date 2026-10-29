@@ -33,6 +33,11 @@ function access(r,write=false){
  return {direction:d,organizationPartyId:org,product:b,systemAdmin:admin,scope}
 }
 function lock(r){find('moqui.basic.EnumerationType',{enumTypeId:'ProductPriceType'}).forUpdate(true).one();find(P+'Product',{productId:r.productId}).forUpdate(true).one()}
+function overlaps(a,b){
+ if(a.productId!==b.productId||a.priceTypeEnumId!==b.priceTypeEnumId||a.priceUomId!==b.priceUomId||toDecimal(a.minQuantity||0).compare(b.minQuantity||0)!==0)return false
+ if(optional.filter(k=>a[k]!=null).length!==optional.filter(k=>b[k]!=null).length||optional.some(k=>a[k]!=null&&b[k]!=null&&String(a[k])!==String(b[k])))return false
+ return Math.max(ms(a.fromDate)??-Infinity,ms(b.fromDate)??-Infinity)<Math.min(ms(a.thruDate)??Infinity,ms(b.thruDate)??Infinity)
+}
 function validate(r,ignoreIds=[]){
  const a=access(r,true)
  if(a.direction==='public')throw new Error('New or corrected prices require an explicit internal sales vendor')
@@ -64,11 +69,8 @@ function validate(r,ignoreIds=[]){
  if(r.agreementItemSeqId&&!r.agreementId)throw new Error('Choose the agreement for its item')
  if(r.agreementId){const agr=one('mantle.party.agreement.Agreement',{agreementId:r.agreementId});if(!agr||agr.organizationPartyId!==a.organizationPartyId)throw new Error('Agreement is not in the price organization');if(r.agreementItemSeqId&&!one('mantle.party.agreement.AgreementItem',{agreementId:r.agreementId,agreementItemSeqId:r.agreementItemSeqId}))throw new Error('Agreement item is not available')}
  // Null scopes match any value; two intersecting scopes with the same specificity and tier would have equal precedence.
- const level=optional.filter(k=>r[k]!=null).length
  for(const other of rows(E,{productId:r.productId,priceTypeEnumId:r.priceTypeEnumId,priceUomId:r.priceUomId})){
-  if(ignoreIds.includes(other.productPriceId)||toDecimal(other.minQuantity||0).compare(r.minQuantity||0)!==0)continue
-  if(optional.filter(k=>other[k]!=null).length!==level||optional.some(k=>other[k]!=null&&r[k]!=null&&String(other[k])!==String(r[k])))continue
-  if(Math.max(ms(other.fromDate)??-Infinity,from)<Math.min(ms(other.thruDate)??Infinity,thru??Infinity))throw new Error('Another price row overlaps this tier at equal precedence')
+  if(!ignoreIds.includes(other.productPriceId)&&overlaps(r,other))throw new Error('Another price row overlaps this tier at equal precedence')
  }
  return a
 }
@@ -80,16 +82,20 @@ function fresh(p){
  if(row&&p.expectedLastUpdatedStamp&&ms(row.lastUpdatedStamp)!==ms(p.expectedLastUpdatedStamp))throw new Error('Price changed; reload before saving')
  return row
 }
-function store(p){
+function prepare(p,locking=false){
  let old=fresh(p),data=Object.assign({},old?map(old):{fromDate:ec.user.nowTimestamp,minQuantity:0,pricePurposeEnumId:'PppPurchase'},pick(p,writeFields))
  if(!data.fromDate)data.fromDate=old?.fromDate||ec.user.nowTimestamp
- access(data,true);lock(data);old=fresh(p)
+ access(data,true);if(locking){lock(data);old=fresh(p)}
  if(old){access(old,true);if(['productId',...optional,'priceTypeEnumId','priceUomId'].some(k=>String(old[k]??'')!==String(data[k]??'')))throw new Error('Price scope is fixed; create a separate dated row for another scope');if(find('mantle.order.OrderItem',{productPriceId:old.productPriceId}).count()>0&&writeFields.some(k=>String(old[k]??'')!==String(data[k]??'')))throw new Error('This price is referenced; schedule a successor instead of editing it');if(!String(p.changeReason||'').trim())throw new Error('Give a reason for the correction')}
  validate(data,old?[old.productPriceId]:[])
  if(old)data.productPriceId=old.productPriceId
- const saved=call((old?'update#':'create#')+E,pick(data,['productPriceId',...writeFields]))
- return {productPriceId:old?.productPriceId||saved.productPriceId}
+ return{old,data}
 }
+function preview(p){const prepared=prepare(p),old=prepared.old;return{normalizedParameters:Object.assign({},pick(prepared.data,['productPriceId',...writeFields]),old?{productPriceId:old.productPriceId,expectedState:ec.user.singleUseCodeHash(JSON.stringify(map(old)))}:{}),before:old?map(old):null,priceRows:findPrices({productId:prepared.data.productId,includeHistory:true}).productPriceList}}
+function store(p){const prepared=prepare(p,true),old=prepared.old;if(p.catalogOperationKey){const op=one(P+'ProductCatalogOperation',{operationKey:p.catalogOperationKey}),org=direction(prepared.data)==='purchase'?prepared.data.customerPartyId:prepared.data.vendorPartyId;if(!op||op.operationType!=='import'||!op.inputFingerprint||!['validated','partial'].includes(op.state)||op.ownerPartyId!==org||op.submittedByUserId!==ec.user.userId&&!has('ADMIN'))throw new Error('A validated import of this actor and organization is required')}
+ const saved=call((old?'update#':'create#')+E,pick(prepared.data,['productPriceId',...writeFields]));return{productPriceId:old?.productPriceId||saved.productPriceId}}
+
+
 function replace(p){
  let old=fresh(p);if(!old)throw new Error('Choose the source price');access(old,true);lock(old);old=fresh(p)
  const at=ms(p.effectiveDate),end=ms(old.thruDate)
@@ -118,6 +124,6 @@ function findPrices(p){
 }
 function execute(op,p){
  if(['store','replace','expire'].includes(op))ec.context.putAll(Object.fromEntries(writeFields.map(field=>[field+'_changeReason',p.changeReason||'New price'])))
- return ({store,replace,expire,access,validate,direction,findPrices})[op](p)
+ return ({store,replace,expire,access,validate,direction,findPrices,preview})[op](p)
 }
-;({execute,direction})
+;({execute,direction,overlaps})
