@@ -170,4 +170,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="store" noun="PricingSettings" allow-remote="false"><in-parameters><auto-parameters entity-name="mantle.product.ProductPricingSetting" include="all"/><parameter name="expectedFromDate" type="Timestamp"/></in-parameters><out-parameters><parameter name="organizationPartyId"/><parameter name="fromDate" type="Timestamp"/><parameter name="settings" type="Map"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('storeSettings',context))</script></actions></service>
 
     <service verb="modify" noun="ProductPriceList" allow-remote="false"><implements service="mantle.product.PriceServices.modify#ProductPrice"/><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceResolver.js').execute('applyList',context))</script></actions></service>
+
+    <service verb="get" noun="EffectivePriceList" allow-remote="false">
+        <description>Resolved authorized product prices at one explicit list, date and quantity context. Missing prices remain blank; independent failures do not stop the report.</description>
+        <in-parameters><parameter name="priceListId" required="true"/><parameter name="asOfDate" type="Timestamp"/><parameter name="quantity" type="BigDecimal"/><parameter name="quantityUomId"/><parameter name="productIds" type="Object"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/></in-parameters>
+        <out-parameters><parameter name="reportContext" type="Map"/><parameter name="effectivePriceRows" type="List"/><parameter name="printHtml"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/EffectivePriceList.js').report(context))</script></actions>
+    </service>
 </services>

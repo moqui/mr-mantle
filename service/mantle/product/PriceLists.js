@@ -117,4 +117,4 @@ function storeSettings(p){
  audit([...settingFields,'fromDate','thruDate'],p.changeReason);if(old)call('update#'+S,{organizationPartyId:org,fromDate:iso(old.fromDate),thruDate:iso(date),changeReason:p.changeReason});call('create#'+S,Object.assign(pick(data,settingFields),{organizationPartyId:org,fromDate:iso(date)}));return settings({organizationPartyId:org,asOfDate:date})
 }
 function execute(op,p){return({findLists,findRules,storeList,storeRule,publication,publish,retire,settings,storeSettings})[op](p)}
-;({execute,getList,guard,scope,parties,at,ms,has})
+;({execute,getList,guard,scope,parties,party,at,ms,has})
