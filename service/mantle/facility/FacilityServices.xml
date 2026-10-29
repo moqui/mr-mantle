@@ -257,7 +257,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="assetId"/>
             <parameter name="containerId"/>
             <parameter name="locationSeqId"/>
-            <parameter name="productId"/>
+            <parameter name="productId"/><parameter name="packProductId"/><parameter name="containedQuantity" type="BigDecimal"/><parameter name="quantityUomId"/><parameter name="appliedConversionFactor" type="BigDecimal"/><parameter name="ambiguityList" type="List"/><parameter name="gs1" type="Map"/><parameter name="packPath" type="List"/><parameter name="found" type="Boolean"/><parameter name="ambiguous" type="Boolean"/><parameter name="findings" type="List"/>
         </out-parameters>
         <actions>
             <set field="facilityId" from="facilityId || ec.user.getPreference('FacilityActive') || ec.user.getPreference('FacilityGeneralDefault')"/>
@@ -285,9 +285,9 @@ along with this software (see the LICENSE.md file). If not, see
                 </if>
                 <!-- see if scanId matches Product.pseudoId, ProductIdentification.idValue, or Product.productId -->
                 <!-- TODO: who would the Product.ownerPartyId be for an incoming shipment, Shipment.toPartyId or let user specify somehow? -->
-                <service-call name="mantle.product.ProductServices.find#ProductByIdValue" out-map="productByIdOut"
-                        in-map="{idValue:scanId}"/>
-                <set field="productId" from="productByIdOut.productId"/>
+                <service-call name="mantle.product.ProductServices.resolve#ScannedProduct" out-map="productByIdOut"
+                        in-map="{scanId:scanId}"/>
+                <script>ec.context.putAll(productByIdOut)</script>
             </if>
             <if condition="!assetId &amp;&amp; !containerId &amp;&amp; !locationSeqId &amp;&amp; !productId">
                 <message>No Asset, Container, Location, or Product found with ID ${scanId}</message></if>

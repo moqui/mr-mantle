@@ -2386,6 +2386,14 @@ along with this software (see the LICENSE.md file). If not, see
                     const catalog = ec.service.sync().name('mantle.product.ProductServices.get#CatalogOwnerScope').disableAuthz().call() || {}
                     if (!catalog.systemAdmin && !Array.from(catalog.ownerPartyIds || []).includes(value.ownerPartyId || (entityName === 'mantle.product.feature.ProductFeatureGroup' ? '_NA_' : null))) return false
                 }
+                if (entityName === 'mantle.product.ProductIdentifierPolicy') {
+                    ec.resource.script('component://mr-mantle/service/mantle/product/CatalogPolicy.js').organization({organizationPartyId:value.organizationPartyId},'read')
+                }
+                if (entityName === 'mantle.product.ProductOtherIdentification') {
+                    const catalog = ec.resource.script('component://mr-mantle/service/mantle/product/CatalogPolicy.js')
+                    catalog.product(value.productId,catalog.scope())
+                }
+                if (entityName === 'mantle.product.ProductCatalogOperation' && value.operationType === 'labels') return !!ec.resource.script('component://mr-mantle/service/mantle/product/Labels.js').execute('access',{operationKey:value.operationKey}).recordVisible
                 if (['mantle.product.ProductContent','mantle.product.category.ProductCategoryContent','mantle.product.ContentEditConflict'].includes(entityName)) {
                     const content = ec.resource.script('component://mr-mantle/service/mantle/product/Content.js')
                     if (entityName === 'mantle.product.ContentEditConflict') return !!content.get({recordKind:value.contentEntityName==='mantle.product.category.ProductCategoryContent'?'category':'product',contentId:value.contentId})

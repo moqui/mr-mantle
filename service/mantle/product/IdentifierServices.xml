@@ -1,0 +1,145 @@
+<?xml version='1.0' encoding='utf-8'?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="IdentifierContext" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="toProductId" type="String" />
+            <parameter name="packProductId" type="String" />
+            <parameter name="baseProductId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="idValue" type="String" />
+            <parameter name="scanId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="other" type="Boolean" />
+            <parameter name="quantity" type="BigDecimal" />
+            <parameter name="quantityUomId" type="String" />
+            <parameter name="amountUomId" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="changeReason" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="marketSegmentId" type="String" />
+            <parameter name="generate" type="Boolean" />
+            <parameter name="forAssignment" type="Boolean" />
+            <parameter name="checkUniqueness" type="Boolean" />
+            <parameter name="enabled" type="String" />
+            <parameter name="format" type="String" />
+            <parameter name="uniquenessScope" type="String" />
+            <parameter name="generationRule" type="String" />
+            <parameter name="prefix" type="String" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean" />
+            <parameter name="issues" type="List" />
+            <parameter name="normalizedValue" type="String" />
+            <parameter name="canonicalValue" type="String" />
+            <parameter name="identifierPolicy" type="Map" />
+            <parameter name="assignmentAllowed" type="Boolean" />
+            <parameter name="generatedValue" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="idValue" type="String" />
+            <parameter name="found" type="Boolean" />
+            <parameter name="ambiguous" type="Boolean" />
+            <parameter name="ambiguityList" type="List" />
+            <parameter name="findings" type="List" />
+            <parameter name="gs1" type="Map" />
+            <parameter name="scanId" type="String" />
+            <parameter name="packProductId" type="String" />
+            <parameter name="baseProductId" type="String" />
+            <parameter name="containedQuantity" type="BigDecimal" />
+            <parameter name="quantityUomId" type="String" />
+            <parameter name="appliedConversionFactor" type="BigDecimal" />
+            <parameter name="packPath" type="List" />
+            <parameter name="matchedProductId" type="String" />
+            <parameter name="productName" type="String" />
+            <parameter name="packagingRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="identifierPolicyRows" type="List" />
+            <parameter name="identifierPolicyHistory" type="List" />
+            <parameter name="productIdentifierPolicyId" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Identifiers.js').execute('settings',context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="IdentifierPolicy" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="toProductId" type="String" />
+            <parameter name="packProductId" type="String" />
+            <parameter name="baseProductId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="idValue" type="String" />
+            <parameter name="scanId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="other" type="Boolean" />
+            <parameter name="quantity" type="BigDecimal" />
+            <parameter name="quantityUomId" type="String" />
+            <parameter name="amountUomId" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="changeReason" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="marketSegmentId" type="String" />
+            <parameter name="generate" type="Boolean" />
+            <parameter name="forAssignment" type="Boolean" />
+            <parameter name="checkUniqueness" type="Boolean" />
+            <parameter name="enabled" type="String" />
+            <parameter name="format" type="String" />
+            <parameter name="uniquenessScope" type="String" />
+            <parameter name="generationRule" type="String" />
+            <parameter name="prefix" type="String" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean" />
+            <parameter name="issues" type="List" />
+            <parameter name="normalizedValue" type="String" />
+            <parameter name="canonicalValue" type="String" />
+            <parameter name="identifierPolicy" type="Map" />
+            <parameter name="assignmentAllowed" type="Boolean" />
+            <parameter name="generatedValue" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="idValue" type="String" />
+            <parameter name="found" type="Boolean" />
+            <parameter name="ambiguous" type="Boolean" />
+            <parameter name="ambiguityList" type="List" />
+            <parameter name="findings" type="List" />
+            <parameter name="gs1" type="Map" />
+            <parameter name="scanId" type="String" />
+            <parameter name="packProductId" type="String" />
+            <parameter name="baseProductId" type="String" />
+            <parameter name="containedQuantity" type="BigDecimal" />
+            <parameter name="quantityUomId" type="String" />
+            <parameter name="appliedConversionFactor" type="BigDecimal" />
+            <parameter name="packPath" type="List" />
+            <parameter name="matchedProductId" type="String" />
+            <parameter name="productName" type="String" />
+            <parameter name="packagingRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="identifierPolicyRows" type="List" />
+            <parameter name="identifierPolicyHistory" type="List" />
+            <parameter name="productIdentifierPolicyId" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Identifiers.js').execute('storePolicy',context))</script>
+        </actions>
+    </service>
+</services>

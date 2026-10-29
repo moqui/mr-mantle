@@ -1,0 +1,325 @@
+<?xml version='1.0' encoding='utf-8'?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="prepare" noun="ProductLabels" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="productIds" type="List" />
+            <parameter name="items" type="List" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="templateId" type="String" />
+            <parameter name="symbology" type="String" />
+            <parameter name="copies" type="Integer" />
+            <parameter name="includePrice" type="Boolean" />
+            <parameter name="priceUomId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="operationKey" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="networkPrinterId" type="String" />
+            <parameter name="retry" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="labelRows" type="List" />
+            <parameter name="findings" type="List" />
+            <parameter name="labelCount" type="Integer" />
+            <parameter name="complete" type="Boolean" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="template" type="Map" />
+            <parameter name="request" type="Map" />
+            <parameter name="templateOptions" type="List" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="printJobId" type="String" />
+            <parameter name="artifactAvailable" type="Boolean" />
+            <parameter name="rendered" type="Boolean" />
+            <parameter name="printHtml" type="String" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="alreadySent" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Labels.js').execute('prepare',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="ProductLabels" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="productIds" type="List" />
+            <parameter name="items" type="List" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="templateId" type="String" />
+            <parameter name="symbology" type="String" />
+            <parameter name="copies" type="Integer" />
+            <parameter name="includePrice" type="Boolean" />
+            <parameter name="priceUomId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="operationKey" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="networkPrinterId" type="String" />
+            <parameter name="retry" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="labelRows" type="List" />
+            <parameter name="findings" type="List" />
+            <parameter name="labelCount" type="Integer" />
+            <parameter name="complete" type="Boolean" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="template" type="Map" />
+            <parameter name="request" type="Map" />
+            <parameter name="templateOptions" type="List" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="printJobId" type="String" />
+            <parameter name="artifactAvailable" type="Boolean" />
+            <parameter name="rendered" type="Boolean" />
+            <parameter name="printHtml" type="String" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="alreadySent" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Labels.js').execute('get',context))</script>
+        </actions>
+    </service>
+    <service verb="render" noun="ProductLabels" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="productIds" type="List" />
+            <parameter name="items" type="List" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="templateId" type="String" />
+            <parameter name="symbology" type="String" />
+            <parameter name="copies" type="Integer" />
+            <parameter name="includePrice" type="Boolean" />
+            <parameter name="priceUomId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="operationKey" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="networkPrinterId" type="String" />
+            <parameter name="retry" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="labelRows" type="List" />
+            <parameter name="findings" type="List" />
+            <parameter name="labelCount" type="Integer" />
+            <parameter name="complete" type="Boolean" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="template" type="Map" />
+            <parameter name="request" type="Map" />
+            <parameter name="templateOptions" type="List" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="printJobId" type="String" />
+            <parameter name="artifactAvailable" type="Boolean" />
+            <parameter name="rendered" type="Boolean" />
+            <parameter name="printHtml" type="String" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="alreadySent" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Labels.js').execute('render',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="ProductLabelPrint" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="productIds" type="List" />
+            <parameter name="items" type="List" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="templateId" type="String" />
+            <parameter name="symbology" type="String" />
+            <parameter name="copies" type="Integer" />
+            <parameter name="includePrice" type="Boolean" />
+            <parameter name="priceUomId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="operationKey" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="networkPrinterId" type="String" />
+            <parameter name="retry" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="labelRows" type="List" />
+            <parameter name="findings" type="List" />
+            <parameter name="labelCount" type="Integer" />
+            <parameter name="complete" type="Boolean" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="template" type="Map" />
+            <parameter name="request" type="Map" />
+            <parameter name="templateOptions" type="List" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="printJobId" type="String" />
+            <parameter name="artifactAvailable" type="Boolean" />
+            <parameter name="rendered" type="Boolean" />
+            <parameter name="printHtml" type="String" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="alreadySent" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Labels.js').execute('printable',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="ProductLabelResource" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="productIds" type="List" />
+            <parameter name="items" type="List" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="templateId" type="String" />
+            <parameter name="symbology" type="String" />
+            <parameter name="copies" type="Integer" />
+            <parameter name="includePrice" type="Boolean" />
+            <parameter name="priceUomId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="operationKey" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="networkPrinterId" type="String" />
+            <parameter name="retry" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="labelRows" type="List" />
+            <parameter name="findings" type="List" />
+            <parameter name="labelCount" type="Integer" />
+            <parameter name="complete" type="Boolean" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="template" type="Map" />
+            <parameter name="request" type="Map" />
+            <parameter name="templateOptions" type="List" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="printJobId" type="String" />
+            <parameter name="artifactAvailable" type="Boolean" />
+            <parameter name="rendered" type="Boolean" />
+            <parameter name="printHtml" type="String" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="alreadySent" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Labels.js').execute('resource',context))</script>
+        </actions>
+    </service>
+    <service verb="print" noun="ProductLabels" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="productIds" type="List" />
+            <parameter name="items" type="List" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="templateId" type="String" />
+            <parameter name="symbology" type="String" />
+            <parameter name="copies" type="Integer" />
+            <parameter name="includePrice" type="Boolean" />
+            <parameter name="priceUomId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="operationKey" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="networkPrinterId" type="String" />
+            <parameter name="retry" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="labelRows" type="List" />
+            <parameter name="findings" type="List" />
+            <parameter name="labelCount" type="Integer" />
+            <parameter name="complete" type="Boolean" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="template" type="Map" />
+            <parameter name="request" type="Map" />
+            <parameter name="templateOptions" type="List" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="printJobId" type="String" />
+            <parameter name="artifactAvailable" type="Boolean" />
+            <parameter name="rendered" type="Boolean" />
+            <parameter name="printHtml" type="String" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="alreadySent" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Labels.js').execute('print',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="ProductLabelAccess" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" type="String" />
+            <parameter name="productIds" type="List" />
+            <parameter name="items" type="List" />
+            <parameter name="productIdTypeEnumId" type="String" />
+            <parameter name="productOtherIdentId" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="templateId" type="String" />
+            <parameter name="symbology" type="String" />
+            <parameter name="copies" type="Integer" />
+            <parameter name="includePrice" type="Boolean" />
+            <parameter name="priceUomId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="operationKey" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="networkPrinterId" type="String" />
+            <parameter name="retry" type="Boolean" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="operationKey" type="String" />
+            <parameter name="labelRows" type="List" />
+            <parameter name="findings" type="List" />
+            <parameter name="labelCount" type="Integer" />
+            <parameter name="complete" type="Boolean" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="template" type="Map" />
+            <parameter name="request" type="Map" />
+            <parameter name="templateOptions" type="List" />
+            <parameter name="stale" type="Boolean" />
+            <parameter name="state" type="String" />
+            <parameter name="lastError" type="String" />
+            <parameter name="printJobId" type="String" />
+            <parameter name="artifactAvailable" type="Boolean" />
+            <parameter name="rendered" type="Boolean" />
+            <parameter name="printHtml" type="String" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="alreadySent" type="Boolean" />
+            <parameter name="recordVisible" type="Boolean" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Labels.js').execute('access',context))</script>
+        </actions>
+    </service>
+</services>

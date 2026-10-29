@@ -1,4 +1,4 @@
-// Domain validation primitives. BOSS checks owner/action capability before invoking private writers.
+// Product usability and kit validation shared by the catalog and transaction entry points.
 const find = (entity, fields) => ec.entity.find(entity).condition(fields || {})
 const one = (entity, fields) => find(entity, fields).one()
 const rows = (entity, fields) => Array.from(find(entity, fields).list())
@@ -36,25 +36,6 @@ function orderUsable(p) {
     if (!result.usable) ec.message.addError(`Product ${p.productId} (${result.statusId || 'unknown'}): ${result.reason}`)
     return result
 }
-function identifier(p) {
-    const value = String(p.idValue || '').trim()
-    if (!value) throw new Error('Identifier value is required')
-    if (!one('mantle.product.Product', {productId: p.productId})) throw new Error('Product is not available')
-    // Serialize this writer across products; old nonunique index/rows remain compatible. The enum-type row is seeded.
-    find('moqui.basic.EnumerationType', {enumTypeId: 'ProductIdentificationType'}).forUpdate(true).one()
-    for (const row of rows('mantle.product.ProductIdentification', {idValue: value}))
-        if (row.productId !== p.productId || p.other || row.productIdTypeEnumId !== p.productIdTypeEnumId)
-            throw new Error('Identifier is already assigned to a product')
-    for (const row of rows('mantle.product.ProductOtherIdentification', {idValue: value}))
-        if (!p.other || row.productOtherIdentId !== p.productOtherIdentId) throw new Error('Identifier is already assigned to a product')
-    if (p.other && p.productOtherIdentId) {
-        const old = one('mantle.product.ProductOtherIdentification', {productOtherIdentId: p.productOtherIdentId})
-        if (!old || old.productId !== p.productId) throw new Error('Identifier is not on this product')
-    }
-    const fields = {productId: p.productId, productIdTypeEnumId: p.productIdTypeEnumId, idValue: value}
-    if (p.other) Object.assign(fields, {productOtherIdentId: p.productOtherIdentId, productStoreId: p.productStoreId || null, marketSegmentId: p.marketSegmentId || null})
-    return call((p.other && !p.productOtherIdentId ? 'create#' : 'store#') + (p.other ? 'mantle.product.ProductOtherIdentification' : 'mantle.product.ProductIdentification'), fields)
-}
 function kit(p) {
     find('moqui.basic.EnumerationType', {enumTypeId: 'ProductAssocType'}).forUpdate(true).one()
     const parent = find('mantle.product.Product', {productId: p.productId}).forUpdate(true).one()
@@ -80,7 +61,7 @@ function kit(p) {
 }
 function execute(op, p) {
     const disabled = ec.artifactExecution.disableAuthz()
-    try { return ({usable, orderUsable, identifier, kit})[op](p || {}) }
+    try { return ({usable, orderUsable, kit})[op](p || {}) }
     finally { if (!disabled) ec.artifactExecution.enableAuthz() }
 }
 ;({execute})
