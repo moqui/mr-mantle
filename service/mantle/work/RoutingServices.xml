@@ -113,6 +113,7 @@
             <parameter name="need" type="String"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="standardTimesShown" type="Boolean"/>
             <parameter name="routing" type="Map"/>
             <parameter name="operationRows" type="List"/>
             <parameter name="releasedOperationRows" type="List"/>

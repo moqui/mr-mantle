@@ -49,6 +49,12 @@ function direction(r) {
             ? "public"
             : "invalid"
 }
+// An access refusal with a reason a caller may test (only "direction" is tested today), never its wording.
+function denied(reason, message) {
+    const error = new Error(message)
+    error.reason = reason
+    return error
+}
 function access(r, write = false) {
     const scope = call(P + "ProductServices.get#CatalogOwnerScope"),
         admin = scope.systemAdmin,
@@ -79,7 +85,7 @@ function access(r, write = false) {
             throw new Error("Price agreement is not available")
     }
     if (d === "invalid" || (write && d === "public" && !admin))
-        throw new Error("Choose an internal sales vendor, or an external supplier and an internal buying organization")
+        throw denied("direction", "Choose an internal sales vendor, or an external supplier and an internal buying organization")
     if (org && !admin && !scope.ownerPartyIds.includes(org)) throw new Error("Price organization is not available")
     if (r.priceTypeEnumId === "PptAverage") {
         if (
@@ -364,9 +370,29 @@ function findPrices(p) {
     }
     return {productPriceList: out, productPrice: p.productPriceId ? out[0] || null : null}
 }
+// A legacy row may have been repurposed before its scope became immutable: its earlier amounts are visible only when
+// every earlier scope in its audit log is readable too. A system administrator may read a scope whose only fault is a
+// direction the current rules no longer allow.
+const scopeFields = ["productId", "vendorPartyId", "customerPartyId", "productStoreId", "agreementId", "priceTypeEnumId"]
+function earlierScopesVisible(p) {
+    const row = one(E, {productPriceId: p.productPriceId})
+    if (!row) return {visible: false}
+    const admin = call(P + "ProductServices.get#CatalogOwnerScope").systemAdmin
+    const logs = rows("moqui.entity.EntityAuditLog", {changedEntityName: E, pkPrimaryValue: row.productPriceId}).filter(
+        log => scopeFields.includes(log.changedFieldName) && log.oldValueText != null && log.oldValueText !== log.newValueText
+    )
+    for (const log of logs) {
+        try {
+            access(Object.assign(map(row), {[log.changedFieldName]: log.oldValueText}))
+        } catch (e) {
+            if (!(admin && e.reason === "direction")) return {visible: false}
+        }
+    }
+    return {visible: true}
+}
 function execute(op, p) {
     if (["store", "replace", "expire"].includes(op))
         ec.context.putAll(Object.fromEntries(writeFields.map(field => [field + "_changeReason", p.changeReason || "New price"])))
-    return {store, replace, expire, access, validate, direction, findPrices, preview}[op](p)
+    return {store, replace, expire, access, validate, direction, findPrices, preview, earlierScopesVisible}[op](p)
 }
 ;({execute, direction, overlaps})

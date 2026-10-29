@@ -131,17 +131,37 @@ function resourceRows(id) {
         )
     ]
 }
+// Standard times are cost inputs: a method reader without cost read sees the operations without them. An editor keeps
+// them, since they are the values the editor maintains.
+const timeFields = [
+    "estimatedSetupTime",
+    "estimatedWorkTime",
+    "methodMachineSetupTime",
+    "methodMachineRunTime",
+    "setupTime",
+    "runTime",
+    "machineSetupTime",
+    "machineRunTime"
+]
+function withoutTimes(row) {
+    const out = Object.assign({}, row)
+    for (const field of timeFields) delete out[field]
+    return out
+}
 function detail(p) {
     const g = get(p.workEffortId || p.routingWorkEffortId),
         date = p.asOfDate || ec.user.nowTimestamp,
         decision = releases(g.routing.workEffortId).find(r => ms(r.fromDate) <= ms(date)),
-        approved = decision ? released(g.routing.workEffortId, date) : null
+        approved = decision ? released(g.routing.workEffortId, date) : null,
+        times = g.scope.costRead || g.scope.edit,
+        shown = row => (times ? row : withoutTimes(row))
     return {
         routing: pick(g.routing, [...names, "workEffortId", "ownerPartyId", "methodDraft"]),
         operationRows: ops(g.routing.workEffortId)
             .filter(o => o.methodDraft === "Y")
-            .map(o => Object.assign(pick(o, ["workEffortId", ...opFields]), {resources: resourceRows(o.workEffortId)})),
-        releasedOperationRows: approved?.operations || [],
+            .map(o => shown(Object.assign(pick(o, ["workEffortId", ...opFields]), {resources: resourceRows(o.workEffortId)}))),
+        releasedOperationRows: (approved?.operations || []).map(shown),
+        standardTimesShown: times,
         releaseHistory: releases(g.routing.workEffortId).map(r =>
             pick(map(r), ["methodReleaseDecisionId", "fromDate", "approvedDate", "approvedByUserId", "changeReason"])
         ),

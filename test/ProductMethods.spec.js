@@ -351,7 +351,8 @@ feature("resources and hourly rates require separate roles and released operatio
                 changeReason: "Next standards draft"
             })
         )
-        const historical = as("mth_reader", () => invoke(R + "get#RoutingDetail", {workEffortId: routeId, asOfDate: date})),
+        const historical = as("mth_engineer", () => invoke(R + "get#RoutingDetail", {workEffortId: routeId, asOfDate: date})),
+            timesHidden = as("mth_reader", () => invoke(R + "get#RoutingDetail", {workEffortId: routeId, asOfDate: date})),
             noMoney = as("mth_reader", () =>
                 invoke(R + "get#OperationCostBasis", {workEffortId: routeId, asOfDate: date, quantity: 4, priceUomId: "USD"})
             ),
@@ -366,9 +367,9 @@ feature("resources and hourly rates require separate roles and released operatio
                 changeReason: "Refused"
             })
         )
-        return {center, rate, route, op, approval, draft, historical, noMoney, valued, denied}
+        return {center, rate, route, op, approval, draft, historical, timesHidden, noMoney, valued, denied}
     },
-    then({center, rate, route, op, approval, draft, historical, noMoney, valued, denied}) {
+    then({center, rate, route, op, approval, draft, historical, timesHidden, noMoney, valued, denied}) {
         center.error == ""
         rate.error == ""
         route.error == ""
@@ -377,6 +378,11 @@ feature("resources and hourly rates require separate roles and released operatio
         draft.error == ""
         historical.releasedOperationRows[0].runTime == 12
         historical.operationRows[0].estimatedWorkTime == 120
+        historical.standardTimesShown == true
+        timesHidden.standardTimesShown == false
+        timesHidden.releasedOperationRows[0].runTime == null
+        timesHidden.operationRows[0].estimatedWorkTime == null
+        timesHidden.releasedOperationRows[0].workEffortName == "Assemble"
         noMoney.error.includes("cost-read")
         valued.error == ""
         toDecimal(valued.operationCostRows.find(r => r.componentTypeEnumId === "PccLabor").amount).compare(27) == 0
