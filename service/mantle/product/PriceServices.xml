@@ -14,27 +14,122 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <service verb="store" noun="ProductPrice" allow-remote="false"><in-parameters><auto-parameters entity-name="mantle.product.ProductPrice" include="all"/><parameter name="productPriceId"/><parameter name="expectedLastUpdatedStamp" type="Timestamp"/><parameter name="expectedState"/><parameter name="changeReason"/><parameter name="catalogOperationKey"/></in-parameters><out-parameters><parameter name="productPriceId"/><parameter name="previousProductPriceId"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js').execute('store',context))</script></actions></service>
-    <service verb="replace" noun="ProductPrice" allow-remote="false"><in-parameters><parameter name="price" type="BigDecimal" required="true"/><parameter name="effectiveDate" type="Timestamp" required="true"/><parameter name="productId"/><parameter name="productPriceId"/><parameter name="expectedLastUpdatedStamp" type="Timestamp"/><parameter name="expectedState"/><parameter name="changeReason"/></in-parameters><out-parameters><parameter name="productPriceId"/><parameter name="previousProductPriceId"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js').execute('replace',context))</script></actions></service>
-    <service verb="expire" noun="ProductPrice" allow-remote="false"><in-parameters><parameter name="productId"/><parameter name="thruDate" type="Timestamp"/><parameter name="productPriceId"/><parameter name="expectedLastUpdatedStamp" type="Timestamp"/><parameter name="expectedState"/><parameter name="changeReason"/></in-parameters><out-parameters><parameter name="productPriceId"/><parameter name="previousProductPriceId"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js').execute('expire',context))</script></actions></service>
+    <service verb="store" noun="ProductPrice" allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="mantle.product.ProductPrice" include="all"/>
+            <parameter name="productPriceId"/>
+            <parameter name="expectedLastUpdatedStamp" type="Timestamp"/>
+            <parameter name="expectedState"/>
+            <parameter name="changeReason"/>
+            <parameter name="catalogOperationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="productPriceId"/>
+            <parameter name="previousProductPriceId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js').execute('store',context))</script>
+        </actions>
+    </service>
+    <service verb="replace" noun="ProductPrice" allow-remote="false">
+        <in-parameters>
+            <parameter name="price" type="BigDecimal" required="true"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="productId"/>
+            <parameter name="productPriceId"/>
+            <parameter name="expectedLastUpdatedStamp" type="Timestamp"/>
+            <parameter name="expectedState"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="productPriceId"/>
+            <parameter name="previousProductPriceId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js').execute('replace',context))</script>
+        </actions>
+    </service>
+    <service verb="expire" noun="ProductPrice" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="productPriceId"/>
+            <parameter name="expectedLastUpdatedStamp" type="Timestamp"/>
+            <parameter name="expectedState"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="productPriceId"/>
+            <parameter name="previousProductPriceId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js').execute('expire',context))</script>
+        </actions>
+    </service>
 
-    <service verb="find" noun="ProductPrices" allow-remote="false"><in-parameters><parameter name="productId" required="true"/><parameter name="productPriceId"/><parameter name="asOfDate" type="Timestamp"/><parameter name="includeHistory" type="Boolean" default="false"/><parameter name="direction"/><parameter name="priceTypeEnumId"/></in-parameters><out-parameters><parameter name="productPriceList" type="List"/><parameter name="productPrice" type="Map"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js').execute('findPrices',context))</script></actions></service>
+    <service verb="find" noun="ProductPrices" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" required="true"/>
+            <parameter name="productPriceId"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+            <parameter name="includeHistory" type="Boolean" default="false"/>
+            <parameter name="direction"/>
+            <parameter name="priceTypeEnumId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="productPriceList" type="List"/>
+            <parameter name="productPrice" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js').execute('findPrices',context))</script>
+        </actions>
+    </service>
     <service verb="modify" noun="ProductPrice" type="interface">
         <in-parameters>
             <parameter name="productId" required="true"/>
             <parameter name="quantity" type="BigDecimal" required="true"/>
             <parameter name="priceUomId" required="true"/>
             <parameter name="pricePurposeEnumId" required="true"/>
-            <parameter name="productStoreId"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/>
+            <parameter name="productStoreId"/>
+            <parameter name="vendorPartyId"/>
+            <parameter name="customerPartyId"/>
             <parameter name="price" type="BigDecimal"/>
             <parameter name="productPriceId"/>
             <parameter name="listPrice" type="BigDecimal"/>
             <parameter name="listProductPriceId"/>
-        <parameter name="organizationPartyId"/><parameter name="direction"/><parameter name="quantityUomId"/><parameter name="termUomId"/><parameter name="priceListId"/><parameter name="agreementId"/><parameter name="agreementItemSeqId"/><parameter name="shipToCountryGeoId"/><parameter name="billToCountryGeoId"/><parameter name="countryGeoId"/><parameter name="explain" type="Boolean" default="false"/><parameter name="validDate" type="Timestamp"/><parameter name="pricingContext" type="Map"/><parameter name="priceTrace" type="List"/><parameter name="priceWarnings" type="List"/><parameter name="listModifierApplied" type="Boolean"/><parameter name="priceAvailable" type="Boolean"/></in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="direction"/>
+            <parameter name="quantityUomId"/>
+            <parameter name="termUomId"/>
+            <parameter name="priceListId"/>
+            <parameter name="agreementId"/>
+            <parameter name="agreementItemSeqId"/>
+            <parameter name="shipToCountryGeoId"/>
+            <parameter name="billToCountryGeoId"/>
+            <parameter name="countryGeoId"/>
+            <parameter name="explain" type="Boolean" default="false"/>
+            <parameter name="validDate" type="Timestamp"/>
+            <parameter name="pricingContext" type="Map"/>
+            <parameter name="priceTrace" type="List"/>
+            <parameter name="priceWarnings" type="List"/>
+            <parameter name="listModifierApplied" type="Boolean"/>
+            <parameter name="priceAvailable" type="Boolean"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="price" type="BigDecimal"/>
             <parameter name="listPrice" type="BigDecimal"/>
-        <parameter name="priceListId"/><parameter name="priceRuleId"/><parameter name="priceAvailable" type="Boolean"/><parameter name="listPriceAvailable" type="Boolean"/><parameter name="priceSource"/><parameter name="priceTrace" type="List"/><parameter name="priceWarnings" type="List"/><parameter name="taxInPrice"/><parameter name="virtualPriceFallback" type="Boolean"/><parameter name="productPriceId"/><parameter name="listModifierApplied" type="Boolean"/></out-parameters>
+            <parameter name="priceListId"/>
+            <parameter name="priceRuleId"/>
+            <parameter name="priceAvailable" type="Boolean"/>
+            <parameter name="listPriceAvailable" type="Boolean"/>
+            <parameter name="priceSource"/>
+            <parameter name="priceTrace" type="List"/>
+            <parameter name="priceWarnings" type="List"/>
+            <parameter name="taxInPrice"/>
+            <parameter name="virtualPriceFallback" type="Boolean"/>
+            <parameter name="productPriceId"/>
+            <parameter name="listModifierApplied" type="Boolean"/>
+        </out-parameters>
     </service>
     <service verb="get" noun="ProductPriceByType">
         <in-parameters>
@@ -44,14 +139,38 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="validDate" type="Timestamp" default="ec.user.nowTimestamp"/>
             <parameter name="priceUomId" default="ec.user.getPreference('CurrencyDefault') || 'USD'"/>
             <parameter name="pricePurposeEnumId" default-value="PppPurchase"/>
-            <parameter name="productStoreId"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/>
-        <parameter name="organizationPartyId"/><parameter name="direction"/><parameter name="quantityUomId"/><parameter name="termUomId"/><parameter name="priceListId"/><parameter name="agreementId"/><parameter name="agreementItemSeqId"/><parameter name="shipToCountryGeoId"/><parameter name="billToCountryGeoId"/><parameter name="countryGeoId"/><parameter name="explain" type="Boolean" default="false"/></in-parameters>
+            <parameter name="productStoreId"/>
+            <parameter name="vendorPartyId"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="direction"/>
+            <parameter name="quantityUomId"/>
+            <parameter name="termUomId"/>
+            <parameter name="priceListId"/>
+            <parameter name="agreementId"/>
+            <parameter name="agreementItemSeqId"/>
+            <parameter name="shipToCountryGeoId"/>
+            <parameter name="billToCountryGeoId"/>
+            <parameter name="countryGeoId"/>
+            <parameter name="explain" type="Boolean" default="false"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="price" type="BigDecimal"/>
             <parameter name="productPriceId"/>
             <parameter name="priceUomId"/>
-        <parameter name="priceListId"/><parameter name="priceRuleId"/><parameter name="priceAvailable" type="Boolean"/><parameter name="listPriceAvailable" type="Boolean"/><parameter name="priceSource"/><parameter name="priceTrace" type="List"/><parameter name="priceWarnings" type="List"/><parameter name="taxInPrice"/><parameter name="virtualPriceFallback" type="Boolean"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceResolver.js').execute('byType',context))</script></actions>
+            <parameter name="priceListId"/>
+            <parameter name="priceRuleId"/>
+            <parameter name="priceAvailable" type="Boolean"/>
+            <parameter name="listPriceAvailable" type="Boolean"/>
+            <parameter name="priceSource"/>
+            <parameter name="priceTrace" type="List"/>
+            <parameter name="priceWarnings" type="List"/>
+            <parameter name="taxInPrice"/>
+            <parameter name="virtualPriceFallback" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceResolver.js').execute('byType',context))</script>
+        </actions>
     </service>
     <service verb="get" noun="ProductPrice" authenticate="anonymous-view">
         <description>Use ProductPrice records plus modifier services to determine the price to charge or pay for a Product.</description>
@@ -61,74 +180,122 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="validDate" type="Timestamp" default="ec.user.nowTimestamp"/>
             <parameter name="priceUomId" default="ec.user.getPreference('CurrencyDefault') || 'USD'"/>
             <parameter name="pricePurposeEnumId" default-value="PppPurchase"/>
-            <parameter name="productStoreId"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/>
+            <parameter name="productStoreId"/>
+            <parameter name="vendorPartyId"/>
+            <parameter name="customerPartyId"/>
             <!-- TODO: to support look for records with this first and then with null: <parameter name="agreementId"/> -->
             <!-- TODO: to support look for records with this first and then with null: <parameter name="agreementItemSeqId"/> -->
             <parameter name="defaultToListPrice" type="Boolean" default="true"/>
-        <parameter name="organizationPartyId"/><parameter name="direction"/><parameter name="quantityUomId"/><parameter name="termUomId"/><parameter name="priceListId"/><parameter name="agreementId"/><parameter name="agreementItemSeqId"/><parameter name="shipToCountryGeoId"/><parameter name="billToCountryGeoId"/><parameter name="countryGeoId"/><parameter name="explain" type="Boolean" default="false"/></in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="direction"/>
+            <parameter name="quantityUomId"/>
+            <parameter name="termUomId"/>
+            <parameter name="priceListId"/>
+            <parameter name="agreementId"/>
+            <parameter name="agreementItemSeqId"/>
+            <parameter name="shipToCountryGeoId"/>
+            <parameter name="billToCountryGeoId"/>
+            <parameter name="countryGeoId"/>
+            <parameter name="explain" type="Boolean" default="false"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="price" type="BigDecimal"/>
             <parameter name="productPriceId"/>
             <parameter name="listPrice" type="BigDecimal"/>
             <parameter name="listProductPriceId"/>
             <parameter name="priceUomId"/>
-        <parameter name="priceListId"/><parameter name="priceRuleId"/><parameter name="priceAvailable" type="Boolean"/><parameter name="listPriceAvailable" type="Boolean"/><parameter name="priceSource"/><parameter name="priceTrace" type="List"/><parameter name="priceWarnings" type="List"/><parameter name="taxInPrice"/><parameter name="virtualPriceFallback" type="Boolean"/></out-parameters>
-        <actions><script><![CDATA[
-            ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceResolver.js').execute('resolve',context))
-            for (const modifier of ec.entity.find('mantle.product.ProductPriceModify').disableAuthz().orderBy('sequenceNum,priceModifyId').list()) {
-                const serviceName=modifier.serviceRegister.serviceName
-                const before=price
-                ec.message.pushErrors()
-                try {
-                    const input=Object.assign({},context)
-                    for(const parameter of modifier.parameters) input[parameter.parameterName]=parameter.parameterValue
-                    const result=ec.service.sync().name(serviceName).parameters(input).disableAuthz().call()||{}
-                    if(ec.message.hasError())throw new Error(ec.message.getErrorsString())
-                    ec.context.putAll(result)
-                    if(pricingContext?.traceAllowed && serviceName!=='mantle.product.PriceServices.modify#ProductPriceList')
-                        priceTrace.push({sequence:priceTrace.length+1,kind:'modifier',sourceEntity:'mantle.product.ProductPriceModify',sourceId:modifier.priceModifyId,eligible:true,beforeAmount:before,afterAmount:price})
-                } catch(error) {
-                    ec.logger.error('Price modifier '+modifier.priceModifyId+' ('+serviceName+') failed: '+error)
-                    if(serviceName==='mantle.product.PriceServices.modify#ProductPriceList')throw error
-                } finally {ec.message.clearErrors();ec.message.popErrors()}
-            }
-            ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceResolver.js').execute('finalize',context))
-        ]]></script></actions>
+            <parameter name="priceListId"/>
+            <parameter name="priceRuleId"/>
+            <parameter name="priceAvailable" type="Boolean"/>
+            <parameter name="listPriceAvailable" type="Boolean"/>
+            <parameter name="priceSource"/>
+            <parameter name="priceTrace" type="List"/>
+            <parameter name="priceWarnings" type="List"/>
+            <parameter name="taxInPrice"/>
+            <parameter name="virtualPriceFallback" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceResolver.js').execute('resolve',context))
+                for (const modifier of ec.entity.find('mantle.product.ProductPriceModify').disableAuthz().orderBy('sequenceNum,priceModifyId').list()) {
+                    const serviceName=modifier.serviceRegister.serviceName
+                    const before=price
+                    ec.message.pushErrors()
+                    try {
+                        const input=Object.assign({},context)
+                        for(const parameter of modifier.parameters) input[parameter.parameterName]=parameter.parameterValue
+                        const result=ec.service.sync().name(serviceName).parameters(input).disableAuthz().call()||{}
+                        if(ec.message.hasError())throw new Error(ec.message.getErrorsString())
+                        ec.context.putAll(result)
+                        if(pricingContext?.traceAllowed && serviceName!=='mantle.product.PriceServices.modify#ProductPriceList')
+                            priceTrace.push({sequence:priceTrace.length+1,kind:'modifier',sourceEntity:'mantle.product.ProductPriceModify',sourceId:modifier.priceModifyId,eligible:true,beforeAmount:before,afterAmount:price})
+                    } catch(error) {
+                        ec.logger.error('Price modifier '+modifier.priceModifyId+' ('+serviceName+') failed: '+error)
+                        if(serviceName==='mantle.product.PriceServices.modify#ProductPriceList')throw error
+                    } finally {ec.message.clearErrors();ec.message.popErrors()}
+                }
+                ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceResolver.js').execute('finalize',context))
+            ]]></script>
+        </actions>
     </service>
     <service verb="get" noun="OrderProductPrice">
         <description>In addition to productId and quantity recommended use is to specify orderId and orderPartSeqId which are used
-            to determine priceUomId, pricePurposeEnumId, productStoreId, vendorPartyId, and customerPartyId</description>
+                to determine priceUomId, pricePurposeEnumId, productStoreId, vendorPartyId, and customerPartyId</description>
         <in-parameters>
             <parameter name="productId" required="true"/>
             <parameter name="quantity" type="BigDecimal" default="1"/>
-
             <parameter name="orderId"/>
             <parameter name="orderPartSeqId"/>
-
-            <parameter name="priceUomId"><description>If not specified defaults to OrderHeader.currencyUomId, then
-                ProductStore.defaultCurrencyUomId, then the CurrencyDefault user preference (usually for the ALL_USERS group) then USD.</description></parameter>
-            <parameter name="pricePurposeEnumId"><description>If not specified defaults to PppPurchase unless OrderHeader is
-                recurring (recurCronExpression not empty) then defaults to PppRecurring</description></parameter>
-
-            <parameter name="productStoreId"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/>
-        <parameter name="organizationPartyId"/><parameter name="direction"/><parameter name="quantityUomId"/><parameter name="termUomId"/><parameter name="priceListId"/><parameter name="agreementId"/><parameter name="agreementItemSeqId"/><parameter name="shipToCountryGeoId"/><parameter name="billToCountryGeoId"/><parameter name="countryGeoId"/><parameter name="explain" type="Boolean" default="false"/></in-parameters>
+            <parameter name="priceUomId">
+                <description>If not specified defaults to OrderHeader.currencyUomId, then
+                    ProductStore.defaultCurrencyUomId, then the CurrencyDefault user preference (usually for the ALL_USERS group) then USD.</description>
+            </parameter>
+            <parameter name="pricePurposeEnumId">
+                <description>If not specified defaults to PppPurchase unless OrderHeader is
+                    recurring (recurCronExpression not empty) then defaults to PppRecurring</description>
+            </parameter>
+            <parameter name="productStoreId"/>
+            <parameter name="vendorPartyId"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="direction"/>
+            <parameter name="quantityUomId"/>
+            <parameter name="termUomId"/>
+            <parameter name="priceListId"/>
+            <parameter name="agreementId"/>
+            <parameter name="agreementItemSeqId"/>
+            <parameter name="shipToCountryGeoId"/>
+            <parameter name="billToCountryGeoId"/>
+            <parameter name="countryGeoId"/>
+            <parameter name="explain" type="Boolean" default="false"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="price" type="BigDecimal"/>
             <parameter name="productPriceId"/>
             <parameter name="listPrice" type="BigDecimal"/>
             <parameter name="listProductPriceId"/>
             <parameter name="priceUomId"/>
-        <parameter name="priceListId"/><parameter name="priceRuleId"/><parameter name="priceAvailable" type="Boolean"/><parameter name="listPriceAvailable" type="Boolean"/><parameter name="priceSource"/><parameter name="priceTrace" type="List"/><parameter name="priceWarnings" type="List"/><parameter name="taxInPrice"/><parameter name="virtualPriceFallback" type="Boolean"/></out-parameters>
+            <parameter name="priceListId"/>
+            <parameter name="priceRuleId"/>
+            <parameter name="priceAvailable" type="Boolean"/>
+            <parameter name="listPriceAvailable" type="Boolean"/>
+            <parameter name="priceSource"/>
+            <parameter name="priceTrace" type="List"/>
+            <parameter name="priceWarnings" type="List"/>
+            <parameter name="taxInPrice"/>
+            <parameter name="virtualPriceFallback" type="Boolean"/>
+        </out-parameters>
         <actions>
             <if condition="orderId">
                 <entity-find-one entity-name="mantle.order.OrderHeader" value-field="orderHeader">
-                    <field-map field-name="orderId"/></entity-find-one>
+                    <field-map field-name="orderId"/>
+                </entity-find-one>
                 <set field="productStoreId" from="productStoreId || orderHeader?.productStoreId"/>
                 <entity-find-one entity-name="mantle.product.store.ProductStore" value-field="productStore">
-                    <field-map field-name="productStoreId"/></entity-find-one>
+                    <field-map field-name="productStoreId"/>
+                </entity-find-one>
                 <set field="priceUomId" from="priceUomId || orderHeader?.currencyUomId || productStore?.defaultCurrencyUomId || ec.user.getPreference('CurrencyDefault') || 'USD'"/>
                 <set field="pricePurposeEnumId" from="pricePurposeEnumId || (orderHeader?.recurCronExpression ? 'PppRecurring' : 'PppPurchase')"/>
-
                 <if condition="orderPartSeqId">
                     <entity-find-one entity-name="mantle.order.OrderPart" value-field="orderPart"/>
                     <set field="vendorPartyId" from="(vendorPartyId || orderPart?.vendorPartyId) || productStore?.organizationPartyId"/>
@@ -136,12 +303,12 @@ along with this software (see the LICENSE.md file). If not, see
                 </if>
                 <set field="vendorPartyId" from="vendorPartyId || orderPart?.vendorPartyId || productStore?.organizationPartyId"/>
             </if>
-
-            <if condition="!pricePurposeEnumId"><set field="pricePurposeEnumId" value="PppPurchase"/></if>
+            <if condition="!pricePurposeEnumId">
+                <set field="pricePurposeEnumId" value="PppPurchase"/>
+            </if>
             <!-- don't defaultToListPrice for Recurring prices so we can see if there really is a Recurring price in order to default to Purchase purpose below -->
             <set field="defaultToListPrice" from="pricePurposeEnumId != 'PppRecurring'"/>
             <service-call name="mantle.product.PriceServices.get#ProductPrice" in-map="context" out-map="context"/>
-
             <!-- if no Recurring price try again with Purchase purpose -->
             <if condition="(price == null || toDecimal(price).isZero()) &amp;&amp; pricePurposeEnumId === 'PppRecurring'">
                 <set field="pricePurposeEnumId" value="PppPurchase"/>
@@ -151,31 +318,167 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
-    <service verb="find" noun="ProductPriceLists" allow-remote="false"><in-parameters><parameter name="organizationPartyId"/><parameter name="direction"/><parameter name="priceUomId"/><parameter name="pricePurposeEnumId"/><parameter name="state"/><parameter name="asOfDate" type="Timestamp"/><parameter name="includeHistory" type="Boolean"/></in-parameters><out-parameters><parameter name="priceListRows" type="List"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('findLists',context))</script></actions></service>
+    <service verb="find" noun="ProductPriceLists" allow-remote="false">
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="direction"/>
+            <parameter name="priceUomId"/>
+            <parameter name="pricePurposeEnumId"/>
+            <parameter name="state"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+            <parameter name="includeHistory" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="priceListRows" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('findLists',context))</script>
+        </actions>
+    </service>
 
-    <service verb="find" noun="ProductPriceRules" allow-remote="false"><in-parameters><parameter name="priceListId" required="true"/><parameter name="asOfDate" type="Timestamp"/><parameter name="includeHistory" type="Boolean"/></in-parameters><out-parameters><parameter name="priceList" type="Map"/><parameter name="priceRuleRows" type="List"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('findRules',context))</script></actions></service>
+    <service verb="find" noun="ProductPriceRules" allow-remote="false">
+        <in-parameters>
+            <parameter name="priceListId" required="true"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+            <parameter name="includeHistory" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="priceList" type="Map"/>
+            <parameter name="priceRuleRows" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('findRules',context))</script>
+        </actions>
+    </service>
 
-    <service verb="store" noun="ProductPriceList" allow-remote="false"><in-parameters><auto-parameters entity-name="mantle.product.ProductPriceList" include="all"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/><parameter name="expectedLastUpdatedStamp" type="Timestamp"/><parameter name="cloneFromPriceListId"/></in-parameters><out-parameters><parameter name="priceListId"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('storeList',context))</script></actions></service>
+    <service verb="store" noun="ProductPriceList" allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="mantle.product.ProductPriceList" include="all"/>
+            <parameter name="vendorPartyId"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="expectedLastUpdatedStamp" type="Timestamp"/>
+            <parameter name="cloneFromPriceListId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="priceListId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('storeList',context))</script>
+        </actions>
+    </service>
 
-    <service verb="store" noun="ProductPriceRule" allow-remote="false"><in-parameters><auto-parameters entity-name="mantle.product.ProductPriceRule" include="all"/><parameter name="expectedLastUpdatedStamp" type="Timestamp"/></in-parameters><out-parameters><parameter name="priceRuleId"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('storeRule',context))</script></actions></service>
+    <service verb="store" noun="ProductPriceRule" allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="mantle.product.ProductPriceRule" include="all"/>
+            <parameter name="expectedLastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="priceRuleId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('storeRule',context))</script>
+        </actions>
+    </service>
 
-    <service verb="get" noun="ProductPriceListPublication" allow-remote="false"><in-parameters><parameter name="priceListId" required="true"/><parameter name="asOfDate" type="Timestamp"/></in-parameters><out-parameters><parameter name="priceList" type="Map"/><parameter name="priceRuleRows" type="List"/><parameter name="publicationToken"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('publication',context))</script></actions></service>
+    <service verb="get" noun="ProductPriceListPublication" allow-remote="false">
+        <in-parameters>
+            <parameter name="priceListId" required="true"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="priceList" type="Map"/>
+            <parameter name="priceRuleRows" type="List"/>
+            <parameter name="publicationToken"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('publication',context))</script>
+        </actions>
+    </service>
 
-    <service verb="publish" noun="ProductPriceList" allow-remote="false"><in-parameters><parameter name="priceListId" required="true"/><parameter name="publicationToken" required="true"/><parameter name="changeReason" required="true"/></in-parameters><out-parameters><parameter name="priceListId"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('publish',context))</script></actions></service>
+    <service verb="publish" noun="ProductPriceList" allow-remote="false">
+        <in-parameters>
+            <parameter name="priceListId" required="true"/>
+            <parameter name="publicationToken" required="true"/>
+            <parameter name="changeReason" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="priceListId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('publish',context))</script>
+        </actions>
+    </service>
 
-    <service verb="retire" noun="ProductPriceList" allow-remote="false"><in-parameters><parameter name="priceListId" required="true"/><parameter name="thruDate" type="Timestamp"/><parameter name="changeReason" required="true"/></in-parameters><out-parameters><parameter name="priceListId"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('retire',context))</script></actions></service>
+    <service verb="retire" noun="ProductPriceList" allow-remote="false">
+        <in-parameters>
+            <parameter name="priceListId" required="true"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="changeReason" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="priceListId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('retire',context))</script>
+        </actions>
+    </service>
 
-    <service verb="get" noun="PricingSettings" allow-remote="false"><in-parameters><parameter name="organizationPartyId"/><parameter name="asOfDate" type="Timestamp"/></in-parameters><out-parameters><parameter name="organizationPartyId"/><parameter name="fromDate" type="Timestamp"/><parameter name="settings" type="Map"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('settings',context))</script></actions></service>
+    <service verb="get" noun="PricingSettings" allow-remote="false">
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="settings" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('settings',context))</script>
+        </actions>
+    </service>
 
-    <service verb="store" noun="PricingSettings" allow-remote="false"><in-parameters><auto-parameters entity-name="mantle.product.ProductPricingSetting" include="all"/><parameter name="expectedFromDate" type="Timestamp"/></in-parameters><out-parameters><parameter name="organizationPartyId"/><parameter name="fromDate" type="Timestamp"/><parameter name="settings" type="Map"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('storeSettings',context))</script></actions></service>
+    <service verb="store" noun="PricingSettings" allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="mantle.product.ProductPricingSetting" include="all"/>
+            <parameter name="expectedFromDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="settings" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceLists.js').execute('storeSettings',context))</script>
+        </actions>
+    </service>
 
-    <service verb="modify" noun="ProductPriceList" allow-remote="false"><implements service="mantle.product.PriceServices.modify#ProductPrice"/><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceResolver.js').execute('applyList',context))</script></actions></service>
+    <service verb="modify" noun="ProductPriceList" allow-remote="false">
+        <implements service="mantle.product.PriceServices.modify#ProductPrice"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/PriceResolver.js').execute('applyList',context))</script>
+        </actions>
+    </service>
 
     <service verb="get" noun="EffectivePriceList" allow-remote="false">
         <description>Resolved authorized product prices at one explicit list, date and quantity context. Missing prices remain blank; independent failures do not stop the report.</description>
-        <in-parameters><parameter name="priceListId" required="true"/><parameter name="asOfDate" type="Timestamp"/><parameter name="quantity" type="BigDecimal"/><parameter name="quantityUomId"/><parameter name="productIds" type="Object"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/></in-parameters>
-        <out-parameters><parameter name="reportContext" type="Map"/><parameter name="effectivePriceRows" type="List"/><parameter name="printHtml"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/EffectivePriceList.js').report(context))</script></actions>
+        <in-parameters>
+            <parameter name="priceListId" required="true"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+            <parameter name="quantity" type="BigDecimal"/>
+            <parameter name="quantityUomId"/>
+            <parameter name="productIds" type="Object"/>
+            <parameter name="vendorPartyId"/>
+            <parameter name="customerPartyId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reportContext" type="Map"/>
+            <parameter name="effectivePriceRows" type="List"/>
+            <parameter name="printHtml"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/EffectivePriceList.js').report(context))</script>
+        </actions>
     </service>
     <!-- reviewed bulk price changes (PriceChanges.js) -->
     <service verb="preview" noun="PriceChanges" allow-remote="false">

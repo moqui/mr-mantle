@@ -770,13 +770,13 @@
     </service>
     <service verb="assign" noun="ImportedIdentifier" allow-remote="false">
         <in-parameters>
-            <parameter name="productId" type="String" />
-            <parameter name="idValue" type="String" />
-            <parameter name="productIdTypeEnumId" type="String" />
-            <parameter name="rowParameters" type="Map" />
-            <parameter name="storeResult" type="Map" />
+            <parameter name="productId" type="String"/>
+            <parameter name="idValue" type="String"/>
+            <parameter name="productIdTypeEnumId" type="String"/>
+            <parameter name="rowParameters" type="Map"/>
+            <parameter name="storeResult" type="Map"/>
         </in-parameters>
-        <out-parameters />
+        <out-parameters/>
         <actions>
             <script>if(idValue)ec.service.sync().name('mantle.product.ProductServices.store#ProductIdentifier').parameters({productId:productId,productIdTypeEnumId:productIdTypeEnumId||'PidtSku',idValue:idValue,changeReason:'Catalog import confirmed identifier'}).disableAuthz().call()</script>
         </actions>

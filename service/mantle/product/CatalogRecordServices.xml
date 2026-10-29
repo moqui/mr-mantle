@@ -15,14 +15,14 @@
     </service>
     <service verb="validate" noun="Product" allow-remote="false">
         <in-parameters>
-            <auto-parameters entity-name="mantle.product.Product" include="all" />
-            <parameter name="createOnly" type="Boolean" />
-            <parameter name="expectedLastUpdatedStamp" type="Timestamp" />
+            <auto-parameters entity-name="mantle.product.Product" include="all"/>
+            <parameter name="createOnly" type="Boolean"/>
+            <parameter name="expectedLastUpdatedStamp" type="Timestamp"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="normalizedParameters" type="Map" />
-            <parameter name="before" type="Map" />
-            <parameter name="catalogPolicy" type="Map" />
+            <parameter name="normalizedParameters" type="Map"/>
+            <parameter name="before" type="Map"/>
+            <parameter name="catalogPolicy" type="Map"/>
         </out-parameters>
         <actions>
             <script>const prepared=ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js').prepareProduct(context);normalizedParameters=prepared.parameters;before=prepared.before;catalogPolicy=prepared.catalogPolicy</script>
@@ -56,24 +56,36 @@
     </service>
     <service verb="validate" noun="CatalogRow" allow-remote="false">
         <in-parameters>
-            <auto-parameters entity-name="mantle.product.category.ProductCategoryMember" include="all" />
-            <auto-parameters entity-name="mantle.product.feature.ProductFeatureAppl" include="all" />
-            <parameter name="kind" type="String" />
-            <parameter name="operation" type="String" />
+            <auto-parameters entity-name="mantle.product.category.ProductCategoryMember" include="all"/>
+            <auto-parameters entity-name="mantle.product.feature.ProductFeatureAppl" include="all"/>
+            <parameter name="kind" type="String"/>
+            <parameter name="operation" type="String"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="normalizedParameters" type="Map" />
-            <parameter name="beforeRows" type="List" />
-            <parameter name="recordEntityName" type="String" />
-            <parameter name="product" type="Map" />
+            <parameter name="normalizedParameters" type="Map"/>
+            <parameter name="beforeRows" type="List"/>
+            <parameter name="recordEntityName" type="String"/>
+            <parameter name="product" type="Map"/>
         </out-parameters>
         <actions>
             <script>const prepared=ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js').prepareRow(context);normalizedParameters=prepared.parameters;beforeRows=prepared.beforeRows;recordEntityName=prepared.recordEntityName;product=prepared.product</script>
         </actions>
     </service>
     <service verb="ensure" noun="CatalogAssignment" allow-remote="false">
-        <in-parameters><parameter name="kind"/><parameter name="productId"/><parameter name="productCategoryId"/><parameter name="productFeatureId"/><parameter name="applTypeEnumId"/><parameter name="fromDate" type="Timestamp"/></in-parameters>
-        <out-parameters><parameter name="productId"/><parameter name="fromDate" type="Timestamp"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js').execute('ensureRow',context))</script></actions>
+        <in-parameters>
+            <parameter name="kind"/>
+            <parameter name="productId"/>
+            <parameter name="productCategoryId"/>
+            <parameter name="productFeatureId"/>
+            <parameter name="applTypeEnumId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="productId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js').execute('ensureRow',context))</script>
+        </actions>
     </service>
 </services>

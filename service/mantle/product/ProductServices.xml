@@ -15,27 +15,104 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="check" noun="ProductUsable" allow-remote="false" authenticate="anonymous-view">
-        <in-parameters><parameter name="productId" required="true"/><parameter name="usage" required="true"/><parameter name="quantity" type="BigDecimal" default="1"/><parameter name="facilityId"/><parameter name="productStoreId"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/></in-parameters>
-        <out-parameters><parameter name="usable" type="Boolean"/><parameter name="reason"/><parameter name="statusId"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('usable', context))</script></actions>
+        <in-parameters>
+            <parameter name="productId" required="true"/>
+            <parameter name="usage" required="true"/>
+            <parameter name="quantity" type="BigDecimal" default="1"/>
+            <parameter name="facilityId"/>
+            <parameter name="productStoreId"/>
+            <parameter name="vendorPartyId"/>
+            <parameter name="customerPartyId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="usable" type="Boolean"/>
+            <parameter name="reason"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('usable', context))</script>
+        </actions>
     </service>
     <service verb="check" noun="OrderProductUsable" allow-remote="false" authenticate="anonymous-view">
-        <in-parameters><parameter name="productId" required="true"/><parameter name="orderId"/><parameter name="orderPartSeqId"/><parameter name="vendorPartyId"/><parameter name="customerPartyId"/><parameter name="quantity" type="BigDecimal" default="1"/></in-parameters>
-        <out-parameters><parameter name="usable" type="Boolean"/><parameter name="statusId"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('orderUsable', context))</script></actions>
+        <in-parameters>
+            <parameter name="productId" required="true"/>
+            <parameter name="orderId"/>
+            <parameter name="orderPartSeqId"/>
+            <parameter name="vendorPartyId"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="quantity" type="BigDecimal" default="1"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="usable" type="Boolean"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('orderUsable', context))</script>
+        </actions>
     </service>
     <service verb="store" noun="ProductIdentifier" allow-remote="false">
-        <in-parameters><parameter name="productId" required="true"/><parameter name="productIdTypeEnumId" required="true"/><parameter name="idValue" required="true"/><parameter name="productOtherIdentId"/><parameter name="other" type="Boolean" default="false"/><parameter name="productStoreId"/><parameter name="marketSegmentId"/><parameter name="changeReason"/></in-parameters>
-        <out-parameters><parameter name="productOtherIdentId"/><parameter name="idValue"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Identifiers.js').execute('store', context))</script></actions>
+        <in-parameters>
+            <parameter name="productId" required="true"/>
+            <parameter name="productIdTypeEnumId" required="true"/>
+            <parameter name="idValue" required="true"/>
+            <parameter name="productOtherIdentId"/>
+            <parameter name="other" type="Boolean" default="false"/>
+            <parameter name="productStoreId"/>
+            <parameter name="marketSegmentId"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="productOtherIdentId"/>
+            <parameter name="idValue"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Identifiers.js').execute('store', context))</script>
+        </actions>
     </service>
     <service verb="store" noun="KitComponent" allow-remote="false">
-        <in-parameters><parameter name="productId" required="true"/><parameter name="toProductId" required="true"/><parameter name="fromDate" type="Timestamp" default="ec.user.nowTimestamp"/><parameter name="thruDate" type="Timestamp"/><parameter name="quantity" type="BigDecimal" required="true"/><parameter name="sequenceNum" type="Long"/></in-parameters>
-        <out-parameters><parameter name="fromDate" type="Timestamp"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('kit', context))</script></actions>
+        <in-parameters>
+            <parameter name="productId" required="true"/>
+            <parameter name="toProductId" required="true"/>
+            <parameter name="fromDate" type="Timestamp" default="ec.user.nowTimestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="quantity" type="BigDecimal" required="true"/>
+            <parameter name="sequenceNum" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="fromDate" type="Timestamp"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/ProductPolicy.js').execute('kit', context))</script>
+        </actions>
     </service>
-    <service verb="store" noun="FeatureInteraction" allow-remote="false"><in-parameters><auto-parameters entity-name="mantle.product.feature.ProductFeatureIactn" include="all"/><parameter name="productFeatureId" required="true"/><parameter name="toProductFeatureId" required="true"/><parameter name="iactnTypeEnumId" required="true"/></in-parameters><out-parameters><auto-parameters entity-name="mantle.product.feature.ProductFeatureIactn" include="all"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/FeaturePolicy.js').execute('store',context))</script></actions></service>
-    <service verb="preview" noun="FeatureInteractions" allow-remote="false"><in-parameters><parameter name="productId" required="true"/><parameter name="productFeatureIds" type="List"/></in-parameters><out-parameters><parameter name="valid" type="Boolean"/><parameter name="issues" type="List"/><parameter name="compositions" type="List"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/FeaturePolicy.js').execute('preview',context))</script></actions></service>
+    <service verb="store" noun="FeatureInteraction" allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="mantle.product.feature.ProductFeatureIactn" include="all"/>
+            <parameter name="productFeatureId" required="true"/>
+            <parameter name="toProductFeatureId" required="true"/>
+            <parameter name="iactnTypeEnumId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <auto-parameters entity-name="mantle.product.feature.ProductFeatureIactn" include="all"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/FeaturePolicy.js').execute('store',context))</script>
+        </actions>
+    </service>
+    <service verb="preview" noun="FeatureInteractions" allow-remote="false">
+        <in-parameters>
+            <parameter name="productId" required="true"/>
+            <parameter name="productFeatureIds" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="issues" type="List"/>
+            <parameter name="compositions" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/FeaturePolicy.js').execute('preview',context))</script>
+        </actions>
+    </service>
     <!-- the organization catalog and variant policies (CatalogSettings.js): dated rows, read with catalog read in the
         organization and changed with catalog administration there -->
     <service verb="get" noun="CatalogSettings" allow-remote="false">
@@ -487,10 +564,35 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- =================================== -->
     <!-- Services for Products with Variants -->
     <service verb="preview" noun="VariantProducts" allow-remote="false">
-      <in-parameters><parameter name="productId" required="true"/><parameter name="productTypeEnumId"/><parameter name="assetTypeEnumId"/><parameter name="assetClassEnumId"/><parameter name="productFeatureGroupIdSet" type="Set"/><parameter name="copyCategoryMembers" type="Boolean"/>
-      <parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/><parameter name="copyFields" type="List"/><parameter name="allowedFeatureIds" type="List"/><parameter name="allowedCategoryIds" type="List"/><parameter name="filterFeatureIds" type="List"/><parameter name="requiredOwnerPartyId"/><parameter name="policyStamp"/><parameter name="previewRevision"/></in-parameters>
-      <out-parameters><parameter name="rows" type="List"/><parameter name="totalCount" type="Long"/><parameter name="pageIndex" type="Integer"/><parameter name="pageSize" type="Integer"/><parameter name="previewRevision"/><parameter name="featureTypeInfoList" type="List"/><parameter name="copyFields" type="List"/></out-parameters>
-      <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('preview',context))</script></actions>
+        <in-parameters>
+            <parameter name="productId" required="true"/>
+            <parameter name="productTypeEnumId"/>
+            <parameter name="assetTypeEnumId"/>
+            <parameter name="assetClassEnumId"/>
+            <parameter name="productFeatureGroupIdSet" type="Set"/>
+            <parameter name="copyCategoryMembers" type="Boolean"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="copyFields" type="List"/>
+            <parameter name="allowedFeatureIds" type="List"/>
+            <parameter name="allowedCategoryIds" type="List"/>
+            <parameter name="filterFeatureIds" type="List"/>
+            <parameter name="requiredOwnerPartyId"/>
+            <parameter name="policyStamp"/>
+            <parameter name="previewRevision"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="totalCount" type="Long"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="previewRevision"/>
+            <parameter name="featureTypeInfoList" type="List"/>
+            <parameter name="copyFields" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('preview',context))</script>
+        </actions>
     </service>
 
 
@@ -602,10 +704,29 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="productTypeEnumId"/>
             <parameter name="assetTypeEnumId"/>
             <parameter name="assetClassEnumId"/>
-            <parameter name="productFeatureGroupIdSet" type="Set"><parameter name="productFeatureGroupId"/></parameter>
+            <parameter name="productFeatureGroupIdSet" type="Set">
+                <parameter name="productFeatureGroupId"/>
+            </parameter>
             <parameter name="copyCategoryMembers" type="Boolean" default="false"/>
-        <parameter name="copyFields" type="List"/><parameter name="allowedFeatureIds" type="List"/><parameter name="allowedCategoryIds" type="List"/><parameter name="filterFeatureIds" type="List"/><parameter name="requiredOwnerPartyId"/><parameter name="policyStamp"/><parameter name="previewRevision"/><parameter name="selectedFeatureSets" type="List"/><parameter name="interactiveLimit" type="Integer"/></in-parameters>
-        <out-parameters><parameter name="results" type="List"/><parameter name="createdCount" type="Integer"/><parameter name="existingCount" type="Integer"/><parameter name="failedCount" type="Integer"/></out-parameters><actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('create',context))</script></actions>
+            <parameter name="copyFields" type="List"/>
+            <parameter name="allowedFeatureIds" type="List"/>
+            <parameter name="allowedCategoryIds" type="List"/>
+            <parameter name="filterFeatureIds" type="List"/>
+            <parameter name="requiredOwnerPartyId"/>
+            <parameter name="policyStamp"/>
+            <parameter name="previewRevision"/>
+            <parameter name="selectedFeatureSets" type="List"/>
+            <parameter name="interactiveLimit" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="createdCount" type="Integer"/>
+            <parameter name="existingCount" type="Integer"/>
+            <parameter name="failedCount" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('create',context))</script>
+        </actions>
     </service>
     <service verb="create" noun="VariantProduct">
         <in-parameters>
@@ -616,9 +737,24 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="featureList" type="List"/>
             <parameter name="copyStandardFeatures" type="Boolean" default="true"/>
             <parameter name="copyCategoryMembers" type="Boolean" default="false"/>
-        <parameter name="copyFields" type="List"/><parameter name="allowedFeatureIds" type="List"/><parameter name="allowedCategoryIds" type="List"/><parameter name="filterFeatureIds" type="List"/><parameter name="requiredOwnerPartyId"/><parameter name="policyStamp"/><parameter name="previewRevision"/><parameter name="productFeatureIds" type="List"/><parameter name="productFeatureGroupIdSet" type="Set"/></in-parameters>
-        <out-parameters><parameter name="productId"/><parameter name="featureKey"/><parameter name="result"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('createOne',context))</script></actions>
+            <parameter name="copyFields" type="List"/>
+            <parameter name="allowedFeatureIds" type="List"/>
+            <parameter name="allowedCategoryIds" type="List"/>
+            <parameter name="filterFeatureIds" type="List"/>
+            <parameter name="requiredOwnerPartyId"/>
+            <parameter name="policyStamp"/>
+            <parameter name="previewRevision"/>
+            <parameter name="productFeatureIds" type="List"/>
+            <parameter name="productFeatureGroupIdSet" type="Set"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="productId"/>
+            <parameter name="featureKey"/>
+            <parameter name="result"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Variants.js').execute('createOne',context))</script>
+        </actions>
     </service>
 
     <service verb="delete" noun="VariantProducts">
@@ -832,8 +968,16 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="expectedRevision"/>
             <parameter name="requireRevision" type="Boolean" default="false"/>
         </in-parameters>
-        <out-parameters><parameter name="conflict" type="Boolean"/><parameter name="currentRevision"/><parameter name="contentEditConflictId"/><parameter name="contentId"/><parameter name="productContentId"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').update(context,false))</script></actions>
+        <out-parameters>
+            <parameter name="conflict" type="Boolean"/>
+            <parameter name="currentRevision"/>
+            <parameter name="contentEditConflictId"/>
+            <parameter name="contentId"/>
+            <parameter name="productContentId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').update(context,false))</script>
+        </actions>
     </service>
     <service verb="save" noun="ProductContentFile">
         <in-parameters>
@@ -901,8 +1045,16 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="expectedRevision"/>
             <parameter name="requireRevision" type="Boolean" default="false"/>
         </in-parameters>
-        <out-parameters><parameter name="conflict" type="Boolean"/><parameter name="currentRevision"/><parameter name="contentEditConflictId"/><parameter name="contentId"/><parameter name="productCategoryContentId"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').update(context,true))</script></actions>
+        <out-parameters>
+            <parameter name="conflict" type="Boolean"/>
+            <parameter name="currentRevision"/>
+            <parameter name="contentEditConflictId"/>
+            <parameter name="contentId"/>
+            <parameter name="productCategoryContentId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').update(context,true))</script>
+        </actions>
     </service>
     <service verb="save" noun="ProductCategoryContentFile">
         <in-parameters>
