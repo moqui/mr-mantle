@@ -58,6 +58,47 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
+    <service verb="get" noun="ProductStockTotals">
+        <description>One product's stock at one facility for one owner: the quantity on hand, the part on hold (quarantine),
+            the part in available status, what reservations hold back, and the available to promise of get#AvailableInventory.
+            Quantities only; no valuation.</description>
+        <in-parameters>
+            <parameter name="productId" required="true"/>
+            <parameter name="facilityId" required="true"/>
+            <parameter name="ownerPartyId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="quantityOnHandTotal" type="BigDecimal"/>
+            <parameter name="heldQuantity" type="BigDecimal"/>
+            <parameter name="availableStatusQuantity" type="BigDecimal"/>
+            <parameter name="reservedQuantity" type="BigDecimal"/>
+            <parameter name="availableToPromiseTotal" type="BigDecimal"/>
+        </out-parameters>
+        <actions>
+            <entity-find entity-name="mantle.product.asset.Asset" list="assetList">
+                <econdition field-name="productId"/><econdition field-name="facilityId"/><econdition field-name="ownerPartyId"/></entity-find>
+            <script><![CDATA[
+                quantityOnHandTotal = toDecimal(0); heldQuantity = toDecimal(0); availableStatusQuantity = toDecimal(0)
+                reservedQuantity = toDecimal(0)
+                const assets = Array.from(assetList)
+                for (const asset of assets) {
+                    const onHand = toDecimal(asset.quantityOnHandTotal ?? 0)
+                    quantityOnHandTotal = quantityOnHandTotal.add(onHand)
+                    if (asset.statusId === 'AstQuarantine') heldQuantity = heldQuantity.add(onHand)
+                    if (asset.statusId === 'AstAvailable') availableStatusQuantity = availableStatusQuantity.add(onHand)
+                }
+                // a reservation holds back what it has not issued, less what it already found unavailable
+                if (assets.length) for (const reservation of ec.entity.find('mantle.product.issuance.AssetReservation')
+                        .condition('assetId', 'in', assets.map(asset => asset.assetId)).list()) {
+                    const held = toDecimal(reservation.quantityNotIssued ?? reservation.quantity ?? 0).subtract(reservation.quantityNotAvailable ?? 0)
+                    if (held.compare(0) > 0) reservedQuantity = reservedQuantity.add(held)
+                }
+            ]]></script>
+            <service-call name="mantle.product.AssetServices.get#AvailableInventory" out-map="available"
+                    in-map="{productId:productId, facilityId:facilityId, vendorPartyId:ownerPartyId, ownerPartyIdList:[ownerPartyId]}"/>
+            <set field="availableToPromiseTotal" from="available.availableToPromiseTotal ?? 0"/>
+        </actions>
+    </service>
     <service verb="get" noun="AvailableInventory">
         <in-parameters>
             <parameter name="productId" required="true"/>
