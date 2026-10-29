@@ -14,7 +14,7 @@ moqui test mr-mantle --coverage                       # list the services no spe
 moqui test mr-mantle --keep --log-level info          # keep the scratch runtime, more on the console
 ```
 
-The spec format, conditions, helpers, pitfalls and a Spock-to-spec table are in `docs/Testing.md` in the mr-moqui
+The spec format, conditions, helpers, pitfalls and a Spock-to-spec table are in `docs/Build-Test.md` in the mr-moqui
 repository. Notes for this suite:
 
 - A spec that calls a data-dependent service on a product the flows also use (DEMO_1_1, DEMO_2_1, DEMO_3_1) can see
