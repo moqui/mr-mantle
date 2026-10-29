@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="define" noun="Parameters" type="interface">
+        <in-parameters>
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="sourceOrganizationPartyId" type="String" />
+            <parameter name="mappingKind" type="String" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="changeReason" type="String" />
+            <parameter name="settlementTermId" type="String" />
+            <parameter name="description" type="String" />
+            <parameter name="termValueUomId" type="String" />
+            <parameter name="paymentMethodId" type="String" />
+            <parameter name="paymentGatewayConfigId" type="String" />
+            <parameter name="currencyUomId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="settings" type="Map" />
+            <parameter name="mapping" type="Map" />
+            <parameter name="mappingKinds" type="List" />
+            <parameter name="apply" type="Boolean" />
+            <parameter name="lastUpdatedStamp" type="Timestamp" />
+            <parameter name="termValue" type="BigDecimal" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="mappingToken" type="String" />
+            <parameter name="pageIndex" type="Integer" />
+            <parameter name="pageSize" type="Integer" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settings" type="Map" />
+            <parameter name="findings" type="List" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="inherited" type="Boolean" />
+            <parameter name="costingMessage" type="String" />
+            <parameter name="mappingRows" type="List" />
+            <parameter name="missingMappings" type="List" />
+            <parameter name="errorTransactions" type="List" />
+            <parameter name="mappingKinds" type="List" />
+            <parameter name="inputFingerprint" type="String" />
+            <parameter name="conflicts" type="List" />
+            <parameter name="copyCount" type="Integer" />
+            <parameter name="complete" type="Boolean" />
+            <parameter name="settlementTermId" type="String" />
+            <parameter name="terms" type="List" />
+            <parameter name="currencies" type="List" />
+            <parameter name="rates" type="List" />
+            <parameter name="methods" type="List" />
+            <parameter name="gateways" type="List" />
+            <parameter name="paymentMethodId" type="String" />
+            <parameter name="mappingRowsCount" type="Integer" />
+            <parameter name="selectedMapping" type="Map" />
+            <parameter name="currenciesCount" type="Integer" />
+        </out-parameters>
+    </service>
+    <service allow-remote="false" verb="get" noun="Readiness">
+        <description>Check authorized accounting setup health without exposing administration settings; name independent failures.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('readiness',context))</script>
+        </actions>
+    </service>
+</services>

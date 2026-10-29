@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<entity-facade-xml type="seed">
+    <moqui.security.UserPermission userPermissionId="ACCOUNTING_ADMIN" description="Accounting Admin"/>
+    <moqui.security.UserPermission userPermissionId="BANK_RECONCILE" description="Bank Reconcile"/>
+    <moqui.security.UserPermission userPermissionId="BUDGET_EDIT" description="Budget Edit"/>
+    <moqui.security.UserPermission userPermissionId="BUDGET_OVERRIDE" description="Budget Override"/>
+    <moqui.security.UserPermission userPermissionId="CREDIT_HOLD_RELEASE" description="Credit Hold Release"/>
+    <moqui.security.UserPermission userPermissionId="CUSTOMER_CREDIT_VIEW" description="Customer Credit View"/>
+    <moqui.security.UserPermission userPermissionId="FISCAL_CLOSE" description="Fiscal Close"/>
+    <moqui.security.UserPermission userPermissionId="INVOICE_APPROVE" description="Invoice Approve"/>
+    <moqui.security.UserPermission userPermissionId="INVOICE_HOLD" description="Invoice Hold"/>
+    <moqui.security.UserPermission userPermissionId="INVOICE_HOLD_RELEASE" description="Invoice Hold Release"/>
+    <moqui.security.UserPermission userPermissionId="INVOICE_MATCH" description="Invoice Match"/>
+    <moqui.security.UserPermission userPermissionId="PAYABLE_EDIT" description="Payable Edit"/>
+    <moqui.security.UserPermission userPermissionId="PAYABLE_IMPORT" description="Payable Import"/>
+    <moqui.security.UserPermission userPermissionId="PAYMENT_EDIT" description="Payment Edit"/>
+    <moqui.security.UserPermission userPermissionId="PAYMENT_RUN_APPROVE" description="Payment Run Approve"/>
+    <moqui.security.UserPermission userPermissionId="PRODUCTION_COST_POST" description="Production Cost Post"/>
+    <moqui.security.UserPermission userPermissionId="RECEIVABLE_EDIT" description="Receivable Edit"/>
+    <moqui.security.UserPermission userPermissionId="RETURN_CREDIT_APPROVE" description="Return Credit Approve"/>
+    <moqui.security.UserPermission userPermissionId="SUPPLIER_TERMS_EDIT" description="Supplier Terms Edit"/>
+    <moqui.security.UserPermission userPermissionId="TAX_STATEMENT_EDIT" description="Tax Statement Edit"/>
+    <moqui.basic.Enumeration enumId="AtrPostingFailed" enumTypeId="AcctgTransResult" description="Posting failed; review error journal"/>
+    <moqui.basic.EnumerationType enumTypeId="AcctgTransContentType" description="Journal attachment type"/>
+    <moqui.basic.Enumeration enumId="AtctEvidence" enumTypeId="AcctgTransContentType" description="Supporting evidence"/>
+    <moqui.basic.Enumeration enumId="AtctOther" enumTypeId="AcctgTransContentType" description="Other attachment"/>
+</entity-facade-xml>
