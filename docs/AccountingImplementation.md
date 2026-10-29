@@ -35,3 +35,6 @@ mappings without blocking independent compatible rows.
 
 Authorized invoice/bill reads compute totals through the existing read-only InvoiceServices.get#InvoiceTotal when
 stored totals are absent. The parent record's permission and organization checks precede the child calculation.
+
+Document projections include public or actor-owned counterparty names after the parent record is authorized;
+other users' private names are omitted even when artifact authorization is disabled.

@@ -72,6 +72,31 @@ function read(p) {
                 invoiceId: row.invoiceId,
             }),
         )
+    if (["invoices", "bills", "payments"].includes(p.kind)) {
+        for (const party of Array.from(
+            lib
+                .find("mantle.party.PartyDetail")
+                .condition(
+                    "partyId",
+                    "in",
+                    [row.fromPartyId, row.toPartyId].filter(Boolean),
+                )
+                .list(),
+        )) {
+            if (
+                party.privateOwnerUserId &&
+                party.privateOwnerUserId !== ec.user.userId
+            )
+                continue
+            const name =
+                party.organizationName ||
+                [party.firstName, party.lastName].filter(Boolean).join(" ") ||
+                party.partyId
+            if (party.partyId === row.fromPartyId)
+                out.record.fromPartyName = name
+            if (party.partyId === row.toPartyId) out.record.toPartyName = name
+        }
+    }
     if (p.kind === "accounts") {
         const scope = lib.scope(p),
             org =
