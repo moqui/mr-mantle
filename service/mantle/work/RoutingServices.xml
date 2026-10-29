@@ -1,6 +1,7 @@
 <?xml version="1.0" ?>
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="find" noun="Routings" allow-remote="false">
+    <!-- the parameters the services below share: each implements this interface -->
+    <service verb="define" noun="RoutingParameters" type="interface">
         <in-parameters>
             <parameter name="workEffortId" type="String"/>
             <parameter name="routingWorkEffortId" type="String"/>
@@ -66,637 +67,66 @@
             <parameter name="record" type="Map"/>
             <parameter name="canChange" type="Boolean"/>
         </out-parameters>
+    </service>
+    <service verb="find" noun="Routings" allow-remote="false">
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('list',context))</script>
         </actions>
     </service>
     <service verb="get" noun="RoutingDetail" allow-remote="false">
-        <in-parameters>
-            <parameter name="workEffortId" type="String"/>
-            <parameter name="routingWorkEffortId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="workEffortName" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="sequenceNum" type="Integer"/>
-            <parameter name="estimatedSetupTime" type="BigDecimal"/>
-            <parameter name="estimatedWorkTime" type="BigDecimal"/>
-            <parameter name="timeUomId" type="String"/>
-            <parameter name="methodMachineSetupTime" type="BigDecimal"/>
-            <parameter name="methodMachineRunTime" type="BigDecimal"/>
-            <parameter name="methodBatchQuantity" type="BigDecimal"/>
-            <parameter name="methodQuantityUomId" type="String"/>
-            <parameter name="methodWorkCenterId" type="String"/>
-            <parameter name="methodPredecessorIds" type="String"/>
-            <parameter name="methodRemoved" type="String"/>
-            <parameter name="assetProductId" type="String"/>
-            <parameter name="skillTypeEnumId" type="String"/>
-            <parameter name="estimatedQuantity" type="BigDecimal"/>
-            <parameter name="estimatedDuration" type="BigDecimal"/>
-            <parameter name="estimatedNumPeople" type="BigDecimal"/>
-            <parameter name="facilityId" type="String"/>
-            <parameter name="calendarId" type="String"/>
-            <parameter name="efficiencyPercent" type="BigDecimal"/>
-            <parameter name="oeeTargetPercent" type="BigDecimal"/>
-            <parameter name="workCenterRateId" type="String"/>
-            <parameter name="componentTypeEnumId" type="String"/>
-            <parameter name="rateAmount" type="BigDecimal"/>
-            <parameter name="priceUomId" type="String"/>
-            <parameter name="approve" type="Boolean"/>
-            <parameter name="quantity" type="BigDecimal"/>
-            <parameter name="quantityUomId" type="String"/>
-            <parameter name="need" type="String"/>
-        </in-parameters>
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <out-parameters>
             <parameter name="standardTimesShown" type="Boolean"/>
-            <parameter name="routing" type="Map"/>
-            <parameter name="operationRows" type="List"/>
-            <parameter name="releasedOperationRows" type="List"/>
-            <parameter name="releaseHistory" type="List"/>
-            <parameter name="approvedRouting" type="Map"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="methodAccess" type="Map"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="routingRows" type="List"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="valid" type="Boolean"/>
-            <parameter name="findings" type="List"/>
-            <parameter name="methodReleaseDecisionId" type="String"/>
-            <parameter name="stampedLines" type="List"/>
-            <parameter name="workCenter" type="Map"/>
-            <parameter name="workCenterRate" type="Map"/>
-            <parameter name="operationCostRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="recordVisible" type="Boolean"/>
-            <parameter name="record" type="Map"/>
-            <parameter name="canChange" type="Boolean"/>
         </out-parameters>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('detail',context))</script>
         </actions>
     </service>
     <service verb="get" noun="RoutingAccess" allow-remote="false">
-        <in-parameters>
-            <parameter name="workEffortId" type="String"/>
-            <parameter name="routingWorkEffortId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="workEffortName" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="sequenceNum" type="Integer"/>
-            <parameter name="estimatedSetupTime" type="BigDecimal"/>
-            <parameter name="estimatedWorkTime" type="BigDecimal"/>
-            <parameter name="timeUomId" type="String"/>
-            <parameter name="methodMachineSetupTime" type="BigDecimal"/>
-            <parameter name="methodMachineRunTime" type="BigDecimal"/>
-            <parameter name="methodBatchQuantity" type="BigDecimal"/>
-            <parameter name="methodQuantityUomId" type="String"/>
-            <parameter name="methodWorkCenterId" type="String"/>
-            <parameter name="methodPredecessorIds" type="String"/>
-            <parameter name="methodRemoved" type="String"/>
-            <parameter name="assetProductId" type="String"/>
-            <parameter name="skillTypeEnumId" type="String"/>
-            <parameter name="estimatedQuantity" type="BigDecimal"/>
-            <parameter name="estimatedDuration" type="BigDecimal"/>
-            <parameter name="estimatedNumPeople" type="BigDecimal"/>
-            <parameter name="facilityId" type="String"/>
-            <parameter name="calendarId" type="String"/>
-            <parameter name="efficiencyPercent" type="BigDecimal"/>
-            <parameter name="oeeTargetPercent" type="BigDecimal"/>
-            <parameter name="workCenterRateId" type="String"/>
-            <parameter name="componentTypeEnumId" type="String"/>
-            <parameter name="rateAmount" type="BigDecimal"/>
-            <parameter name="priceUomId" type="String"/>
-            <parameter name="approve" type="Boolean"/>
-            <parameter name="quantity" type="BigDecimal"/>
-            <parameter name="quantityUomId" type="String"/>
-            <parameter name="need" type="String"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="routing" type="Map"/>
-            <parameter name="operationRows" type="List"/>
-            <parameter name="releasedOperationRows" type="List"/>
-            <parameter name="releaseHistory" type="List"/>
-            <parameter name="approvedRouting" type="Map"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="methodAccess" type="Map"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="routingRows" type="List"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="valid" type="Boolean"/>
-            <parameter name="findings" type="List"/>
-            <parameter name="methodReleaseDecisionId" type="String"/>
-            <parameter name="stampedLines" type="List"/>
-            <parameter name="workCenter" type="Map"/>
-            <parameter name="workCenterRate" type="Map"/>
-            <parameter name="operationCostRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="recordVisible" type="Boolean"/>
-            <parameter name="record" type="Map"/>
-            <parameter name="canChange" type="Boolean"/>
-        </out-parameters>
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('access',context))</script>
         </actions>
     </service>
     <service verb="store" noun="Routing" allow-remote="false">
-        <in-parameters>
-            <parameter name="workEffortId" type="String"/>
-            <parameter name="routingWorkEffortId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="workEffortName" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="sequenceNum" type="Integer"/>
-            <parameter name="estimatedSetupTime" type="BigDecimal"/>
-            <parameter name="estimatedWorkTime" type="BigDecimal"/>
-            <parameter name="timeUomId" type="String"/>
-            <parameter name="methodMachineSetupTime" type="BigDecimal"/>
-            <parameter name="methodMachineRunTime" type="BigDecimal"/>
-            <parameter name="methodBatchQuantity" type="BigDecimal"/>
-            <parameter name="methodQuantityUomId" type="String"/>
-            <parameter name="methodWorkCenterId" type="String"/>
-            <parameter name="methodPredecessorIds" type="String"/>
-            <parameter name="methodRemoved" type="String"/>
-            <parameter name="assetProductId" type="String"/>
-            <parameter name="skillTypeEnumId" type="String"/>
-            <parameter name="estimatedQuantity" type="BigDecimal"/>
-            <parameter name="estimatedDuration" type="BigDecimal"/>
-            <parameter name="estimatedNumPeople" type="BigDecimal"/>
-            <parameter name="facilityId" type="String"/>
-            <parameter name="calendarId" type="String"/>
-            <parameter name="efficiencyPercent" type="BigDecimal"/>
-            <parameter name="oeeTargetPercent" type="BigDecimal"/>
-            <parameter name="workCenterRateId" type="String"/>
-            <parameter name="componentTypeEnumId" type="String"/>
-            <parameter name="rateAmount" type="BigDecimal"/>
-            <parameter name="priceUomId" type="String"/>
-            <parameter name="approve" type="Boolean"/>
-            <parameter name="quantity" type="BigDecimal"/>
-            <parameter name="quantityUomId" type="String"/>
-            <parameter name="need" type="String"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="routing" type="Map"/>
-            <parameter name="operationRows" type="List"/>
-            <parameter name="releasedOperationRows" type="List"/>
-            <parameter name="releaseHistory" type="List"/>
-            <parameter name="approvedRouting" type="Map"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="methodAccess" type="Map"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="routingRows" type="List"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="valid" type="Boolean"/>
-            <parameter name="findings" type="List"/>
-            <parameter name="methodReleaseDecisionId" type="String"/>
-            <parameter name="stampedLines" type="List"/>
-            <parameter name="workCenter" type="Map"/>
-            <parameter name="workCenterRate" type="Map"/>
-            <parameter name="operationCostRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="recordVisible" type="Boolean"/>
-            <parameter name="record" type="Map"/>
-            <parameter name="canChange" type="Boolean"/>
-        </out-parameters>
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('store',context))</script>
         </actions>
     </service>
     <service verb="store" noun="RoutingOperation" allow-remote="false">
-        <in-parameters>
-            <parameter name="workEffortId" type="String"/>
-            <parameter name="routingWorkEffortId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="workEffortName" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="sequenceNum" type="Integer"/>
-            <parameter name="estimatedSetupTime" type="BigDecimal"/>
-            <parameter name="estimatedWorkTime" type="BigDecimal"/>
-            <parameter name="timeUomId" type="String"/>
-            <parameter name="methodMachineSetupTime" type="BigDecimal"/>
-            <parameter name="methodMachineRunTime" type="BigDecimal"/>
-            <parameter name="methodBatchQuantity" type="BigDecimal"/>
-            <parameter name="methodQuantityUomId" type="String"/>
-            <parameter name="methodWorkCenterId" type="String"/>
-            <parameter name="methodPredecessorIds" type="String"/>
-            <parameter name="methodRemoved" type="String"/>
-            <parameter name="assetProductId" type="String"/>
-            <parameter name="skillTypeEnumId" type="String"/>
-            <parameter name="estimatedQuantity" type="BigDecimal"/>
-            <parameter name="estimatedDuration" type="BigDecimal"/>
-            <parameter name="estimatedNumPeople" type="BigDecimal"/>
-            <parameter name="facilityId" type="String"/>
-            <parameter name="calendarId" type="String"/>
-            <parameter name="efficiencyPercent" type="BigDecimal"/>
-            <parameter name="oeeTargetPercent" type="BigDecimal"/>
-            <parameter name="workCenterRateId" type="String"/>
-            <parameter name="componentTypeEnumId" type="String"/>
-            <parameter name="rateAmount" type="BigDecimal"/>
-            <parameter name="priceUomId" type="String"/>
-            <parameter name="approve" type="Boolean"/>
-            <parameter name="quantity" type="BigDecimal"/>
-            <parameter name="quantityUomId" type="String"/>
-            <parameter name="need" type="String"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="routing" type="Map"/>
-            <parameter name="operationRows" type="List"/>
-            <parameter name="releasedOperationRows" type="List"/>
-            <parameter name="releaseHistory" type="List"/>
-            <parameter name="approvedRouting" type="Map"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="methodAccess" type="Map"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="routingRows" type="List"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="valid" type="Boolean"/>
-            <parameter name="findings" type="List"/>
-            <parameter name="methodReleaseDecisionId" type="String"/>
-            <parameter name="stampedLines" type="List"/>
-            <parameter name="workCenter" type="Map"/>
-            <parameter name="workCenterRate" type="Map"/>
-            <parameter name="operationCostRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="recordVisible" type="Boolean"/>
-            <parameter name="record" type="Map"/>
-            <parameter name="canChange" type="Boolean"/>
-        </out-parameters>
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('operation',context))</script>
         </actions>
     </service>
     <service verb="store" noun="RoutingResource" allow-remote="false">
-        <in-parameters>
-            <parameter name="workEffortId" type="String"/>
-            <parameter name="routingWorkEffortId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="workEffortName" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="sequenceNum" type="Integer"/>
-            <parameter name="estimatedSetupTime" type="BigDecimal"/>
-            <parameter name="estimatedWorkTime" type="BigDecimal"/>
-            <parameter name="timeUomId" type="String"/>
-            <parameter name="methodMachineSetupTime" type="BigDecimal"/>
-            <parameter name="methodMachineRunTime" type="BigDecimal"/>
-            <parameter name="methodBatchQuantity" type="BigDecimal"/>
-            <parameter name="methodQuantityUomId" type="String"/>
-            <parameter name="methodWorkCenterId" type="String"/>
-            <parameter name="methodPredecessorIds" type="String"/>
-            <parameter name="methodRemoved" type="String"/>
-            <parameter name="assetProductId" type="String"/>
-            <parameter name="skillTypeEnumId" type="String"/>
-            <parameter name="estimatedQuantity" type="BigDecimal"/>
-            <parameter name="estimatedDuration" type="BigDecimal"/>
-            <parameter name="estimatedNumPeople" type="BigDecimal"/>
-            <parameter name="facilityId" type="String"/>
-            <parameter name="calendarId" type="String"/>
-            <parameter name="efficiencyPercent" type="BigDecimal"/>
-            <parameter name="oeeTargetPercent" type="BigDecimal"/>
-            <parameter name="workCenterRateId" type="String"/>
-            <parameter name="componentTypeEnumId" type="String"/>
-            <parameter name="rateAmount" type="BigDecimal"/>
-            <parameter name="priceUomId" type="String"/>
-            <parameter name="approve" type="Boolean"/>
-            <parameter name="quantity" type="BigDecimal"/>
-            <parameter name="quantityUomId" type="String"/>
-            <parameter name="need" type="String"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="routing" type="Map"/>
-            <parameter name="operationRows" type="List"/>
-            <parameter name="releasedOperationRows" type="List"/>
-            <parameter name="releaseHistory" type="List"/>
-            <parameter name="approvedRouting" type="Map"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="methodAccess" type="Map"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="routingRows" type="List"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="valid" type="Boolean"/>
-            <parameter name="findings" type="List"/>
-            <parameter name="methodReleaseDecisionId" type="String"/>
-            <parameter name="stampedLines" type="List"/>
-            <parameter name="workCenter" type="Map"/>
-            <parameter name="workCenterRate" type="Map"/>
-            <parameter name="operationCostRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="recordVisible" type="Boolean"/>
-            <parameter name="record" type="Map"/>
-            <parameter name="canChange" type="Boolean"/>
-        </out-parameters>
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('resource',context))</script>
         </actions>
     </service>
     <service verb="validate" noun="RoutingDraft" allow-remote="false">
-        <in-parameters>
-            <parameter name="workEffortId" type="String"/>
-            <parameter name="routingWorkEffortId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="workEffortName" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="sequenceNum" type="Integer"/>
-            <parameter name="estimatedSetupTime" type="BigDecimal"/>
-            <parameter name="estimatedWorkTime" type="BigDecimal"/>
-            <parameter name="timeUomId" type="String"/>
-            <parameter name="methodMachineSetupTime" type="BigDecimal"/>
-            <parameter name="methodMachineRunTime" type="BigDecimal"/>
-            <parameter name="methodBatchQuantity" type="BigDecimal"/>
-            <parameter name="methodQuantityUomId" type="String"/>
-            <parameter name="methodWorkCenterId" type="String"/>
-            <parameter name="methodPredecessorIds" type="String"/>
-            <parameter name="methodRemoved" type="String"/>
-            <parameter name="assetProductId" type="String"/>
-            <parameter name="skillTypeEnumId" type="String"/>
-            <parameter name="estimatedQuantity" type="BigDecimal"/>
-            <parameter name="estimatedDuration" type="BigDecimal"/>
-            <parameter name="estimatedNumPeople" type="BigDecimal"/>
-            <parameter name="facilityId" type="String"/>
-            <parameter name="calendarId" type="String"/>
-            <parameter name="efficiencyPercent" type="BigDecimal"/>
-            <parameter name="oeeTargetPercent" type="BigDecimal"/>
-            <parameter name="workCenterRateId" type="String"/>
-            <parameter name="componentTypeEnumId" type="String"/>
-            <parameter name="rateAmount" type="BigDecimal"/>
-            <parameter name="priceUomId" type="String"/>
-            <parameter name="approve" type="Boolean"/>
-            <parameter name="quantity" type="BigDecimal"/>
-            <parameter name="quantityUomId" type="String"/>
-            <parameter name="need" type="String"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="routing" type="Map"/>
-            <parameter name="operationRows" type="List"/>
-            <parameter name="releasedOperationRows" type="List"/>
-            <parameter name="releaseHistory" type="List"/>
-            <parameter name="approvedRouting" type="Map"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="methodAccess" type="Map"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="routingRows" type="List"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="valid" type="Boolean"/>
-            <parameter name="findings" type="List"/>
-            <parameter name="methodReleaseDecisionId" type="String"/>
-            <parameter name="stampedLines" type="List"/>
-            <parameter name="workCenter" type="Map"/>
-            <parameter name="workCenterRate" type="Map"/>
-            <parameter name="operationCostRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="recordVisible" type="Boolean"/>
-            <parameter name="record" type="Map"/>
-            <parameter name="canChange" type="Boolean"/>
-        </out-parameters>
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('validate',context))</script>
         </actions>
     </service>
     <service verb="release" noun="RoutingDraft" allow-remote="false">
-        <in-parameters>
-            <parameter name="workEffortId" type="String"/>
-            <parameter name="routingWorkEffortId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="workEffortName" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="sequenceNum" type="Integer"/>
-            <parameter name="estimatedSetupTime" type="BigDecimal"/>
-            <parameter name="estimatedWorkTime" type="BigDecimal"/>
-            <parameter name="timeUomId" type="String"/>
-            <parameter name="methodMachineSetupTime" type="BigDecimal"/>
-            <parameter name="methodMachineRunTime" type="BigDecimal"/>
-            <parameter name="methodBatchQuantity" type="BigDecimal"/>
-            <parameter name="methodQuantityUomId" type="String"/>
-            <parameter name="methodWorkCenterId" type="String"/>
-            <parameter name="methodPredecessorIds" type="String"/>
-            <parameter name="methodRemoved" type="String"/>
-            <parameter name="assetProductId" type="String"/>
-            <parameter name="skillTypeEnumId" type="String"/>
-            <parameter name="estimatedQuantity" type="BigDecimal"/>
-            <parameter name="estimatedDuration" type="BigDecimal"/>
-            <parameter name="estimatedNumPeople" type="BigDecimal"/>
-            <parameter name="facilityId" type="String"/>
-            <parameter name="calendarId" type="String"/>
-            <parameter name="efficiencyPercent" type="BigDecimal"/>
-            <parameter name="oeeTargetPercent" type="BigDecimal"/>
-            <parameter name="workCenterRateId" type="String"/>
-            <parameter name="componentTypeEnumId" type="String"/>
-            <parameter name="rateAmount" type="BigDecimal"/>
-            <parameter name="priceUomId" type="String"/>
-            <parameter name="approve" type="Boolean"/>
-            <parameter name="quantity" type="BigDecimal"/>
-            <parameter name="quantityUomId" type="String"/>
-            <parameter name="need" type="String"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="routing" type="Map"/>
-            <parameter name="operationRows" type="List"/>
-            <parameter name="releasedOperationRows" type="List"/>
-            <parameter name="releaseHistory" type="List"/>
-            <parameter name="approvedRouting" type="Map"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="methodAccess" type="Map"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="routingRows" type="List"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="valid" type="Boolean"/>
-            <parameter name="findings" type="List"/>
-            <parameter name="methodReleaseDecisionId" type="String"/>
-            <parameter name="stampedLines" type="List"/>
-            <parameter name="workCenter" type="Map"/>
-            <parameter name="workCenterRate" type="Map"/>
-            <parameter name="operationCostRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="recordVisible" type="Boolean"/>
-            <parameter name="record" type="Map"/>
-            <parameter name="canChange" type="Boolean"/>
-        </out-parameters>
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('release',context))</script>
         </actions>
     </service>
     <service verb="store" noun="WorkCenter" allow-remote="false">
-        <in-parameters>
-            <parameter name="workEffortId" type="String"/>
-            <parameter name="routingWorkEffortId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="workEffortName" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="sequenceNum" type="Integer"/>
-            <parameter name="estimatedSetupTime" type="BigDecimal"/>
-            <parameter name="estimatedWorkTime" type="BigDecimal"/>
-            <parameter name="timeUomId" type="String"/>
-            <parameter name="methodMachineSetupTime" type="BigDecimal"/>
-            <parameter name="methodMachineRunTime" type="BigDecimal"/>
-            <parameter name="methodBatchQuantity" type="BigDecimal"/>
-            <parameter name="methodQuantityUomId" type="String"/>
-            <parameter name="methodWorkCenterId" type="String"/>
-            <parameter name="methodPredecessorIds" type="String"/>
-            <parameter name="methodRemoved" type="String"/>
-            <parameter name="assetProductId" type="String"/>
-            <parameter name="skillTypeEnumId" type="String"/>
-            <parameter name="estimatedQuantity" type="BigDecimal"/>
-            <parameter name="estimatedDuration" type="BigDecimal"/>
-            <parameter name="estimatedNumPeople" type="BigDecimal"/>
-            <parameter name="facilityId" type="String"/>
-            <parameter name="calendarId" type="String"/>
-            <parameter name="efficiencyPercent" type="BigDecimal"/>
-            <parameter name="oeeTargetPercent" type="BigDecimal"/>
-            <parameter name="workCenterRateId" type="String"/>
-            <parameter name="componentTypeEnumId" type="String"/>
-            <parameter name="rateAmount" type="BigDecimal"/>
-            <parameter name="priceUomId" type="String"/>
-            <parameter name="approve" type="Boolean"/>
-            <parameter name="quantity" type="BigDecimal"/>
-            <parameter name="quantityUomId" type="String"/>
-            <parameter name="need" type="String"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="routing" type="Map"/>
-            <parameter name="operationRows" type="List"/>
-            <parameter name="releasedOperationRows" type="List"/>
-            <parameter name="releaseHistory" type="List"/>
-            <parameter name="approvedRouting" type="Map"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="methodAccess" type="Map"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="routingRows" type="List"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="valid" type="Boolean"/>
-            <parameter name="findings" type="List"/>
-            <parameter name="methodReleaseDecisionId" type="String"/>
-            <parameter name="stampedLines" type="List"/>
-            <parameter name="workCenter" type="Map"/>
-            <parameter name="workCenterRate" type="Map"/>
-            <parameter name="operationCostRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="recordVisible" type="Boolean"/>
-            <parameter name="record" type="Map"/>
-            <parameter name="canChange" type="Boolean"/>
-        </out-parameters>
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('center',context))</script>
         </actions>
     </service>
     <service verb="store" noun="WorkCenterRate" allow-remote="false">
-        <in-parameters>
-            <parameter name="workEffortId" type="String"/>
-            <parameter name="routingWorkEffortId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="workEffortName" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="sequenceNum" type="Integer"/>
-            <parameter name="estimatedSetupTime" type="BigDecimal"/>
-            <parameter name="estimatedWorkTime" type="BigDecimal"/>
-            <parameter name="timeUomId" type="String"/>
-            <parameter name="methodMachineSetupTime" type="BigDecimal"/>
-            <parameter name="methodMachineRunTime" type="BigDecimal"/>
-            <parameter name="methodBatchQuantity" type="BigDecimal"/>
-            <parameter name="methodQuantityUomId" type="String"/>
-            <parameter name="methodWorkCenterId" type="String"/>
-            <parameter name="methodPredecessorIds" type="String"/>
-            <parameter name="methodRemoved" type="String"/>
-            <parameter name="assetProductId" type="String"/>
-            <parameter name="skillTypeEnumId" type="String"/>
-            <parameter name="estimatedQuantity" type="BigDecimal"/>
-            <parameter name="estimatedDuration" type="BigDecimal"/>
-            <parameter name="estimatedNumPeople" type="BigDecimal"/>
-            <parameter name="facilityId" type="String"/>
-            <parameter name="calendarId" type="String"/>
-            <parameter name="efficiencyPercent" type="BigDecimal"/>
-            <parameter name="oeeTargetPercent" type="BigDecimal"/>
-            <parameter name="workCenterRateId" type="String"/>
-            <parameter name="componentTypeEnumId" type="String"/>
-            <parameter name="rateAmount" type="BigDecimal"/>
-            <parameter name="priceUomId" type="String"/>
-            <parameter name="approve" type="Boolean"/>
-            <parameter name="quantity" type="BigDecimal"/>
-            <parameter name="quantityUomId" type="String"/>
-            <parameter name="need" type="String"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="routing" type="Map"/>
-            <parameter name="operationRows" type="List"/>
-            <parameter name="releasedOperationRows" type="List"/>
-            <parameter name="releaseHistory" type="List"/>
-            <parameter name="approvedRouting" type="Map"/>
-            <parameter name="expectedRevision" type="String"/>
-            <parameter name="methodAccess" type="Map"/>
-            <parameter name="asOfDate" type="Timestamp"/>
-            <parameter name="routingRows" type="List"/>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="operationWorkEffortId" type="String"/>
-            <parameter name="valid" type="Boolean"/>
-            <parameter name="findings" type="List"/>
-            <parameter name="methodReleaseDecisionId" type="String"/>
-            <parameter name="stampedLines" type="List"/>
-            <parameter name="workCenter" type="Map"/>
-            <parameter name="workCenterRate" type="Map"/>
-            <parameter name="operationCostRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="recordVisible" type="Boolean"/>
-            <parameter name="record" type="Map"/>
-            <parameter name="canChange" type="Boolean"/>
-        </out-parameters>
+        <implements service="mantle.work.RoutingServices.define#RoutingParameters"/>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/work/Routings.js').execute('rate',context))</script>
         </actions>
