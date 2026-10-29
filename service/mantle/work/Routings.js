@@ -79,11 +79,13 @@ function costBasis(p){
  const g=get(p.workEffortId||p.routingWorkEffortId);if(!g.scope.costRead)throw new Error('Separate cost-read authority is required');const date=p.asOfDate||ec.user.nowTimestamp,r=released(g.routing.workEffortId,date),out=[],findings=[],quantity=toDecimal(p.quantity??1)
  if(quantity.compare(0)<=0)throw new Error('Cost-basis quantity must be positive')
  for(const op of r.operations.filter(o=>!p.operationWorkEffortId||o.workEffortId===p.operationWorkEffortId))try{
-  const normalized=policy().convert(quantity,p.quantityUomId||op.quantityUomId,op.quantityUomId,date).quantity,batches=normalized.divide(op.batchQuantity)
+  const normalized=policy().convert(quantity,p.quantityUomId||op.quantityUomId,op.quantityUomId,date).quantity
   const lot=p.costingLotQuantity==null?null:policy().convert(p.costingLotQuantity,p.costingLotUomId||p.quantityUomId||op.quantityUomId,op.quantityUomId,date).quantity
   if(lot&&lot.compare(0)<=0)throw new Error('Costing lot size must be positive')
   const setupCycles=lot?normalized.divide(lot):toDecimal(1),center=op.workCenterFacilityId?one(WC,{facilityId:op.workCenterFacilityId}):null,efficiency=p.applyEfficiency?toDecimal(center?.efficiencyPercent??100).divide(100):toDecimal(1)
   if(efficiency.compare(0)<=0)throw new Error('Work-center efficiency must be positive')
+  // Standards cost one BOM lot: whole operation cycles within that lot, then allocate the lot cost.
+  const batches=lot?lot.divide(op.batchQuantity).setScale(0,'CEILING').multiply(setupCycles):normalized.divide(op.batchQuantity)
   const labor=policy().convert(toDecimal(op.setupTime||0).multiply(setupCycles).add(toDecimal(op.runTime||0).multiply(batches)),op.timeUomId,'TF_hr',date).quantity.divide(efficiency),machine=policy().convert(toDecimal(op.machineSetupTime||0).multiply(setupCycles).add(toDecimal(op.machineRunTime||0).multiply(batches)),op.timeUomId,'TF_hr',date).quantity.divide(efficiency),hours={PccLabor:labor,PccMachine:machine,PccOverhead:machine.compare(0)>0?machine:labor}
 
   if(op.workCenterFacilityId)policy().facility(op.workCenterFacilityId,g.scope)
