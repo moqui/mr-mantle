@@ -123,4 +123,16 @@
     <extend-entity entity-name="GlAccountGroupMember" package="mantle.ledger.account">
         <field name="glAccountGroupId" type="id" enable-audit-log="update"/>
     </extend-entity>
+    <entity entity-name="PaymentGatewayOrganization" package="mantle.account.method" cache="never">
+        <description>Organization gateway bindings provisioned outside finance forms. Finance administrators may bind methods only to these active gateways; credentials and executable configuration remain in Admin.</description>
+        <field name="organizationPartyId" type="id" enable-audit-log="update" is-pk="true"/>
+        <field name="paymentGatewayConfigId" type="id" enable-audit-log="update" is-pk="true"/>
+        <field name="fromDate" type="date-time" enable-audit-log="update"/>
+        <field name="thruDate" type="date-time" enable-audit-log="update"/>
+        <field name="isEnabled" type="text-indicator" enable-audit-log="update" default="'Y'"/>
+        <relationship type="one" title="Organization" related="mantle.party.Party">
+            <key-map field-name="organizationPartyId" related="partyId"/>
+        </relationship>
+        <relationship type="one" related="mantle.account.method.PaymentGatewayConfig"/>
+    </entity>
 </entities>

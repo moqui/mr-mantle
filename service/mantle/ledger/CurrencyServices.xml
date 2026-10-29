@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="define" noun="Parameters" type="interface">
+        <in-parameters>
+            <parameter name="organizationPartyId" type="String"/>
+            <parameter name="uomId" type="String"/>
+            <parameter name="toUomId" type="String"/>
+            <parameter name="description" type="String"/>
+            <parameter name="rateSource" type="String"/>
+            <parameter name="csvText" type="String"/>
+            <parameter name="importId" type="String"/>
+            <parameter name="changeReason" type="String"/>
+            <parameter name="fractionDigits" type="Integer"/>
+            <parameter name="conversionFactor" type="BigDecimal"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="uomConversionId" type="String"/>
+            <parameter name="alreadyStored" type="Boolean"/>
+            <parameter name="results" type="List"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="importId" type="String"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="Rate" allow-remote="false">
+        <description>Store a source-labelled dated currency rate; preserve earlier intervals.</description>
+        <implements service="mantle.ledger.CurrencyServices.define#Parameters"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Currencies.js').execute('rate', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="Currency" allow-remote="false">
+        <description>Create or edit currency units without rewriting posted precision.</description>
+        <implements service="mantle.ledger.CurrencyServices.define#Parameters"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Currencies.js').execute('currency', context))</script>
+        </actions>
+    </service>
+    <service verb="import" noun="Rates" allow-remote="false">
+        <description>Import independent CSV rows with native validation and per-row outcomes.</description>
+        <implements service="mantle.ledger.CurrencyServices.define#Parameters"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Currencies.js').execute('importRates', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="ImportResult" allow-remote="false">
+        <description>Read the actor's organization-scoped currency import outcomes.</description>
+        <implements service="mantle.ledger.CurrencyServices.define#Parameters"/>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Currencies.js').execute('importResult',context))</script></actions>
+    </service>
+</services>

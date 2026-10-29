@@ -52,6 +52,69 @@
             <parameter name="currenciesCount" type="Integer" />
         </out-parameters>
     </service>
+    <service verb="get" noun="Preferences" allow-remote="false">
+        <description>Read organization finance preferences and readiness without restricted configuration.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('preferences', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="Preferences" allow-remote="false">
+        <description>Save audited finance preferences; protect the basis of posted history.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('storePreferences', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="PostingDefaults" allow-remote="false">
+        <description>Read mapping precedence, missing account types and failed postings.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('mappingList', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="PostingDefault" allow-remote="false">
+        <description>Validate an organization posting mapping against active assigned accounts.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('storeMapping', context))</script>
+        </actions>
+    </service>
+    <service verb="clone" noun="Preferences" allow-remote="false">
+        <description>Preview configuration conflicts; copy only missing configuration after fingerprint confirmation.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('clone', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="SettlementTerm" allow-remote="false">
+        <description>Save a due term for future documents; no issued invoice is recomputed.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('term', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="PaymentMethods" allow-remote="false">
+        <description>Return permitted method metadata only; no bank/card numbers or gateway secrets.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('methods', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="PaymentMethod" allow-remote="false">
+        <description>Change only the description and expiry of an organization payment method.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('storeMethod', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="Context" allow-remote="false">
+        <description>Read the finance-admin settings forms and closed choice lists.</description>
+        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('context', context))</script>
+        </actions>
+    </service>
     <service allow-remote="false" verb="get" noun="Readiness">
         <description>Check authorized accounting setup health without exposing administration settings; name independent failures.</description>
         <implements service="mantle.ledger.SetupServices.define#Parameters" />

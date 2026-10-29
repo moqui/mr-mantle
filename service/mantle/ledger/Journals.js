@@ -124,6 +124,7 @@ function line(p) {
         ]),
         { acctgTransId: tx.acctgTransId },
     )
+    values.amount = ec.l10n.roundCurrency(toDecimal(p.amount), tx.amountUomId)
     if (old) values.acctgTransEntrySeqId = old.acctgTransEntrySeqId
     return call(
         "mantle.ledger.LedgerServices." +
@@ -695,10 +696,28 @@ function templateLines(p) {
     for (const line of p.lines) {
         lib.account(header.organizationPartyId, line.glAccountId)
         lib.dimensions(header.organizationPartyId, line)
-        if(line.assetId && one("mantle.product.asset.Asset",{assetId:line.assetId})?.ownerPartyId!==header.organizationPartyId) throw new Error("Template asset is outside the posting organization")
-        if(line.productId) {
-            const product=one("mantle.product.Product",{productId:line.productId})
-            if(!product || !["_NA_",...lib.organizationChain(header.organizationPartyId)].includes(product.ownerPartyId)) throw new Error("Template product is outside the posting organization")
+        if (
+            line.assetId &&
+            one("mantle.product.asset.Asset", { assetId: line.assetId })
+                ?.ownerPartyId !== header.organizationPartyId
+        )
+            throw new Error(
+                "Template asset is outside the posting organization",
+            )
+        if (line.productId) {
+            const product = one("mantle.product.Product", {
+                productId: line.productId,
+            })
+            if (
+                !product ||
+                ![
+                    "_NA_",
+                    ...lib.organizationChain(header.organizationPartyId),
+                ].includes(product.ownerPartyId)
+            )
+                throw new Error(
+                    "Template product is outside the posting organization",
+                )
         }
         if (!["D", "C"].includes(line.debitCreditFlag))
             throw new Error("Choose debit or credit")
@@ -711,7 +730,11 @@ function templateLines(p) {
         } else {
             if (line.amount == null || toDecimal(line.amount).compare(0) < 0)
                 throw new Error("Enter a nonnegative amount")
-            balance = balance.add(toDecimal(line.amount).multiply(sign))
+            line.amount = ec.l10n.roundCurrency(
+                toDecimal(line.amount),
+                header.amountUomId,
+            )
+            balance = balance.add(line.amount.multiply(sign))
         }
     }
     if (!balance.isZero() || Object.values(coefficients).some((v) => v !== 0))
@@ -898,6 +921,11 @@ function templateLine(p) {
         ]),
         { acctgTransTemplateId: header.acctgTransTemplateId },
     )
+    if (!p.amountParameter)
+        values.amount = ec.l10n.roundCurrency(
+            toDecimal(p.amount),
+            header.amountUomId,
+        )
     values.entrySeqId =
         old?.entrySeqId ||
         String(

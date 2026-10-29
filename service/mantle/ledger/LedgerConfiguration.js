@@ -50,7 +50,12 @@ function account(p) {
     )
         throw new Error("Give an account name and digits-only code")
     if (values.parentGlAccountId) {
-        lib.record({kind:"accounts",recordId:values.parentGlAccountId,organizationPartyId:s.organizationPartyId})
+        if (values.parentGlAccountId !== old?.parentGlAccountId)
+            lib.record({
+                kind: "accounts",
+                recordId: values.parentGlAccountId,
+                organizationPartyId: s.organizationPartyId,
+            })
         const visited = new Set([p.glAccountId])
         let id = values.parentGlAccountId
         while (id) {
@@ -105,7 +110,11 @@ function assignment(p) {
             glAccountId: p.glAccountId,
         })
     )
-        throw new Error("Account is not available")
+        throw new Error(
+            "Account " +
+                String(p.glAccountId || "(missing)") +
+                " is not available",
+        )
     const key = {
         glAccountId: p.glAccountId,
         organizationPartyId: s.organizationPartyId,

@@ -108,7 +108,9 @@ function read(p) {
             out,
             call(
                 "mantle.ledger.LedgerServices.calculate#AcctgTransTrialBalance",
-                { acctgTransId: row.acctgTransId },
+                {
+                    acctgTransId: row.acctgTransId,
+                },
             ),
         )
     }
@@ -152,13 +154,18 @@ function draft(p) {
     if (p.kind === "payments") {
         if (p.amount == null || toDecimal(p.amount).compare(0) <= 0)
             throw new Error("Enter a positive payment amount")
+        const amount = ec.l10n.roundCurrency(toDecimal(p.amount), currency)
+        if (amount.compare(0) <= 0)
+            throw new Error(
+                "Enter a positive payment amount in the selected currency",
+            )
         result = call(
             "mantle.account.PaymentServices.create#Payment",
             Object.assign(base, {
                 paymentTypeEnumId: "PtDisbursement",
                 paymentInstrumentEnumId: "PiOther",
                 amountUomId: currency,
-                amount: p.amount,
+                amount,
                 statusId: "PmntProposed",
             }),
         )
