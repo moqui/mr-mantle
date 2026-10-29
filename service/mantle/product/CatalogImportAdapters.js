@@ -1,27 +1,196 @@
 // Built-in imports share the same catalog, identifier and pricing validators as direct native writes.
-const policy=()=>ec.resource.script('component://mr-mantle/service/mantle/product/CatalogPolicy.js'),records=()=>ec.resource.script('component://mr-mantle/service/mantle/product/CatalogRecords.js'),importer=()=>ec.resource.script('component://mr-mantle/service/mantle/product/CatalogImport.js'),one=(n,p)=>policy().one(n,p),rows=(n,p)=>policy().rows(n,p),map=r=>policy().map(r),hash=v=>policy().fingerprint(v)
-const canonical=rs=>rs.map(map).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),has=(p,k)=>Object.prototype.hasOwnProperty.call(p,k)
-function changes(before,after){return Object.entries(after).filter(([k,v])=>!['expectedState','expectedLastUpdatedStamp','createOnly','kind'].includes(k)&&String(before?.[k]??'')!==String(v??'')).map(([field,value])=>({field,before:before?.[field]==null?null:String(before[field]),after:value==null?null:String(value)}))}
-function validate(p){
- const s=policy().organization(p,'read'),cfg=importer().kind(p.kindId,s,true),allowed=new Set([...cfg.columns.map(c=>c.name),...Object.keys(cfg.fixedParameters)]),data=Object.fromEntries(Object.entries(p.rowParameters||{}).filter(([k])=>allowed.has(k))),sources={registry:map(one('mantle.product.ProductCatalogImportKind',{kindId:p.kindId}))},warnings=[];let prepared,before=null,normalizedParameters
- const mode=p.updateMode||'upsert',requireMode=old=>{if(mode==='create'&&old)throw new Error('Update key already exists; choose Update or Upsert');if(mode==='update'&&!old)throw new Error('Update key is not available; choose Create or Upsert')}
- const product=id=>policy().product(id,s),checkProduct=(candidate,ids=[])=>{const report=ec.service.sync().name('mantle.product.CatalogCheckServices.validate#Catalog').parameters({productIds:ids,candidateProducts:candidate?[candidate]:[],checkIds:['requiredFields','conversions'],includeInactive:true}).disableAuthz().call()||{};if(ec.message.hasError())throw new Error(ec.message.getErrorsString());const errors=report.issueRows.filter(r=>r.severity==='error');if(errors.length)throw new Error(errors.map(r=>r.evidence).join('; '))}
- if(p.kindId==='products'){
-  const old=data.productId?one('mantle.product.Product',{productId:data.productId}):null;if(old)product(data.productId);requireMode(old);if(old&&old.ownerPartyId!==s.organizationPartyId&&!(s.systemAdmin&&old.ownerPartyId==='_NA_'))throw new Error('Product is outside the selected import organization')
-  const owner=old?.ownerPartyId||s.organizationPartyId;prepared=records().prepareProduct(Object.assign({},data,{ownerPartyId:owner,createOnly:mode==='create'||!old}));before=prepared.before;normalizedParameters=Object.assign({},prepared.parameters);sources.product=before;sources.catalogPolicy=prepared.catalogPolicy
-  checkProduct(Object.assign({},before||{},normalizedParameters,{productId:normalizedParameters.productId||null,ownerPartyId:owner}),[])
-  if(data.idValue){const type=data.productIdTypeEnumId||'PidtSku',checked=ec.resource.script('component://mr-mantle/service/mantle/product/Identifiers.js').execute('validate',{productId:data.productId||null,candidateProduct:Object.assign({},normalizedParameters,{productId:data.productId||null,ownerPartyId:owner}),productIdTypeEnumId:type,idValue:data.idValue,forAssignment:true});if(!checked.valid)throw new Error(checked.issues.join('; '));normalizedParameters.productIdTypeEnumId=type;normalizedParameters.idValue=checked.normalizedValue;sources.identifierPolicy=checked.identifierPolicy;sources.identifiers=data.productId?canonical(rows('mantle.product.ProductIdentification',{productId:data.productId})):[]}
- }else if(p.kindId==='identifiers'){
-  const owner=product(data.productId);policy().product(data.productId,s,true);if(owner.ownerPartyId!==s.organizationPartyId&&!(s.systemAdmin&&owner.ownerPartyId==='_NA_'))throw new Error('Product is outside the selected import organization');before=one('mantle.product.ProductIdentification',{productId:data.productId,productIdTypeEnumId:data.productIdTypeEnumId});requireMode(before)
-  const checked=ec.resource.script('component://mr-mantle/service/mantle/product/Identifiers.js').execute('validate',Object.assign({},data,{forAssignment:true}));if(!checked.valid)throw new Error(checked.issues.join('; '));normalizedParameters=Object.assign({},data,{idValue:checked.normalizedValue,changeReason:'Catalog import identifier'});sources.product=map(owner);sources.identifier=before?map(before):null;sources.policy=checked.identifierPolicy
- }else if(['categories','features'].includes(p.kindId)){
-  const owner=product(data.productId);if(owner.ownerPartyId!==s.organizationPartyId&&!(s.systemAdmin&&owner.ownerPartyId==='_NA_'))throw new Error('Product is outside the selected import organization');prepared=records().prepareRow(data);const id=p.kindId==='categories'?'productCategoryId':'productFeatureId',entity=p.kindId==='categories'?'mantle.product.category.ProductCategory':'mantle.product.feature.ProductFeature',old=prepared.beforeRows.find(r=>r[id]===data[id]&&policy().ms(r.fromDate)===policy().ms(data.fromDate));requireMode(old);before=old||null;normalizedParameters=Object.assign({},prepared.parameters,{kind:data.kind});sources.rows=canonical(prepared.beforeRows.filter(r=>r[id]===data[id]));sources.product=prepared.product;sources.target=map(one(entity,{[id]:data[id]}))
- }else if(['prices','supplierPrices'].includes(p.kindId)){
-  const existing=data.productPriceId?one('mantle.product.ProductPrice',{productPriceId:data.productPriceId}):null;if(existing)product(existing.productId);const productId=data.productId||existing?.productId;const owner=product(productId);requireMode(existing);const orgField=cfg.organizationField;if(data[orgField]&&data[orgField]!==s.organizationPartyId)throw new Error('Price is outside the selected import organization');if(existing&&existing[orgField]!==s.organizationPartyId)throw new Error('Price is outside the selected import organization')
-  const values=Object.assign({priceTypeEnumId:'PptCurrent',pricePurposeEnumId:'PppPurchase',minQuantity:0},existing?map(existing):{},data,{productId,[orgField]:s.organizationPartyId,changeReason:data.changeReason||'Reviewed catalog import'});if(values.priceTypeEnumId==='PptAverage')throw new Error('Maintain valuation costs in Accounting');if(p.kindId==='supplierPrices'&&one('mantle.party.PartyRole',{partyId:values.vendorPartyId,roleTypeId:'OrgInternal'}))throw new Error('Choose an external supplier in the Supplier role')
-  prepared=ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js').execute('preview',values);before=prepared.before;normalizedParameters=prepared.normalizedParameters;sources.price=prepared.before;sources.product=map(owner);sources.policy=canonical(rows('mantle.product.ProductPricingSetting',{organizationPartyId:s.organizationPartyId}))
- }else throw new Error('This domain must register its own guarded import validator')
- return{valid:true,errors:[],warnings,normalizedParameters,sourceFingerprint:hash(sources),changes:changes(before,normalizedParameters)}
+const policy = () => ec.resource.script("component://mr-mantle/service/mantle/product/CatalogPolicy.js"),
+    records = () => ec.resource.script("component://mr-mantle/service/mantle/product/CatalogRecords.js"),
+    importer = () => ec.resource.script("component://mr-mantle/service/mantle/product/CatalogImport.js"),
+    one = (n, p) => policy().one(n, p),
+    rows = (n, p) => policy().rows(n, p),
+    map = r => policy().map(r),
+    hash = v => policy().fingerprint(v)
+const canonical = rs => rs.map(map).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    has = (p, k) => Object.prototype.hasOwnProperty.call(p, k)
+function changes(before, after) {
+    return Object.entries(after)
+        .filter(
+            ([k, v]) =>
+                !["expectedState", "expectedLastUpdatedStamp", "createOnly", "kind"].includes(k) &&
+                String(before?.[k] ?? "") !== String(v ?? "")
+        )
+        .map(([field, value]) => ({
+            field,
+            before: before?.[field] == null ? null : String(before[field]),
+            after: value == null ? null : String(value)
+        }))
 }
-function priceBatch(p){const s=policy().organization(p,'read');importer().kind(p.kindId,s,true);const input=p.importRows||[],conflicts=new Map(),pricePolicy=ec.resource.script('component://mr-mantle/service/mantle/product/PricePolicy.js');for(const r of input)policy().product(r.parameters.productId,s);for(let i=0;i<input.length;i++)for(let j=i+1;j<input.length;j++)if(pricePolicy.overlaps(input[i].parameters,input[j].parameters)){for(const row of [input[i],input[j]])conflicts.set(Number(row.itemSeqId),{itemSeqId:row.itemSeqId,errorMessage:'This file contains overlapping prices at equal precedence (rows '+input[i].itemSeqId+' and '+input[j].itemSeqId+')'})}return{conflictRows:[...conflicts.values()]}}
-;({validate,priceBatch})
+function validate(p) {
+    const s = policy().organization(p, "read"),
+        cfg = importer().kind(p.kindId, s, true),
+        allowed = new Set([...cfg.columns.map(c => c.name), ...Object.keys(cfg.fixedParameters)]),
+        data = Object.fromEntries(Object.entries(p.rowParameters || {}).filter(([k]) => allowed.has(k))),
+        sources = {registry: map(one("mantle.product.ProductCatalogImportKind", {kindId: p.kindId}))},
+        warnings = []
+    let prepared,
+        before = null,
+        normalizedParameters
+    const mode = p.updateMode || "upsert",
+        requireMode = old => {
+            if (mode === "create" && old) throw new Error("Update key already exists; choose Update or Upsert")
+            if (mode === "update" && !old) throw new Error("Update key is not available; choose Create or Upsert")
+        }
+    const product = id => policy().product(id, s),
+        checkProduct = (candidate, ids = []) => {
+            const report =
+                ec.service
+                    .sync()
+                    .name("mantle.product.CatalogCheckServices.validate#Catalog")
+                    .parameters({
+                        productIds: ids,
+                        candidateProducts: candidate ? [candidate] : [],
+                        checkIds: ["requiredFields", "conversions"],
+                        includeInactive: true
+                    })
+                    .disableAuthz()
+                    .call() || {}
+            if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+            const errors = report.issueRows.filter(r => r.severity === "error")
+            if (errors.length) throw new Error(errors.map(r => r.evidence).join("; "))
+        }
+    if (p.kindId === "products") {
+        const old = data.productId ? one("mantle.product.Product", {productId: data.productId}) : null
+        if (old) product(data.productId)
+        requireMode(old)
+        if (old && old.ownerPartyId !== s.organizationPartyId && !(s.systemAdmin && old.ownerPartyId === "_NA_"))
+            throw new Error("Product is outside the selected import organization")
+        const owner = old?.ownerPartyId || s.organizationPartyId
+        prepared = records().prepareProduct(Object.assign({}, data, {ownerPartyId: owner, createOnly: mode === "create" || !old}))
+        before = prepared.before
+        normalizedParameters = Object.assign({}, prepared.parameters)
+        sources.product = before
+        sources.catalogPolicy = prepared.catalogPolicy
+        checkProduct(
+            Object.assign({}, before || {}, normalizedParameters, {
+                productId: normalizedParameters.productId || null,
+                ownerPartyId: owner
+            }),
+            []
+        )
+        if (data.idValue) {
+            const type = data.productIdTypeEnumId || "PidtSku",
+                checked = ec.resource
+                    .script("component://mr-mantle/service/mantle/product/Identifiers.js")
+                    .execute("validate", {
+                        productId: data.productId || null,
+                        candidateProduct: Object.assign({}, normalizedParameters, {
+                            productId: data.productId || null,
+                            ownerPartyId: owner
+                        }),
+                        productIdTypeEnumId: type,
+                        idValue: data.idValue,
+                        forAssignment: true
+                    })
+            if (!checked.valid) throw new Error(checked.issues.join("; "))
+            normalizedParameters.productIdTypeEnumId = type
+            normalizedParameters.idValue = checked.normalizedValue
+            sources.identifierPolicy = checked.identifierPolicy
+            sources.identifiers = data.productId
+                ? canonical(rows("mantle.product.ProductIdentification", {productId: data.productId}))
+                : []
+        }
+    } else if (p.kindId === "identifiers") {
+        const owner = product(data.productId)
+        policy().product(data.productId, s, true)
+        if (owner.ownerPartyId !== s.organizationPartyId && !(s.systemAdmin && owner.ownerPartyId === "_NA_"))
+            throw new Error("Product is outside the selected import organization")
+        before = one("mantle.product.ProductIdentification", {
+            productId: data.productId,
+            productIdTypeEnumId: data.productIdTypeEnumId
+        })
+        requireMode(before)
+        const checked = ec.resource
+            .script("component://mr-mantle/service/mantle/product/Identifiers.js")
+            .execute("validate", Object.assign({}, data, {forAssignment: true}))
+        if (!checked.valid) throw new Error(checked.issues.join("; "))
+        normalizedParameters = Object.assign({}, data, {
+            idValue: checked.normalizedValue,
+            changeReason: "Catalog import identifier"
+        })
+        sources.product = map(owner)
+        sources.identifier = before ? map(before) : null
+        sources.policy = checked.identifierPolicy
+    } else if (["categories", "features"].includes(p.kindId)) {
+        const owner = product(data.productId)
+        if (owner.ownerPartyId !== s.organizationPartyId && !(s.systemAdmin && owner.ownerPartyId === "_NA_"))
+            throw new Error("Product is outside the selected import organization")
+        prepared = records().prepareRow(data)
+        const id = p.kindId === "categories" ? "productCategoryId" : "productFeatureId",
+            entity =
+                p.kindId === "categories" ? "mantle.product.category.ProductCategory" : "mantle.product.feature.ProductFeature",
+            old = prepared.beforeRows.find(r => r[id] === data[id] && policy().ms(r.fromDate) === policy().ms(data.fromDate))
+        requireMode(old)
+        before = old || null
+        normalizedParameters = Object.assign({}, prepared.parameters, {kind: data.kind})
+        sources.rows = canonical(prepared.beforeRows.filter(r => r[id] === data[id]))
+        sources.product = prepared.product
+        sources.target = map(one(entity, {[id]: data[id]}))
+    } else if (["prices", "supplierPrices"].includes(p.kindId)) {
+        const existing = data.productPriceId ? one("mantle.product.ProductPrice", {productPriceId: data.productPriceId}) : null
+        if (existing) product(existing.productId)
+        const productId = data.productId || existing?.productId
+        const owner = product(productId)
+        requireMode(existing)
+        const orgField = cfg.organizationField
+        if (data[orgField] && data[orgField] !== s.organizationPartyId)
+            throw new Error("Price is outside the selected import organization")
+        if (existing && existing[orgField] !== s.organizationPartyId)
+            throw new Error("Price is outside the selected import organization")
+        const values = Object.assign(
+            {priceTypeEnumId: "PptCurrent", pricePurposeEnumId: "PppPurchase", minQuantity: 0},
+            existing ? map(existing) : {},
+            data,
+            {productId, [orgField]: s.organizationPartyId, changeReason: data.changeReason || "Reviewed catalog import"}
+        )
+        if (values.priceTypeEnumId === "PptAverage") throw new Error("Maintain valuation costs in Accounting")
+        if (
+            p.kindId === "supplierPrices" &&
+            one("mantle.party.PartyRole", {partyId: values.vendorPartyId, roleTypeId: "OrgInternal"})
+        )
+            throw new Error("Choose an external supplier in the Supplier role")
+        prepared = ec.resource.script("component://mr-mantle/service/mantle/product/PricePolicy.js").execute("preview", values)
+        before = prepared.before
+        normalizedParameters = prepared.normalizedParameters
+        sources.price = prepared.before
+        sources.product = map(owner)
+        sources.policy = canonical(rows("mantle.product.ProductPricingSetting", {organizationPartyId: s.organizationPartyId}))
+    } else throw new Error("This domain must register its own guarded import validator")
+    return {
+        valid: true,
+        errors: [],
+        warnings,
+        normalizedParameters,
+        sourceFingerprint: hash(sources),
+        changes: changes(before, normalizedParameters)
+    }
+}
+function priceBatch(p) {
+    const s = policy().organization(p, "read")
+    importer().kind(p.kindId, s, true)
+    const input = p.importRows || [],
+        conflicts = new Map(),
+        pricePolicy = ec.resource.script("component://mr-mantle/service/mantle/product/PricePolicy.js")
+    for (const r of input) policy().product(r.parameters.productId, s)
+    for (let i = 0; i < input.length; i++)
+        for (let j = i + 1; j < input.length; j++)
+            if (pricePolicy.overlaps(input[i].parameters, input[j].parameters)) {
+                for (const row of [input[i], input[j]])
+                    conflicts.set(Number(row.itemSeqId), {
+                        itemSeqId: row.itemSeqId,
+                        errorMessage:
+                            "This file contains overlapping prices at equal precedence (rows " +
+                            input[i].itemSeqId +
+                            " and " +
+                            input[j].itemSeqId +
+                            ")"
+                    })
+            }
+    return {conflictRows: [...conflicts.values()]}
+}
+;({validate, priceBatch})
