@@ -1,0 +1,678 @@
+<?xml version='1.0' encoding='utf-8'?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="find" noun="CatalogContents" allow-remote="false">
+        <in-parameters>
+            <parameter name="recordKind" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productCategoryId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="contentType" type="String" />
+            <parameter name="productContentTypeEnumId" type="String" />
+            <parameter name="categoryContentTypeEnumId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="productFeatureId" type="String" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="description" type="String" />
+            <parameter name="sequenceNum" type="Long" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="contentText" type="String" allow-html="any" />
+            <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="contentFiles" type="List" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="includeInherited" type="Boolean" />
+            <parameter name="fromVersion" type="String" />
+            <parameter name="toVersion" type="String" />
+            <parameter name="versionName" type="String" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="sourceLocale" type="String" />
+            <parameter name="targetLocale" type="String" />
+            <parameter name="missingOnly" type="Boolean" />
+            <parameter name="sourceContentId" type="String" />
+            <parameter name="sourceRevision" type="String" />
+            <parameter name="targetContentId" type="String" />
+            <parameter name="targetRevision" type="String" />
+            <parameter name="targetText" type="String" allow-html="any" />
+            <parameter name="markReviewed" type="Boolean" />
+            <parameter name="sourceProductContentId" type="String" />
+            <parameter name="sourceProductCategoryContentId" type="String" />
+            <parameter name="reviewedSourceRevision" type="String" />
+            <parameter name="reviewedByUserId" type="String" />
+            <parameter name="reviewedDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentRows" type="List" />
+            <parameter name="document" type="Map" />
+            <parameter name="contentText" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="currentRevision" type="String" />
+            <parameter name="versionRows" type="List" />
+            <parameter name="conflictRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="diff" type="Map" />
+            <parameter name="conflict" type="Boolean" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="uploadResults" type="List" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="inlineAllowed" type="Boolean" />
+            <parameter name="translationRows" type="List" />
+            <parameter name="directLocalizationRows" type="List" />
+            <parameter name="printHtml" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').execute('list',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="CatalogContent" allow-remote="false">
+        <in-parameters>
+            <parameter name="recordKind" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productCategoryId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="contentType" type="String" />
+            <parameter name="productContentTypeEnumId" type="String" />
+            <parameter name="categoryContentTypeEnumId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="productFeatureId" type="String" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="description" type="String" />
+            <parameter name="sequenceNum" type="Long" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="contentText" type="String" allow-html="any" />
+            <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="contentFiles" type="List" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="includeInherited" type="Boolean" />
+            <parameter name="fromVersion" type="String" />
+            <parameter name="toVersion" type="String" />
+            <parameter name="versionName" type="String" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="sourceLocale" type="String" />
+            <parameter name="targetLocale" type="String" />
+            <parameter name="missingOnly" type="Boolean" />
+            <parameter name="sourceContentId" type="String" />
+            <parameter name="sourceRevision" type="String" />
+            <parameter name="targetContentId" type="String" />
+            <parameter name="targetRevision" type="String" />
+            <parameter name="targetText" type="String" allow-html="any" />
+            <parameter name="markReviewed" type="Boolean" />
+            <parameter name="sourceProductContentId" type="String" />
+            <parameter name="sourceProductCategoryContentId" type="String" />
+            <parameter name="reviewedSourceRevision" type="String" />
+            <parameter name="reviewedByUserId" type="String" />
+            <parameter name="reviewedDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentRows" type="List" />
+            <parameter name="document" type="Map" />
+            <parameter name="contentText" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="currentRevision" type="String" />
+            <parameter name="versionRows" type="List" />
+            <parameter name="conflictRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="diff" type="Map" />
+            <parameter name="conflict" type="Boolean" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="uploadResults" type="List" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="inlineAllowed" type="Boolean" />
+            <parameter name="translationRows" type="List" />
+            <parameter name="directLocalizationRows" type="List" />
+            <parameter name="printHtml" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').execute('detail',context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="CatalogContent" allow-remote="false">
+        <in-parameters>
+            <parameter name="recordKind" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productCategoryId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="contentType" type="String" />
+            <parameter name="productContentTypeEnumId" type="String" />
+            <parameter name="categoryContentTypeEnumId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="productFeatureId" type="String" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="description" type="String" />
+            <parameter name="sequenceNum" type="Long" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="contentText" type="String" allow-html="any" />
+            <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="contentFiles" type="List" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="includeInherited" type="Boolean" />
+            <parameter name="fromVersion" type="String" />
+            <parameter name="toVersion" type="String" />
+            <parameter name="versionName" type="String" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="sourceLocale" type="String" />
+            <parameter name="targetLocale" type="String" />
+            <parameter name="missingOnly" type="Boolean" />
+            <parameter name="sourceContentId" type="String" />
+            <parameter name="sourceRevision" type="String" />
+            <parameter name="targetContentId" type="String" />
+            <parameter name="targetRevision" type="String" />
+            <parameter name="targetText" type="String" allow-html="any" />
+            <parameter name="markReviewed" type="Boolean" />
+            <parameter name="sourceProductContentId" type="String" />
+            <parameter name="sourceProductCategoryContentId" type="String" />
+            <parameter name="reviewedSourceRevision" type="String" />
+            <parameter name="reviewedByUserId" type="String" />
+            <parameter name="reviewedDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentRows" type="List" />
+            <parameter name="document" type="Map" />
+            <parameter name="contentText" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="currentRevision" type="String" />
+            <parameter name="versionRows" type="List" />
+            <parameter name="conflictRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="diff" type="Map" />
+            <parameter name="conflict" type="Boolean" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="uploadResults" type="List" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="inlineAllowed" type="Boolean" />
+            <parameter name="translationRows" type="List" />
+            <parameter name="directLocalizationRows" type="List" />
+            <parameter name="printHtml" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').execute('store',context))</script>
+        </actions>
+    </service>
+    <service verb="upload" noun="CatalogContents" allow-remote="false">
+        <in-parameters>
+            <parameter name="recordKind" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productCategoryId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="contentType" type="String" />
+            <parameter name="productContentTypeEnumId" type="String" />
+            <parameter name="categoryContentTypeEnumId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="productFeatureId" type="String" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="description" type="String" />
+            <parameter name="sequenceNum" type="Long" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="contentText" type="String" allow-html="any" />
+            <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="contentFiles" type="List" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="includeInherited" type="Boolean" />
+            <parameter name="fromVersion" type="String" />
+            <parameter name="toVersion" type="String" />
+            <parameter name="versionName" type="String" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="sourceLocale" type="String" />
+            <parameter name="targetLocale" type="String" />
+            <parameter name="missingOnly" type="Boolean" />
+            <parameter name="sourceContentId" type="String" />
+            <parameter name="sourceRevision" type="String" />
+            <parameter name="targetContentId" type="String" />
+            <parameter name="targetRevision" type="String" />
+            <parameter name="targetText" type="String" allow-html="any" />
+            <parameter name="markReviewed" type="Boolean" />
+            <parameter name="sourceProductContentId" type="String" />
+            <parameter name="sourceProductCategoryContentId" type="String" />
+            <parameter name="reviewedSourceRevision" type="String" />
+            <parameter name="reviewedByUserId" type="String" />
+            <parameter name="reviewedDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentRows" type="List" />
+            <parameter name="document" type="Map" />
+            <parameter name="contentText" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="currentRevision" type="String" />
+            <parameter name="versionRows" type="List" />
+            <parameter name="conflictRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="diff" type="Map" />
+            <parameter name="conflict" type="Boolean" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="uploadResults" type="List" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="inlineAllowed" type="Boolean" />
+            <parameter name="translationRows" type="List" />
+            <parameter name="directLocalizationRows" type="List" />
+            <parameter name="printHtml" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').execute('upload',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="CatalogContentResource" allow-remote="false">
+        <in-parameters>
+            <parameter name="recordKind" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productCategoryId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="contentType" type="String" />
+            <parameter name="productContentTypeEnumId" type="String" />
+            <parameter name="categoryContentTypeEnumId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="productFeatureId" type="String" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="description" type="String" />
+            <parameter name="sequenceNum" type="Long" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="contentText" type="String" allow-html="any" />
+            <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="contentFiles" type="List" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="includeInherited" type="Boolean" />
+            <parameter name="fromVersion" type="String" />
+            <parameter name="toVersion" type="String" />
+            <parameter name="versionName" type="String" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="sourceLocale" type="String" />
+            <parameter name="targetLocale" type="String" />
+            <parameter name="missingOnly" type="Boolean" />
+            <parameter name="sourceContentId" type="String" />
+            <parameter name="sourceRevision" type="String" />
+            <parameter name="targetContentId" type="String" />
+            <parameter name="targetRevision" type="String" />
+            <parameter name="targetText" type="String" allow-html="any" />
+            <parameter name="markReviewed" type="Boolean" />
+            <parameter name="sourceProductContentId" type="String" />
+            <parameter name="sourceProductCategoryContentId" type="String" />
+            <parameter name="reviewedSourceRevision" type="String" />
+            <parameter name="reviewedByUserId" type="String" />
+            <parameter name="reviewedDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentRows" type="List" />
+            <parameter name="document" type="Map" />
+            <parameter name="contentText" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="currentRevision" type="String" />
+            <parameter name="versionRows" type="List" />
+            <parameter name="conflictRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="diff" type="Map" />
+            <parameter name="conflict" type="Boolean" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="uploadResults" type="List" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="inlineAllowed" type="Boolean" />
+            <parameter name="translationRows" type="List" />
+            <parameter name="directLocalizationRows" type="List" />
+            <parameter name="printHtml" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').execute('resource',context))</script>
+        </actions>
+    </service>
+    <service verb="restore" noun="CatalogContent" allow-remote="false">
+        <in-parameters>
+            <parameter name="recordKind" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productCategoryId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="contentType" type="String" />
+            <parameter name="productContentTypeEnumId" type="String" />
+            <parameter name="categoryContentTypeEnumId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="productFeatureId" type="String" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="description" type="String" />
+            <parameter name="sequenceNum" type="Long" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="contentText" type="String" allow-html="any" />
+            <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="contentFiles" type="List" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="includeInherited" type="Boolean" />
+            <parameter name="fromVersion" type="String" />
+            <parameter name="toVersion" type="String" />
+            <parameter name="versionName" type="String" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="sourceLocale" type="String" />
+            <parameter name="targetLocale" type="String" />
+            <parameter name="missingOnly" type="Boolean" />
+            <parameter name="sourceContentId" type="String" />
+            <parameter name="sourceRevision" type="String" />
+            <parameter name="targetContentId" type="String" />
+            <parameter name="targetRevision" type="String" />
+            <parameter name="targetText" type="String" allow-html="any" />
+            <parameter name="markReviewed" type="Boolean" />
+            <parameter name="sourceProductContentId" type="String" />
+            <parameter name="sourceProductCategoryContentId" type="String" />
+            <parameter name="reviewedSourceRevision" type="String" />
+            <parameter name="reviewedByUserId" type="String" />
+            <parameter name="reviewedDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentRows" type="List" />
+            <parameter name="document" type="Map" />
+            <parameter name="contentText" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="currentRevision" type="String" />
+            <parameter name="versionRows" type="List" />
+            <parameter name="conflictRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="diff" type="Map" />
+            <parameter name="conflict" type="Boolean" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="uploadResults" type="List" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="inlineAllowed" type="Boolean" />
+            <parameter name="translationRows" type="List" />
+            <parameter name="directLocalizationRows" type="List" />
+            <parameter name="printHtml" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').execute('restore',context))</script>
+        </actions>
+    </service>
+    <service verb="find" noun="CatalogTranslations" allow-remote="false">
+        <in-parameters>
+            <parameter name="recordKind" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productCategoryId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="contentType" type="String" />
+            <parameter name="productContentTypeEnumId" type="String" />
+            <parameter name="categoryContentTypeEnumId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="productFeatureId" type="String" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="description" type="String" />
+            <parameter name="sequenceNum" type="Long" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="contentText" type="String" allow-html="any" />
+            <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="contentFiles" type="List" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="includeInherited" type="Boolean" />
+            <parameter name="fromVersion" type="String" />
+            <parameter name="toVersion" type="String" />
+            <parameter name="versionName" type="String" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="sourceLocale" type="String" />
+            <parameter name="targetLocale" type="String" />
+            <parameter name="missingOnly" type="Boolean" />
+            <parameter name="sourceContentId" type="String" />
+            <parameter name="sourceRevision" type="String" />
+            <parameter name="targetContentId" type="String" />
+            <parameter name="targetRevision" type="String" />
+            <parameter name="targetText" type="String" allow-html="any" />
+            <parameter name="markReviewed" type="Boolean" />
+            <parameter name="sourceProductContentId" type="String" />
+            <parameter name="sourceProductCategoryContentId" type="String" />
+            <parameter name="reviewedSourceRevision" type="String" />
+            <parameter name="reviewedByUserId" type="String" />
+            <parameter name="reviewedDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentRows" type="List" />
+            <parameter name="document" type="Map" />
+            <parameter name="contentText" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="currentRevision" type="String" />
+            <parameter name="versionRows" type="List" />
+            <parameter name="conflictRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="diff" type="Map" />
+            <parameter name="conflict" type="Boolean" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="uploadResults" type="List" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="inlineAllowed" type="Boolean" />
+            <parameter name="translationRows" type="List" />
+            <parameter name="directLocalizationRows" type="List" />
+            <parameter name="printHtml" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').execute('translations',context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="CatalogTranslation" allow-remote="false">
+        <in-parameters>
+            <parameter name="recordKind" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productCategoryId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="contentType" type="String" />
+            <parameter name="productContentTypeEnumId" type="String" />
+            <parameter name="categoryContentTypeEnumId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="productFeatureId" type="String" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="description" type="String" />
+            <parameter name="sequenceNum" type="Long" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="contentText" type="String" allow-html="any" />
+            <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="contentFiles" type="List" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="includeInherited" type="Boolean" />
+            <parameter name="fromVersion" type="String" />
+            <parameter name="toVersion" type="String" />
+            <parameter name="versionName" type="String" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="sourceLocale" type="String" />
+            <parameter name="targetLocale" type="String" />
+            <parameter name="missingOnly" type="Boolean" />
+            <parameter name="sourceContentId" type="String" />
+            <parameter name="sourceRevision" type="String" />
+            <parameter name="targetContentId" type="String" />
+            <parameter name="targetRevision" type="String" />
+            <parameter name="targetText" type="String" allow-html="any" />
+            <parameter name="markReviewed" type="Boolean" />
+            <parameter name="sourceProductContentId" type="String" />
+            <parameter name="sourceProductCategoryContentId" type="String" />
+            <parameter name="reviewedSourceRevision" type="String" />
+            <parameter name="reviewedByUserId" type="String" />
+            <parameter name="reviewedDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentRows" type="List" />
+            <parameter name="document" type="Map" />
+            <parameter name="contentText" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="currentRevision" type="String" />
+            <parameter name="versionRows" type="List" />
+            <parameter name="conflictRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="diff" type="Map" />
+            <parameter name="conflict" type="Boolean" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="uploadResults" type="List" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="inlineAllowed" type="Boolean" />
+            <parameter name="translationRows" type="List" />
+            <parameter name="directLocalizationRows" type="List" />
+            <parameter name="printHtml" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').execute('translate',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="ProductDatasheet" allow-remote="false">
+        <in-parameters>
+            <parameter name="recordKind" type="String" />
+            <parameter name="productId" type="String" />
+            <parameter name="productCategoryId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="contentType" type="String" />
+            <parameter name="productContentTypeEnumId" type="String" />
+            <parameter name="categoryContentTypeEnumId" type="String" />
+            <parameter name="locale" type="String" />
+            <parameter name="productFeatureId" type="String" />
+            <parameter name="productStoreId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="asOfDate" type="Timestamp" />
+            <parameter name="description" type="String" />
+            <parameter name="sequenceNum" type="Long" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="contentText" type="String" allow-html="any" />
+            <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem" />
+            <parameter name="contentFiles" type="List" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="includeHistory" type="Boolean" />
+            <parameter name="includeInherited" type="Boolean" />
+            <parameter name="fromVersion" type="String" />
+            <parameter name="toVersion" type="String" />
+            <parameter name="versionName" type="String" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="sourceLocale" type="String" />
+            <parameter name="targetLocale" type="String" />
+            <parameter name="missingOnly" type="Boolean" />
+            <parameter name="sourceContentId" type="String" />
+            <parameter name="sourceRevision" type="String" />
+            <parameter name="targetContentId" type="String" />
+            <parameter name="targetRevision" type="String" />
+            <parameter name="targetText" type="String" allow-html="any" />
+            <parameter name="markReviewed" type="Boolean" />
+            <parameter name="sourceProductContentId" type="String" />
+            <parameter name="sourceProductCategoryContentId" type="String" />
+            <parameter name="reviewedSourceRevision" type="String" />
+            <parameter name="reviewedByUserId" type="String" />
+            <parameter name="reviewedDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentRows" type="List" />
+            <parameter name="document" type="Map" />
+            <parameter name="contentText" type="String" />
+            <parameter name="expectedRevision" type="String" />
+            <parameter name="currentRevision" type="String" />
+            <parameter name="versionRows" type="List" />
+            <parameter name="conflictRows" type="List" />
+            <parameter name="canEdit" type="Boolean" />
+            <parameter name="diff" type="Map" />
+            <parameter name="conflict" type="Boolean" />
+            <parameter name="contentEditConflictId" type="String" />
+            <parameter name="contentId" type="String" />
+            <parameter name="productContentId" type="String" />
+            <parameter name="productCategoryContentId" type="String" />
+            <parameter name="uploadResults" type="List" />
+            <parameter name="contentLocation" type="String" />
+            <parameter name="filename" type="String" />
+            <parameter name="sourceDriveId"/><parameter name="sourcePath"/>
+            <parameter name="inlineAllowed" type="Boolean" />
+            <parameter name="translationRows" type="List" />
+            <parameter name="directLocalizationRows" type="List" />
+            <parameter name="printHtml" type="String" />
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').execute('datasheet',context))</script>
+        </actions>
+    </service>
+</services>

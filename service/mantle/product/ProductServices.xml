@@ -731,9 +731,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <if condition="!contentLocation">
                     <if condition="!contentText"><set field="contentText" value="[placeholder - delete me]"/></if>
                     <if condition="!filename"><set field="filename" value="${productContentTypeEnumId}_${productContentId}.${textExtension || 'html'}"/></if>
+                    <set field="filename" from="ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').safeName(filename)"/>
                     <!-- NOTE: no need to use mantle.content.large.root for this -->
                     <set field="contentRoot" from="ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'"/>
-                    <set field="contentLocation" value="${contentRoot}/product/${productId}/${filename}"/>
+                    <set field="contentLocation" value="${contentRoot}/product/${productId}/content_${productContentId}/${filename}"/>
                     <set field="docRr" from="ec.resource.getLocationReference(contentLocation)"/>
                     <script>docRr.putText(contentText)</script>
                 </if>
@@ -747,19 +748,11 @@ along with this software (see the LICENSE.md file). If not, see
             <auto-parameters entity-name="mantle.product.ProductContent" include="nonpk"/>
             <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem"/>
             <parameter name="contentText" allow-html="any"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="requireRevision" type="Boolean" default="false"/>
         </in-parameters>
-        <actions>
-            <if condition="contentFile != null &amp;&amp; contentFile.size &gt; 0"><then>
-                <entity-find-one entity-name="mantle.product.ProductContent" value-field="productContent"/>
-                <service-call name="mantle.product.ProductServices.save#ProductContentFile" out-map="context"
-                        in-map="Object.assign({}, context, {productId:productContent.productId})"/>
-            </then><else-if condition="contentText">
-                <entity-find-one entity-name="mantle.product.ProductContent" value-field="productContent"/>
-                <set field="docRr" from="ec.resource.getLocationReference(productContent.contentLocation)"/>
-                <script>docRr.putText(contentText)</script>
-            </else-if></if>
-            <service-call name="update#mantle.product.ProductContent" in-map="context"/>
-        </actions>
+        <out-parameters><parameter name="conflict" type="Boolean"/><parameter name="currentRevision"/><parameter name="contentEditConflictId"/><parameter name="contentId"/><parameter name="productContentId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').update(context,false))</script></actions>
     </service>
     <service verb="save" noun="ProductContentFile">
         <in-parameters>
@@ -770,7 +763,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="contentLocation"/></out-parameters>
         <actions>
-            <set field="filename" from="contentFile.getName()"/>
+            <set field="filename" from="ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').safeName(contentFile.getName())"/>
             <if condition="ResourceReference.isTextFilename(filename)"><then>
                 <set field="contentRoot" from="ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'"/>
             </then><else>
@@ -804,13 +797,16 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="contentFile != null &amp;&amp; contentFile.size &gt; 0"><then>
                 <service-call name="mantle.product.ProductServices.save#ProductCategoryContentFile" in-map="context"/>
             </then><else>
+                <if condition="!contentLocation">
                 <if condition="!contentText"><set field="contentText" value="[placeholder - delete me]"/></if>
                 <if condition="!filename"><set field="filename" value="${categoryContentTypeEnumId}_${productCategoryContentId}.${textExtension || 'html'}"/></if>
+                <set field="filename" from="ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').safeName(filename)"/>
                 <!-- NOTE: no need to use mantle.content.large.root for this -->
                 <set field="contentRoot" from="ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'"/>
-                <set field="contentLocation" value="${contentRoot}/product/${productCategoryId}/${filename}"/>
+                <set field="contentLocation" value="${contentRoot}/productCategory/${productCategoryId}/content_${productCategoryContentId}/${filename}"/>
                 <set field="docRr" from="ec.resource.getLocationReference(contentLocation)"/>
                 <script>docRr.putText(contentText)</script>
+                </if>
                 <service-call name="update#mantle.product.category.ProductCategoryContent" in-map="{productCategoryContentId:productCategoryContentId, contentLocation:contentLocation}"/>
             </else></if>
         </actions>
@@ -821,19 +817,11 @@ along with this software (see the LICENSE.md file). If not, see
             <auto-parameters entity-name="mantle.product.category.ProductCategoryContent" include="nonpk"/>
             <parameter name="contentFile" type="org.apache.commons.fileupload2.core.FileItem"/>
             <parameter name="contentText" allow-html="any"/>
+            <parameter name="expectedRevision"/>
+            <parameter name="requireRevision" type="Boolean" default="false"/>
         </in-parameters>
-        <actions>
-            <if condition="contentFile != null &amp;&amp; contentFile.size &gt; 0"><then>
-                <entity-find-one entity-name="mantle.product.category.ProductCategoryContent" value-field="productCategoryContent"/>
-                <service-call name="mantle.product.ProductServices.save#ProductCategoryContentFile" out-map="context"
-                              in-map="Object.assign({}, context, {productCategoryId:productCategoryContent.productCategoryId, saveContentLocation:false})"/>
-            </then><else-if condition="contentText">
-                <entity-find-one entity-name="mantle.product.category.ProductCategoryContent" value-field="productCategoryContent"/>
-                <set field="docRr" from="ec.resource.getLocationReference(productCategoryContent.contentLocation)"/>
-                <script>docRr.putText(contentText)</script>
-            </else-if></if>
-            <service-call name="update#mantle.product.category.ProductCategoryContent" in-map="context"/>
-        </actions>
+        <out-parameters><parameter name="conflict" type="Boolean"/><parameter name="currentRevision"/><parameter name="contentEditConflictId"/><parameter name="contentId"/><parameter name="productCategoryContentId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').update(context,true))</script></actions>
     </service>
     <service verb="save" noun="ProductCategoryContentFile">
         <in-parameters>
@@ -844,7 +832,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="contentLocation"/></out-parameters>
         <actions>
-            <set field="filename" from="contentFile.getName()"/>
+            <set field="filename" from="ec.resource.script('component://mr-mantle/service/mantle/product/Content.js').safeName(contentFile.getName())"/>
             <if condition="ResourceReference.isTextFilename(filename)"><then>
                 <set field="contentRoot" from="ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'"/>
             </then><else>

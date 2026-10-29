@@ -309,15 +309,15 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="ProductContent" package="mantle.product">
         <field name="productContentId" type="id" is-pk="true"/>
         <field name="productId" type="id" not-null="true"/>
-        <field name="contentLocation" type="text-medium"/>
-        <field name="productContentTypeEnumId" type="id"/>
-        <field name="locale" type="text-short"/>
-        <field name="productFeatureId" type="id"><description>For virtual products to limit images/etc displayed by selectable feature, if null always display</description></field>
-        <field name="productStoreId" type="id"><description>For content limited to a specific store</description></field>
-        <field name="fromDate" type="date-time" default="ec.user.nowTimestamp"/>
-        <field name="thruDate" type="date-time"/>
-        <field name="description" type="text-long"/>
-        <field name="sequenceNum" type="number-integer"/>
+        <field name="contentLocation" enable-audit-log="update" type="text-medium"/>
+        <field name="productContentTypeEnumId" enable-audit-log="update" type="id"/>
+        <field name="locale" enable-audit-log="update" type="text-short"/>
+        <field name="productFeatureId" enable-audit-log="update" type="id"><description>For virtual products to limit images/etc displayed by selectable feature, if null always display</description></field>
+        <field name="productStoreId" enable-audit-log="update" type="id"><description>For content limited to a specific store</description></field>
+        <field name="fromDate" enable-audit-log="update" type="date-time" default="ec.user.nowTimestamp"/>
+        <field name="thruDate" enable-audit-log="update" type="date-time"/>
+        <field name="description" enable-audit-log="update" type="text-long"/>
+        <field name="sequenceNum" enable-audit-log="update" type="number-integer"/>
         <field name="userId" type="id" default="ec.user.userId"/>
         <relationship type="one" related="mantle.product.Product"/>
         <relationship type="one" title="ProductContentType" related="moqui.basic.Enumeration">
@@ -809,14 +809,14 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="ProductCategoryContent" package="mantle.product.category">
         <field name="productCategoryContentId" type="id" is-pk="true"/>
         <field name="productCategoryId" type="id"/>
-        <field name="contentLocation" type="text-medium"/>
-        <field name="categoryContentTypeEnumId" type="id"/>
-        <field name="productStoreId" type="id"><description>For content limited to a specific store</description></field>
-        <field name="fromDate" type="date-time" default="ec.user.nowTimestamp"/>
-        <field name="thruDate" type="date-time"/>
-        <field name="locale" type="text-short"/>
-        <field name="description" type="text-long"/>
-        <field name="sequenceNum" type="number-integer"/>
+        <field name="contentLocation" enable-audit-log="update" type="text-medium"/>
+        <field name="categoryContentTypeEnumId" enable-audit-log="update" type="id"/>
+        <field name="productStoreId" enable-audit-log="update" type="id"><description>For content limited to a specific store</description></field>
+        <field name="fromDate" enable-audit-log="update" type="date-time" default="ec.user.nowTimestamp"/>
+        <field name="thruDate" enable-audit-log="update" type="date-time"/>
+        <field name="locale" enable-audit-log="update" type="text-short"/>
+        <field name="description" enable-audit-log="update" type="text-long"/>
+        <field name="sequenceNum" enable-audit-log="update" type="number-integer"/>
         <field name="userId" type="id" default="ec.user.userId"/>
         <relationship type="one" related="mantle.product.category.ProductCategory"/>
         <relationship type="one" title="ProductCategoryContentType" related="moqui.basic.Enumeration" short-alias="type">

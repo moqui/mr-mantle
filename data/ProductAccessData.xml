@@ -18,4 +18,6 @@
     <moqui.security.UserPermission userPermissionId="SUPPLIER_PRICE_VIEW" description="Supplier price view"/>
     <moqui.security.UserPermission userPermissionId="SUPPLIER_PRICE_EDIT" description="Supplier price edit"/>
     <moqui.security.UserPermission userPermissionId="PRODUCT_CATALOG_ADMIN" description="Product catalog admin"/>
+    <moqui.security.UserPermission userPermissionId="PRODUCT_CATALOG_VIEW" description="Read owned catalog content"/>
+    <moqui.security.UserPermission userPermissionId="PRODUCT_CATALOG_EDIT" description="Maintain owned catalog content"/>
 </entity-facade-xml>
