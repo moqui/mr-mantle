@@ -2092,6 +2092,7 @@ along with this software (see the LICENSE.md file). If not, see
             const content = (entityName, keyField, typeField, dateField) =>
                     ({entityName: entityName, keyField: keyField, typeField: typeField, dateField: dateField || 'contentDate'})
             const contentEntities = {
+                'mantle.ledger.transaction.AcctgTrans': content('mantle.ledger.transaction.AcctgTransContent', 'acctgTransId', 'contentTypeEnumId'),
                 'mantle.product.bom.ProductBom': content('mantle.product.bom.ProductBomContent', 'productBomId', 'productBomContentTypeEnumId', 'fromDate'),
                 'mantle.party.agreement.Agreement': content('mantle.party.agreement.AgreementContent', 'agreementId', 'contentTypeEnumId'),
                 'mantle.product.maintenance.AssetMaintenance': content('mantle.product.maintenance.AssetMaintenanceContent',
@@ -2379,6 +2380,10 @@ along with this software (see the LICENSE.md file). If not, see
                 if (value == null) return false
                 if (isClientUser()) return clientVisible(entityName, id)
                 if (entityName === PARTY) return !value.privateOwnerUserId || value.privateOwnerUserId === ec.user.userId
+                if (entityName === 'mantle.ledger.transaction.AcctgTrans' || entityName === 'mantle.ledger.transaction.AcctgTransContent') {
+                    const finance = ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                    try { finance.record({kind:'journals', recordId:value.acctgTransId}); return true } catch (error) { return false }
+                }
                 // Catalog record mounts/drive links also enforce owner scope without an active-org filter. A catalog
                 // user's internal file/room callback retains this rule even when artifact authorization is disabled.
                 if (['mantle.product.Product', 'mantle.product.category.ProductCategory', 'mantle.product.feature.ProductFeature', 'mantle.product.feature.ProductFeatureGroup'].includes(entityName)

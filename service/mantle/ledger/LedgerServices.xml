@@ -493,7 +493,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="forcePost" type="Boolean" default="false">
                 <description>Post the transaction even if period closed</description></parameter>
         </in-parameters>
+        <out-parameters><parameter name="valid" type="Boolean"/><parameter name="findings" type="List"/></out-parameters>
         <actions>
+            <script><![CDATA[
+                const checked = ec.resource.script('component://mr-mantle/service/mantle/ledger/PostingGuard.js').check({acctgTransId, verifyOnly})
+                valid = checked.valid
+                findings = checked.findings
+                postingHandled = checked.handled
+            ]]></script>
+            <if condition="postingHandled"><return/></if>
             <entity-find-one entity-name="mantle.ledger.transaction.AcctgTrans" value-field="acctgTrans" for-update="true"/>
             <entity-find entity-name="mantle.ledger.transaction.AcctgTransEntry" list="acctgTransEntryList">
                 <econdition field-name="acctgTransId"/><order-by field-name="acctgTransEntrySeqId"/></entity-find>
@@ -624,6 +632,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <service-call name="mantle.ledger.LedgerServices.update#GlAccountOrgSummariesForTx"
                         in-map="{acctgTransId:acctgTransId, timePeriodList:timePeriodList, isUnpost:false}"/>
             </if>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/ledger/PostingGuard.js').completed(acctgTransId)</script>
         </actions>
     </service>
 
@@ -835,6 +844,8 @@ along with this software (see the LICENSE.md file). If not, see
             with the same invoice, payment, etc.</description>
         <in-parameters>
             <parameter name="acctgTransId" required="true"/>
+            <parameter name="reversalDate" type="Timestamp"/>
+            <parameter name="changeReason"/>
             <parameter name="deleteIfNotPosted" type="Boolean" default="false"/>
             <parameter name="createOnly" type="Boolean" default="false"/>
         </in-parameters>
@@ -860,6 +871,9 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-sequenced-id-primary value-field="reverseAcctgTrans"/>
             <set field="reverseAcctgTrans.reverseOfAcctgTransId" from="acctgTransId"/>
             <!-- don't do this! use same transactionDate as original, if posting fails then it can be updated manually: <set field="reverseAcctgTrans.transactionDate" from="ec.user.nowTimestamp"/> -->
+            <if condition="reversalDate"><set field="reverseAcctgTrans.transactionDate" from="reversalDate"/></if>
+            <set field="reverseAcctgTrans.postedDate" from="null"/>
+            <set field="reverseAcctgTrans.changeReason" from="changeReason"/>
             <set field="reverseAcctgTrans.isPosted" value="N"/>
             <entity-create value-field="reverseAcctgTrans"/>
 
@@ -894,8 +908,13 @@ along with this software (see the LICENSE.md file). If not, see
                 <message>Posted transaction ${reverseAcctgTransId}</message>
             </else-if></if>
 
-            <set field="acctgTrans.reversedByAcctgTransId" from="reverseAcctgTransId"/>
-            <entity-update value-field="acctgTrans"/>
+            <entity-find-one entity-name="mantle.ledger.transaction.AcctgTrans" value-field="postedReversal">
+                <field-map field-name="acctgTransId" from="reverseAcctgTransId"/>
+            </entity-find-one>
+            <if condition="postedReversal.isPosted == 'Y'">
+                <set field="acctgTrans.reversedByAcctgTransId" from="reverseAcctgTransId"/>
+                <entity-update value-field="acctgTrans"/>
+            </if>
 
             <set field="acctgTransId" from="reverseAcctgTransId"/>
         </actions>
@@ -1045,6 +1064,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="basisDate" type="java.sql.Date" default="new Date(Number(ec.user.nowTimestamp)).toISOString().slice(0, 10)"/>
         </in-parameters>
         <actions>
+            <script>configuredFiscalHandled = ec.resource.script('component://mr-mantle/service/mantle/ledger/FiscalPeriods.js').ensure({organizationPartyId,basisDate})</script>
+            <if condition="configuredFiscalHandled"><return/></if>
             <!-- A date reaches a script as epoch millis text (UTC midnight); the calendar year and zero-based month come from it -->
             <script><![CDATA[
                 function dateOf(value) {
@@ -1055,6 +1076,13 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 basisYear = dateOf(basisDate).getUTCFullYear()
                 basisMonth = dateOf(basisDate).getUTCMonth()
+                const pref = ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js').preference(organizationPartyId)
+                const startMonth = Number(pref.fiscalYearStartMonth || 1), startDay = Number(pref.fiscalYearStartDay || 1)
+                if (startMonth < 1 || startMonth > 12 || startDay < 1 || startDay > 31) throw new Error('Fiscal year start must be a valid month and day 1–31')
+                const basis = dateOf(basisDate)
+                let year = basisYear
+                if (basis < new Date(Date.UTC(year, startMonth - 1, startDay))) year--
+                fiscalYearStart = year + '-' + String(startMonth).padStart(2, '0') + '-' + String(startDay).padStart(2, '0')
             ]]></script>
             <entity-find-one entity-name="mantle.party.Organization" value-field="organization">
                 <field-map field-name="partyId" from="organizationPartyId"/></entity-find-one>
@@ -1085,7 +1113,7 @@ along with this software (see the LICENSE.md file). If not, see
                 </then><else>
                     <!-- no current year... assume fiscal year is calendar year and create one automatically -->
                     <service-call name="mantle.party.TimeServices.create#TimePeriod" out-map="createTpOut"
-                            in-map="{partyId:organizationPartyId, timePeriodTypeId:'FiscalYear', fromDate:basisYear + '-01-01'}"/>
+                            in-map="{partyId:organizationPartyId, timePeriodTypeId:'FiscalYear', fromDate:fiscalYearStart}"/>
                     <set field="yearPeriodId" from="createTpOut.timePeriodId"/>
                 </else></if>
             </then><else>

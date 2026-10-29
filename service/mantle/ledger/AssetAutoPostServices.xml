@@ -166,7 +166,12 @@ along with this software (see the LICENSE.md file). If not, see
             </else></if>
 
             <!-- set acctg trans result to Success -->
-            <set field="assetReceipt.acctgTransResultEnumId" value="AtrSuccess"/>
+            <script><![CDATA[
+                const finance = ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                const posted = acctgTransId ? finance.one('mantle.ledger.transaction.AcctgTrans',{acctgTransId}) : null
+                assetReceipt.acctgTransResultEnumId = finance.preference(organizationPartyId).postingGuardEnabled === 'Y' && posted?.isPosted !== 'Y' ? 'AtrPostingFailed' : 'AtrSuccess'
+                if (finance.preference(organizationPartyId).postingGuardEnabled === 'Y' && posted && posted.isPosted !== 'Y' && !posted.postingFailureCode) finance.call('update#mantle.ledger.transaction.AcctgTrans',{acctgTransId,postingFailureCode:'MAPPING_MISSING',postingFailureMessage:'Missing posting account mapping'})
+            ]]></script>
             <entity-update value-field="assetReceipt"/>
         </actions>
     </service>
@@ -350,7 +355,12 @@ along with this software (see the LICENSE.md file). If not, see
             </else></if>
 
             <!-- set acctg trans result to Success -->
-            <set field="assetIssuance.acctgTransResultEnumId" value="AtrSuccess"/>
+            <script><![CDATA[
+                const finance = ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                const posted = acctgTransId ? finance.one('mantle.ledger.transaction.AcctgTrans',{acctgTransId}) : null
+                assetIssuance.acctgTransResultEnumId = finance.preference(organizationPartyId).postingGuardEnabled === 'Y' && posted?.isPosted !== 'Y' ? 'AtrPostingFailed' : 'AtrSuccess'
+                if (finance.preference(organizationPartyId).postingGuardEnabled === 'Y' && posted && posted.isPosted !== 'Y' && !posted.postingFailureCode) finance.call('update#mantle.ledger.transaction.AcctgTrans',{acctgTransId,postingFailureCode:'MAPPING_MISSING',postingFailureMessage:'Missing posting account mapping'})
+            ]]></script>
             <entity-update value-field="assetIssuance"/>
         </actions>
     </service>
@@ -389,6 +399,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="assetIssuanceId" required="true"/></in-parameters>
         <out-parameters><parameter name="acctgTransId"/></out-parameters>
         <actions>
+            <script>forwardIssuanceHandled = ec.resource.script('component://mr-mantle/service/mantle/ledger/IssuanceAdjustments.js').repost({assetIssuanceId})</script>
+            <if condition="forwardIssuanceHandled"><return/></if>
             <entity-find-one entity-name="mantle.product.issuance.AssetIssuance" value-field="assetIssuance" for-update="true"/>
             <if condition="assetIssuance == null"><return error="true" message="In repost could not find Asset Issuance with ID ${assetIssuanceId}"/></if>
             <!-- only fail if null to allow setting to zero to delete original TX and not create new one -->
@@ -884,7 +896,12 @@ along with this software (see the LICENSE.md file). If not, see
             </else></if>
 
             <!-- set acctg trans result to Success -->
-            <set field="assetDetail.acctgTransResultEnumId" value="AtrSuccess"/>
+            <script><![CDATA[
+                const finance = ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                const posted = acctgTransId ? finance.one('mantle.ledger.transaction.AcctgTrans',{acctgTransId}) : null
+                assetDetail.acctgTransResultEnumId = finance.preference(organizationPartyId).postingGuardEnabled === 'Y' && posted?.isPosted !== 'Y' ? 'AtrPostingFailed' : 'AtrSuccess'
+                if (finance.preference(organizationPartyId).postingGuardEnabled === 'Y' && posted && posted.isPosted !== 'Y' && !posted.postingFailureCode) finance.call('update#mantle.ledger.transaction.AcctgTrans',{acctgTransId,postingFailureCode:'MAPPING_MISSING',postingFailureMessage:'Missing posting account mapping'})
+            ]]></script>
             <entity-update value-field="assetDetail"/>
         </actions>
     </service>

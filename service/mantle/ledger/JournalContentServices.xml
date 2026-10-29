@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="define" noun="Parameters" type="interface">
+        <in-parameters>
+            <parameter name="acctgTransId" type="String"/>
+            <parameter name="acctgTransContentId" type="String"/>
+            <parameter name="contentTypeEnumId" type="String"/>
+            <parameter name="description" type="String"/>
+            <parameter name="contentFile" type="Object"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransContentId" type="String"/>
+            <parameter name="contentLocation" type="String"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="Content" allow-remote="false" transaction="force-new">
+        <description>Add an authorized journal attachment without changing any posted amounts.</description>
+        <implements service="mantle.ledger.JournalContentServices.define#Parameters"/>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/JournalContent.js').execute('create', context))</script></actions>
+    </service>
+    <service verb="save" noun="ContentFile" allow-remote="false" transaction="force-new">
+        <description>Save an uploaded file only into its authorized journal content folder.</description>
+        <implements service="mantle.ledger.JournalContentServices.define#Parameters"/>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/JournalContent.js').execute('save', context))</script></actions>
+    </service>
+
+</services>

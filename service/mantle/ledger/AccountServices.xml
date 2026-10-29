@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="define" noun="Parameters" type="interface">
+        <in-parameters>
+            <parameter name="organizationPartyId" type="String"/>
+            <parameter name="glAccountId" type="String"/>
+            <parameter name="glAccountCategoryId" type="String"/>
+            <parameter name="glAccountGroupId" type="String"/>
+            <parameter name="accountCode" type="String"/>
+            <parameter name="accountName" type="String"/>
+            <parameter name="parentGlAccountId" type="String"/>
+            <parameter name="glAccountClassEnumId" type="String"/>
+            <parameter name="glAccountTypeEnumId" type="String"/>
+            <parameter name="description" type="String"/>
+            <parameter name="disallowPosting" type="String"/>
+            <parameter name="facilityRequired" type="String"/>
+            <parameter name="costCenterRequired" type="String"/>
+            <parameter name="changeReason" type="String"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="basisDate" type="Date"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="glAccountId" type="String"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="categoryRows" type="List"/>
+            <parameter name="groupRows" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="Account" allow-remote="false">
+        <description>Create or edit a scoped chart account, protecting cycles and posted meaning.</description>
+        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('account', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="Assignment" allow-remote="false">
+        <description>Save dated organization account assignment and required dimensions.</description>
+        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('assignment', context))</script>
+        </actions>
+    </service>
+    <service verb="ensure" noun="Periods" allow-remote="false">
+        <description>Ensure configured fiscal periods for an authorized GL user.</description>
+        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('periods', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="Classifications" allow-remote="false">
+        <description>Read only the scoped account's category history and report groups.</description>
+        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('classifications',context))</script></actions>
+    </service>
+    <service verb="store" noun="Classification" allow-remote="false">
+        <description>Finance-admin changes to global chart classifications are dated or audit logged.</description>
+        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('classification',context))</script></actions>
+    </service>
+</services>

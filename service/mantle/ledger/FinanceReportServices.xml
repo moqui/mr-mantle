@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="define" noun="Parameters" type="interface">
+        <in-parameters>
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="glAccountId" type="String" />
+            <parameter name="amountUomId" type="String" />
+            <parameter name="facilityId" type="String" />
+            <parameter name="costCenterId" type="String" />
+            <parameter name="timePeriodId" type="String" />
+            <parameter name="fromDate" type="Timestamp" />
+            <parameter name="thruDate" type="Timestamp" />
+            <parameter name="compareFromDate" type="Timestamp" />
+            <parameter name="compareThruDate" type="Timestamp" />
+        </in-parameters>
+        <out-parameters>
+            <parameter name="reportRows" type="List" />
+            <parameter name="asOf" type="String" />
+            <parameter name="organizationPartyId" type="String" />
+            <parameter name="complete" type="Boolean" />
+            <parameter name="comparisonRows" type="List" />
+        </out-parameters>
+    </service>
+    <service verb="run" noun="TrialBalance" allow-remote="false">
+        <description>Scoped currency-separated trial balance, with stored closed-period summaries.</description>
+        <implements service="mantle.ledger.FinanceReportServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/FinanceReports.js').execute('trial', context))</script>
+        </actions>
+    </service>
+    <service verb="run" noun="GeneralLedger" allow-remote="false">
+        <description>Scoped posted ledger with opening and running balances; bounded to 10,000 lines.</description>
+        <implements service="mantle.ledger.FinanceReportServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/FinanceReports.js').execute('ledger', context))</script>
+        </actions>
+    </service>
+</services>

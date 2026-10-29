@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="define" noun="Parameters" type="interface">
+        <in-parameters>
+            <parameter name="organizationPartyId" type="String"/>
+            <parameter name="accountingLockId" type="String"/>
+            <parameter name="accountingLockExceptionId" type="String"/>
+            <parameter name="lockScope" type="String"/>
+            <parameter name="isHard" type="String"/>
+            <parameter name="changeReason" type="String"/>
+            <parameter name="userId" type="String"/>
+            <parameter name="userGroupId" type="String"/>
+            <parameter name="acctgTransId" type="String"/>
+            <parameter name="lockThroughDate" type="Date"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="accountingLockId" type="String"/>
+            <parameter name="accountingLockExceptionId" type="String"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="Lock" allow-remote="false">
+        <description>Set a typed organization posting lock; hard locks cannot be relaxed.</description>
+        <implements service="mantle.ledger.CloseServices.define#Parameters"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/CloseControls.js').execute('lock', context))</script>
+        </actions>
+    </service>
+    <service verb="grant" noun="Exception" allow-remote="false">
+        <description>Grant a named, expiring soft-lock exception; never overrides a closed fiscal period.</description>
+        <implements service="mantle.ledger.CloseServices.define#Parameters"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/CloseControls.js').execute('exception', context))</script>
+        </actions>
+    </service>
+</services>

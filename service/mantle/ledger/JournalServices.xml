@@ -61,4 +61,137 @@
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('draft', context))</script>
         </actions>
     </service>
+    <service verb="store" noun="DraftLine" allow-remote="false">
+        <description>Save a draft debit or credit line; posted lines are immutable.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('line', context))</script>
+        </actions>
+    </service>
+    <service verb="delete" noun="DraftLine" allow-remote="false">
+        <description>Delete a current draft line.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('removeLine', context))</script>
+        </actions>
+    </service>
+    <service verb="delete" noun="DraftEntry" allow-remote="false">
+        <description>Delete only an authorized current draft.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('remove', context))</script>
+        </actions>
+    </service>
+    <service verb="move" noun="DraftLine" allow-remote="false">
+        <description>Atomically move a line between two drafts in the same organization and currency.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('move', context))</script>
+        </actions>
+    </service>
+    <service verb="preview" noun="Entry" allow-remote="false">
+        <description>Read authoritative posting checks and persist the reviewed fingerprint.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('preview', context))</script>
+        </actions>
+    </service>
+    <service verb="post" noun="Entry" allow-remote="false">
+        <description>Revalidate a reviewed entry under lock and post once per operation key.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('post', context))</script>
+        </actions>
+    </service>
+    <service verb="reverse" noun="Entry" allow-remote="false">
+        <description>Post a linked dated reversal once; preserve the original.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('reverse', context))</script>
+        </actions>
+    </service>
+    <service verb="update" noun="PostedMetadata" allow-remote="false">
+        <description>Audited description-only correction with a mandatory reason; no financial fields accepted.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('metadata', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="Batch" allow-remote="false">
+        <description>Create or amend an unposted organization journal batch.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('batch', context))</script>
+        </actions>
+    </service>
+    <service verb="validate" noun="Batch" allow-remote="false">
+        <description>Preview each unposted constituent of an authorized batch.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('validateBatch', context))</script>
+        </actions>
+    </service>
+    <service verb="post" noun="Batch" allow-remote="false">
+        <description>Post independent batch transactions atomically, report each failure and continue.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('postBatch', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="Template" allow-remote="false">
+        <description>Save an organization journal template header as unpublished.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('template', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="TemplateLines" allow-remote="false">
+        <description>Validate balanced fixed and parameterized lines and publish the template.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('templateLines', context))</script>
+        </actions>
+    </service>
+    <service verb="create" noun="FromTemplate" allow-remote="false">
+        <description>Create an independent unposted draft from an effective published template.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('instantiate', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="Preview" allow-remote="false">
+        <description>Read the current actor's reviewed journal preview and recheck its validity.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('getPreview',context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="BatchPreview" allow-remote="false">
+        <description>Read the actor's batch preview and per-transaction posting outcomes.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('getBatchPreview',context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="TemplateLine" allow-remote="false">
+        <description>Save one draft template line and require revalidation before instantiation.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('templateLine',context))</script>
+        </actions>
+    </service>
+    <service verb="publish" noun="Template" allow-remote="false">
+        <description>Publish only a template whose fixed amounts and named amount parameters balance.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('publishTemplate',context))</script>
+        </actions>
+    </service>
+    <service verb="delete" noun="TemplateLine" allow-remote="false">
+        <description>Delete only a current unpublished template line.</description>
+        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('removeTemplateLine',context))</script>
+        </actions>
+    </service>
 </services>
