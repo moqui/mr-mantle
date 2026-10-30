@@ -88,6 +88,7 @@ postings even when adoption is later disabled. Ordinary GL descriptions and reco
 The full standalone gate has 1,160 features across 130 specs: 1,139 pass, the same four reproduced baseline failures
 and 17 skips. All 65 added cases pass, including actual permission loss, competing capacity writes, caller rollback,
 credential contention, retained large evidence, unsafe legacy entry and initially unmanaged source/adoption races.
-The final safe identity/recovery DTO corrections pass their focused checks. BOSS passes 1,161/0/5; final presentation
-review and the bounded repository commits are recorded in the app's implementation record. Manual/provider refunds
+The final safe identity/recovery DTO corrections pass their focused checks. Final BOSS acceptance passes 1,162/0/5
+and all 78 browser cases with independent visual review. Implementation commits are Mantle `5c24c2fa` and BOSS
+`4b92e2c`; the app's implementation record retains the detailed verification. Manual/provider refunds
 and transfers remain P5b2b/P5b3; execution pauses after their P5 checkpoint and before P6.
