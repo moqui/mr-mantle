@@ -32,7 +32,13 @@ function eligible(payment) {
     if (!payment) return
     if (payment.gatewayRole === "authorization")
         lib.denied("GATEWAY_AUTHORIZATION_NOT_CASH", "An authorization instruction cannot create a financial posting")
-    if (payment.lifecycleManaged === "Y" && !payment.gatewayRole && legacy.gatewayCapable(payment))
+    if (
+        payment.lifecycleManaged === "Y" &&
+        payment.paymentTypeEnumId === "PtInvoicePayment" &&
+        !payment.gatewayRole &&
+        legacy.gatewayCapable(payment) &&
+        !legacy.hasManualCash(payment)
+    )
         lib.denied("GATEWAY_CAPTURE_REQUIRED", "Only a completed reviewed provider capture can create cash for this payment")
 }
 function application(tx, payment, types) {
@@ -109,6 +115,7 @@ function cashWrite(tx, payment, types, alreadyPosted = false) {
 function posting(tx, types) {
     ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const {payments, legacyOnly} = lockSources([tx])
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").source(tx, types)
     eachSource(tx, payments, payment => cashWrite(tx, payment, types, tx.isPosted === "Y"))
     return legacyOnly
 }
@@ -119,6 +126,8 @@ function header(p, types) {
             p.after?.reverseOfAcctgTransId && lib.find(T, {acctgTransId: p.after.reverseOfAcctgTransId}).useCache(false).one(),
         sources = [p.before, p.operation === "delete" ? null : p.after, reversed],
         {payments, legacyOnly} = lockSources(sources)
+    for (const tx of sources.filter(Boolean))
+        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").source(tx, types)
     for (const tx of sources.filter(Boolean)) eachSource(tx, payments, eligible)
     if (p.before) eachSource(p.before, payments, payment => cashWrite(p.before, payment, types, p.before.isPosted === "Y"))
     if (reversed) eachSource(reversed, payments, payment => cashWrite(reversed, payment, types, reversed.isPosted === "Y"))
@@ -140,6 +149,8 @@ function entry(p, types) {
     const ids = [...new Set([p.before?.acctgTransId, p.after?.acctgTransId].filter(Boolean))].sort(),
         transactions = ids.length ? Array.from(lib.find(T).condition("acctgTransId", "in", ids).useCache(false).list()) : [],
         {payments, legacyOnly} = lockSources(transactions)
+    for (const tx of transactions)
+        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").source(tx, types)
     for (const tx of transactions) eachSource(tx, payments, payment => cashWrite(tx, payment, types, tx.isPosted === "Y"))
     return legacyOnly
 }

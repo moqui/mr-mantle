@@ -110,6 +110,71 @@ function gatewayCapable(payment) {
         lib.find("mantle.account.method.PaymentMethod").condition("paymentMethodId", "in", ids).useCache(false).list()
     ).some(method => method.paymentGatewayConfigId || !["PmtBankAccount", "PmtOther"].includes(method.paymentMethodTypeEnumId))
 }
+function hasManualCash(payment) {
+    // A later route configuration does not turn already posted native manual cash into a provider capture.
+    if (
+        payment?.lifecycleManaged !== "Y" ||
+        payment.gatewayRole ||
+        payment.gatewayAttemptId ||
+        payment.gatewayInstructionId ||
+        payment.paymentGatewayConfigId ||
+        !["PmntDelivered", "PmntConfirmed"].includes(payment.statusId)
+    )
+        return false
+    if (lib.find("mantle.account.method.PaymentGatewayResponse", {paymentId: payment.paymentId}).useCache(false).limit(1).one())
+        return false
+    const transactions = Array.from(
+        lib
+            .find("mantle.ledger.transaction.AcctgTrans", {paymentId: payment.paymentId})
+            .condition("acctgTransTypeEnumId", "in", [
+                "AttPayment",
+                "AttDisbursement",
+                "AttReceipt",
+                "AttIncomingPayment",
+                "AttOutgoingPayment"
+            ])
+            .condition("reverseOfAcctgTransId", "is-null", null)
+            .condition("reversedByAcctgTransId", "is-null", null)
+            .useCache(false)
+            .forUpdate(true)
+            .list()
+    )
+    if (transactions.length !== 1) return false
+    const tx = transactions[0],
+        pref = lib.policy.preference(payment.financeOrganizationPartyId)
+    if (
+        tx.isPosted !== "Y" ||
+        tx.glFiscalTypeEnumId !== "GLFT_ACTUAL" ||
+        tx.reverseOfAcctgTransId ||
+        tx.reversedByAcctgTransId ||
+        tx.organizationPartyId !== payment.financeOrganizationPartyId ||
+        tx.amountUomId !== payment.amountUomId ||
+        (pref.errorGlJournalId && tx.glJournalId === pref.errorGlJournalId) ||
+        lib
+            .find("mantle.ledger.transaction.AcctgTrans", {reverseOfAcctgTransId: tx.acctgTransId, isPosted: "Y"})
+            .useCache(false)
+            .forUpdate(true)
+            .limit(1)
+            .one()
+    )
+        return false
+    const entries = Array.from(
+        lib.find("mantle.ledger.transaction.AcctgTransEntry", {acctgTransId: tx.acctgTransId}).useCache(false).forUpdate(true).list()
+    )
+    if (
+        !entries.length ||
+        entries.some(
+            row => !row.glAccountId || !["D", "C"].includes(row.debitCreditFlag) || toDecimal(row.amount || 0).compare(0) < 0
+        )
+    )
+        return false
+    return ["D", "C"].every(flag =>
+        entries
+            .filter(row => row.debitCreditFlag === flag)
+            .reduce((total, row) => total.add(row.amount || 0), toDecimal(0))
+            .eq(payment.amount)
+    )
+}
 function assertAdoptable(payment, lock = false) {
     if (isManaged(payment)) return
     let fence = lib.find(FENCE, {paymentId: payment.paymentId}).useCache(false).one()
@@ -254,6 +319,7 @@ function lockUnmanagedPayments(ids) {
     guard,
     isManaged,
     gatewayCapable,
+    hasManualCash,
     adoptionRefusal,
     assertAdoptable,
     lockUnmanagedPayments,

@@ -115,7 +115,13 @@ function assertGatewaySettlement(records) {
     for (const record of records.filter(row => row.entity === P)) {
         if (record.value.gatewayRole === "authorization")
             denied("GATEWAY_AUTHORIZATION_NOT_CASH", "An authorization instruction cannot enter trade settlement")
-        if (record.value.lifecycleManaged === "Y" && !record.value.gatewayRole && gateway.gatewayCapable(record.value))
+        if (
+            record.value.lifecycleManaged === "Y" &&
+            record.value.paymentTypeEnumId === "PtInvoicePayment" &&
+            !record.value.gatewayRole &&
+            gateway.gatewayCapable(record.value) &&
+            !gateway.hasManualCash(record.value)
+        )
             denied("GATEWAY_CAPTURE_REQUIRED", "Only a completed reviewed provider capture can enter trade settlement")
     }
 }
@@ -243,6 +249,12 @@ function guard(p) {
             denied("APPLICATION_SOURCE_CHANGED", "The financial record scope changed; retry the operation")
         if (initialOrgs.some(org => lib.policy.preference(org).settlementApplicationGuardEnabled === "Y"))
             denied("APPLICATION_SOURCE_CHANGED", "Settlement controls changed; retry the operation")
+        if (
+            ec.resource
+                .script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js")
+                .application({before: original, after: candidate})
+        )
+            denied("APPLICATION_SOURCE_CHANGED", "A reviewed refund changed the financial source; retry the operation")
         return
     }
     // Lock organizations before document and application rows, matching the reviewed settlement writer.
@@ -250,6 +262,9 @@ function guard(p) {
     records = documents(candidate, true)
     const lockedOriginalRecords = original ? documents(original, true) : [],
         financialRecords = [...records, ...lockedOriginalRecords]
+    const refundBacked = ec.resource
+        .script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js")
+        .application({before: original, after: candidate})
     assertGatewaySettlement(records)
     const lockedOrgs = [...new Set(organizations(financialRecords))].sort()
     if (JSON.stringify(lockedOrgs) !== JSON.stringify(initialOrgs))
@@ -263,7 +278,8 @@ function guard(p) {
     if (
         !lockedOrgs.some(org => lib.policy.preference(org).settlementApplicationGuardEnabled === "Y") &&
         !holdOrgs.length &&
-        !gatewayCash
+        !gatewayCash &&
+        !refundBacked
     )
         return
     if (original && !toDecimal(original.amountApplied ?? 0).isZero()) {

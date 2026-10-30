@@ -47,19 +47,28 @@ function guard(p) {
         : values.paymentId
           ? lib.one(P, {paymentId: values.paymentId})
           : null
-    const after = Object.assign({}, lib.map(before), values)
-    if (!before || p.eecaOperation === "delete" || financialFields.some(field => !same(field, before[field], after[field]))) {
-        const legacy = ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
-        for (const id of [...new Set([before?.refundForPaymentId, after.refundForPaymentId].filter(Boolean))]) {
-            if (
-                legacy.isManaged(lib.one(P, {paymentId: id})) &&
-                !/mantle\.account\.PaymentServices\.complete#PaymentGatewayAttempt(?:\b|$)/.test(
-                    ec.artifactExecution.getStackNameString()
-                )
-            )
+    const after = Object.assign({}, lib.map(before), values),
+        financialChanged =
+            !before || p.eecaOperation === "delete" || financialFields.some(field => !same(field, before[field], after[field])),
+        stack = ec.artifactExecution.getStackNameString(),
+        refundController =
+            /mantle\.account\.PaymentServices\.(refund#ReviewedPayment|complete#PaymentGatewayAttempt)(?:\b|$)/.test(stack)
+    if (financialChanged && !refundController) {
+        const legacy = ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js"),
+            originals = [...new Set([before?.refundForPaymentId, after.refundForPaymentId].filter(Boolean))]
+        for (const id of originals)
+            if (legacy.isManaged(lib.one(P, {paymentId: id})))
                 lib.denied("PAYMENT_REFUND_REVIEW_REQUIRED", "Use the reviewed refund workflow for this original payment")
-        }
+        // Raw links need the same sorted source+child boundary as legacy refund wrappers. Lock before the
+        // child-only common path, and re-read provenance so a waited first adoption cannot gain a late link.
+        if (originals.length) legacy.lockUnmanagedPayments([before?.paymentId, after.paymentId, ...originals])
     }
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").payment({
+        before,
+        after,
+        operation: p.eecaOperation,
+        financialChanged
+    })
     if (before?.lifecycleManaged !== "Y" && after.lifecycleManaged !== "Y") {
         if (before && (p.eecaOperation === "delete" || financialFields.some(field => !same(field, before[field], after[field]))))
             ec.resource
@@ -74,14 +83,13 @@ function guard(p) {
     const changed =
         !before || before.lifecycleManaged !== "Y" || financialFields.some(field => !same(field, before[field], after[field]))
     if (!changed) return
-    const stack = ec.artifactExecution.getStackNameString()
     if ([before, after].some(row => row?.gatewayInstructionId || row?.gatewayAttemptId || row?.gatewayRole)) {
         if (!/mantle\.account\.PaymentServices\.complete#PaymentGatewayAttempt(?:\b|$)/.test(stack))
             lib.denied("GATEWAY_PAYMENT_MANAGED", "Use the reviewed provider workflow to change this payment")
         return
     }
     const reviewed =
-        /mantle\.account\.PaymentServices\.(create#PaymentDraft|store#PaymentDraft|change#PaymentState|unapply#ReviewedPayment)(?:\b|$)/.test(
+        /mantle\.account\.PaymentServices\.(create#PaymentDraft|store#PaymentDraft|change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment)(?:\b|$)/.test(
             stack
         )
     if (!reviewed) lib.denied("PAYMENT_REVIEW_REQUIRED", "Use the reviewed payment workflow to change financial details or state")

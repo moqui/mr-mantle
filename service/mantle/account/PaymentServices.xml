@@ -2470,6 +2470,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="maskedMethodRows" type="List"/>
             <parameter name="applicationRows" type="List"/>
             <parameter name="refundRows" type="List"/>
+            <parameter name="refundSummary" type="Map"/>
+            <parameter name="refundDefaults" type="Map"/>
             <parameter name="gatewayRows" type="List"/>
             <parameter name="gatewayInstruction" type="Map"/>
             <parameter name="ledgerRows" type="List"/>
@@ -3288,6 +3290,146 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').freshRead(context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="PaymentRefundSummary" allow-remote="false">
+        <description>Current Treasury-only original-cash refund capacity, actual backing, masked defaults and named incomplete-history reasons.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="refundSummary" type="Map"/>
+            <parameter name="refundDefaults" type="Map"/>
+            <parameter name="capabilities" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').summary(context))</script>
+        </actions>
+    </service>
+    <service verb="find" noun="PaymentRefundDrafts" allow-remote="false">
+        <description>Search eligible scoped opposing clean drafts before count/page and retain selected current revisions independently of search.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="text"/>
+            <parameter name="selectedPaymentIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').findDrafts(context))</script>
+        </actions>
+    </service>
+    <service verb="define" noun="PaymentRefundPreviewResult" type="interface">
+        <description>Retained refund review fields, masked reviewed selections and separately authorized financial plans.</description>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId"/>
+            <parameter name="originalPaymentId"/>
+            <parameter name="refundPaymentId"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="refundSourceVersion"/>
+            <parameter name="previewKind"/>
+            <parameter name="paymentInstrumentEnumId"/>
+            <parameter name="paymentSummary" type="Map"/>
+            <parameter name="refundSummary" type="Map"/>
+            <parameter name="refundDefaults" type="Map"/>
+            <parameter name="reviewedMethods" type="Map"/>
+            <parameter name="before" type="Map"/>
+            <parameter name="after" type="Map"/>
+            <parameter name="applicationEffects" type="List"/>
+            <parameter name="postingSummary" type="Map"/>
+            <parameter name="ledgerPreview" type="List"/>
+            <parameter name="evidenceRows" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="blockers" type="List"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="effectiveDateText"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="reason"/>
+            <parameter name="status"/>
+            <parameter name="operationKey"/>
+            <parameter name="results" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="preview" noun="PaymentRefund" allow-remote="false">
+        <description>Review exact opposite manual cash and consumed original funding without creating cash, applications, outputs or provider requests.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentRefundPreviewResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="sourceVersion" required="true"/>
+            <parameter name="amount" type="BigDecimal" required="true"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="reason" required="true"/>
+            <parameter name="referenceNumber" required="true"/>
+            <parameter name="refundPaymentId"/>
+            <parameter name="refundSourceVersion"/>
+            <parameter name="paymentInstrumentEnumId"/>
+            <parameter name="organizationPaymentMethodId" required="true"/>
+            <parameter name="organizationMethodVersion" required="true"/>
+            <parameter name="counterpartyPaymentMethodId"/>
+            <parameter name="counterpartyMethodVersion"/>
+            <parameter name="evidenceContentIdList" type="List"/>
+            <parameter name="evidenceVersions" type="Map"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').preview(context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="PaymentRefundPreview" allow-remote="false">
+        <description>Reload an owner-bound refund review with its exact reviewed selections and current native authority.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentRefundPreviewResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="previewId" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').getPreview(context))</script>
+        </actions>
+    </service>
+    <service verb="refund" noun="ReviewedPayment" allow-remote="false">
+        <description>Atomically post exact reviewed opposite cash and original funding application once; refuse stale, incomplete, held or unauthorized funding.</description>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="originalPaymentId"/>
+            <parameter name="refundPaymentId"/>
+            <parameter name="paymentApplicationId"/>
+            <parameter name="amount"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="statusId"/>
+            <parameter name="paymentLifecycleEventId"/>
+            <parameter name="applicationResults" type="List"/>
+            <parameter name="acctgTransIds" type="List"/>
+            <parameter name="outputRows" type="List"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').refund(context))</script>
         </actions>
     </service>
 </services>

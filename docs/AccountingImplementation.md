@@ -92,3 +92,22 @@ The final safe identity/recovery DTO corrections pass their focused checks. Fina
 and all 78 browser cases with independent visual review. Implementation commits are Mantle `5c24c2fa` and BOSS
 `4b92e2c`; the app's implementation record retains the detailed verification. Manual/provider refunds
 and transfers remain P5b2b/P5b3; execution pauses after their P5 checkpoint and before P6.
+
+## P5b2b1 manual refunds
+
+Owner-bound reviews and `refund#ReviewedPayment` create opposite cash and its exact original-funding application,
+verify both actual postings, and retain immutable backing, events, evidence and child-owned issued documents in one
+transaction. Partial and multiple customer/supplier refunds use the original logical finance side. Fully allocated
+cash requires a separately reviewed unapplication first. Clean legacy manual cash can adopt under the permanent
+provider fence; verified old refunds without native backing records remain readable and require a separate historical
+review before new native refunds. Malformed financial history is incomplete rather than an invented zero balance.
+
+Common entity/posting boundaries protect the original, refund child and exact funding even with adoption flags N.
+Unrelated invoice allocations may still be unapplied. Manual cash remains manual when a bank later acquires provider
+route metadata; original actual financial provenance governs. A held provider draft is unavailable to lifecycle,
+application and cash-posting writers, including before it receives a gateway role.
+
+Per the user's code-completion priority, this delivery uses independent code review and focused server checks instead
+of further browser/screenshot cycles. The first frozen money/invariant/concurrency/shared-regression gate passes all
+45 cases; the app gate passes 24, including real Treasury/admin money, exact retries and actual child-owned documents.
+The final 25-case gate also passes, including all 21 new native cases; 53 distinct focused native cases pass across the two gates. Acceptance commits are recorded in the app's implementation plan.

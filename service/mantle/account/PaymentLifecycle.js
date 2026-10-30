@@ -63,46 +63,60 @@ function counterparty(p, org) {
         denied("INTERCOMPANY_EXCLUDED", "Internal parties use the transfer or intercompany workflow")
     return party
 }
-function checkedMethod(id, owner, version, currency, date, lock = false) {
-    if (!id || !version) denied("PAYMENT_METHOD_REVIEW_REQUIRED", "Review each chosen payment method")
-    const method = (
-        lock
-            ? find("mantle.account.method.PaymentMethod", {paymentMethodId: id}).forUpdate(true)
-            : find("mantle.account.method.PaymentMethod", {paymentMethodId: id})
-    ).one()
+function validateMethod(method, owner, version, currency, date, identities = null) {
     if (!method || method.ownerPartyId !== owner) denied("PAYMENT_METHOD_UNAVAILABLE", "The chosen payment method is unavailable")
-    if (methodVersion(method) !== version) denied("STALE_PAYMENT_METHOD", "The payment method changed; review it again")
+    if (methodVersion(method, identities || workflow.methodIdentities(method)) !== version)
+        denied("STALE_PAYMENT_METHOD", "The payment method changed; review it again")
     if (!policy.active(method, date)) denied("PAYMENT_METHOD_INACTIVE", "The payment method is not active on the chosen date")
     if (method.currencyUomId !== currency) denied("CURRENCY_MISMATCH", "The payment method currency does not match the payment")
     return method
+}
+function checkedMethod(id, owner, version, currency, date) {
+    if (!id || !version) denied("PAYMENT_METHOD_REVIEW_REQUIRED", "Review each chosen payment method")
+    return validateMethod(
+        find("mantle.account.method.PaymentMethod", {paymentMethodId: id}).one(),
+        owner,
+        version,
+        currency,
+        date
+    )
 }
 function methodEvidence(scope, p, date, lock = false) {
     checkedMethod(p.organizationPaymentMethodId, scope.organizationPartyId, p.organizationMethodVersion, p.currencyUomId, date)
     if (p.counterpartyPaymentMethodId)
         checkedMethod(p.counterpartyPaymentMethodId, p.partyId, p.counterpartyMethodVersion, p.currencyUomId, date)
-    const ids = [p.organizationPaymentMethodId, p.counterpartyPaymentMethodId].filter(Boolean).sort()
+    const ids = [...new Set([p.organizationPaymentMethodId, p.counterpartyPaymentMethodId].filter(Boolean))].sort(),
+        locked = {}
     if (lock)
         for (const id of ids) {
-            const method = find("mantle.account.method.PaymentMethod", {paymentMethodId: id}).forUpdate(true).one()
-            workflow.methodIdentities(method, true)
+            const method = find("mantle.account.method.PaymentMethod", {paymentMethodId: id})
+                .useCache(false)
+                .forUpdate(true)
+                .one()
+            if (!method) denied("PAYMENT_METHOD_UNAVAILABLE", "The chosen payment method is unavailable")
+            locked[id] = {method, identities: workflow.methodIdentities(method, true)}
         }
-    const organizationMethod = checkedMethod(
-            p.organizationPaymentMethodId,
-            scope.organizationPartyId,
-            p.organizationMethodVersion,
-            p.currencyUomId,
-            date,
-            false
-        ),
+    // Financial writes validate and return the same fresh locked values. Ordinary rereads may retain the
+    // transaction's earlier method/subtype snapshot after waiting on a concurrent credential or mapping edit.
+    const selected = (id, owner, version) =>
+            lock
+                ? validateMethod(locked[id].method, owner, version, p.currencyUomId, date, locked[id].identities)
+                : checkedMethod(id, owner, version, p.currencyUomId, date),
+        organizationMethod = selected(p.organizationPaymentMethodId, scope.organizationPartyId, p.organizationMethodVersion),
         counterpartyMethod = p.counterpartyPaymentMethodId
-            ? checkedMethod(p.counterpartyPaymentMethodId, p.partyId, p.counterpartyMethodVersion, p.currencyUomId, date, false)
+            ? selected(p.counterpartyPaymentMethodId, p.partyId, p.counterpartyMethodVersion)
             : null
     return {
         organizationMethod,
         counterpartyMethod,
         versions: {
-            organizationMethodVersion: methodVersion(organizationMethod),
-            counterpartyMethodVersion: counterpartyMethod ? methodVersion(counterpartyMethod) : null
+            organizationMethodVersion: methodVersion(
+                organizationMethod,
+                lock ? locked[organizationMethod.paymentMethodId].identities : null
+            ),
+            counterpartyMethodVersion: counterpartyMethod
+                ? methodVersion(counterpartyMethod, lock ? locked[counterpartyMethod.paymentMethodId].identities : null)
+                : null
         }
     }
 }
@@ -125,6 +139,11 @@ function nativeTransactions(paymentId, org, lock = false) {
 }
 function requireMutable(scope) {
     const r = scope.record
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").assertDraftAvailable({
+        organizationPartyId: scope.organizationPartyId,
+        paymentId: r.paymentId,
+        lock: true
+    })
     ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
     if (!["PmntProposed", "PmntPromised"].includes(r.statusId))
         denied("PAYMENT_STATE_INVALID", "Only a proposed or promised payment can be edited")
@@ -505,6 +524,11 @@ function stateNormalized(p, lock = false) {
     if (p.action === "void") return unapplyNormalized(p, lock, true)
     const scope = paymentScope(p, true, lock),
         r = scope.record
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").assertDraftAvailable({
+        organizationPartyId: scope.organizationPartyId,
+        paymentId: r.paymentId,
+        lock
+    })
     ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
     requireGuard(scope)
     counterparty({partyId: scope.partyId}, scope.organizationPartyId)
@@ -1015,6 +1039,13 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
         ids = voidPayment
             ? positive.map(row => row.paymentApplicationId).sort()
             : [...new Set(Array.from(p.paymentApplicationIdList || []).map(String))].sort()
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").assertCorrection({
+        organizationPartyId: scope.organizationPartyId,
+        paymentId: r.paymentId,
+        voidPayment,
+        paymentApplicationIdList: ids,
+        lock
+    })
     if ((!voidPayment && !ids.length) || ids.length > 200)
         denied("APPLICATION_SELECTION_INVALID", "Select between one and two hundred positive applications")
     const selected = related.filter(row => ids.includes(row.paymentApplicationId))

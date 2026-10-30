@@ -357,7 +357,7 @@ function check(p) {
             )
         // These controllers retain and recheck the complete application/cash plans before posting corrections.
         const paymentReviewed =
-            /mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment|complete#PaymentGatewayAttempt)(?:\b|$)/.test(
+            /mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment|complete#PaymentGatewayAttempt)(?:\b|$)/.test(
                 stack
             )
         if (!reviewed && !source && !paymentReviewed) throw new Error("REVIEW_REQUIRED: Use a reviewed posting operation")

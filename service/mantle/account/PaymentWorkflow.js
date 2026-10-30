@@ -754,6 +754,7 @@ function paymentCapabilities(scope, applicationRows = [], posted = false) {
         canGatewayRelease: false,
         canGatewayRefund: false,
         canRefund: false,
+        canPreviewRefund: false,
         canTransfer: false,
         reasons: scope.guardEnabled ? [] : ["SETTLEMENT_GUARD_REQUIRED"],
         unavailableReason: "PAYMENT_SLICE_UNAVAILABLE"
@@ -1273,6 +1274,29 @@ function paymentDetail(p) {
         out.gatewayRows = ec.resource
             .script("component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js")
             .findTransactions({organizationPartyId: scope.organizationPartyId, paymentId: record.paymentId, pageSize: 100}).rows
+    }
+    if (
+        capabilities.canReadGateway &&
+        record.paymentTypeEnumId === "PtInvoicePayment" &&
+        !record.refundForPaymentId &&
+        record.gatewayRole !== "authorization" &&
+        ["PmntDelivered", "PmntConfirmed"].includes(record.statusId)
+    ) {
+        const refunds = ec.resource
+            .script("component://mr-mantle/service/mantle/account/PaymentRefunds.js")
+            .summary({organizationPartyId: scope.organizationPartyId, paymentId: record.paymentId})
+        out.refundSummary = refunds.refundSummary
+        out.refundDefaults = refunds.refundDefaults
+        Object.assign(
+            capabilities,
+            lib.policy.pick(refunds.capabilities, [
+                "canPreviewRefund",
+                "canRefund",
+                "canGatewayRefund",
+                "refundUnavailableReason"
+            ])
+        )
+        capabilities.refundReasons = refunds.capabilities.reasons
     }
     if (scope.broad && has("PAYMENT_EDIT")) {
         const evidence = ec.resource
