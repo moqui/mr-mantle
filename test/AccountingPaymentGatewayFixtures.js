@@ -17,7 +17,15 @@ function fixtures(prefix) {
         reviewedGuaranteesJson: JSON.stringify({
             authorize: {enabled: true, idempotent: true, exactLookup: true, reviewedMethodSnapshot: true},
             capture: {enabled: true, idempotent: true, exactLookup: true, partialCapture: true, reviewedMethodSnapshot: true},
-            release: {enabled: true, idempotent: true, exactLookup: true, releaseRemaining: true, reviewedMethodSnapshot: true}
+            release: {enabled: true, idempotent: true, exactLookup: true, releaseRemaining: true, reviewedMethodSnapshot: true},
+            refund: {
+                enabled: true,
+                idempotent: true,
+                exactLookup: true,
+                originalCaptureOnly: true,
+                partialRefund: true,
+                reviewedMethodSnapshot: true
+            }
         })
     })
     call("create#mantle.account.method.PaymentGatewayOrganization", {

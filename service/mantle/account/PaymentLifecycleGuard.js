@@ -39,6 +39,75 @@ function same(field, before, after) {
     if (field.endsWith("Date")) return lib.ms(before) === lib.ms(after)
     return String(before ?? "") === String(after ?? "")
 }
+function refundDraftAdoption(before, after) {
+    const controller = ec.artifactExecution
+        .getStackNameString()
+        .split(", ")
+        .find(name => name.startsWith("mantle.account.PaymentServices."))
+    if (controller !== "mantle.account.PaymentServices.reserve#PaymentGatewayAction") return false
+    const provenance = new Set(["lifecycleManaged", "financeOrganizationPartyId", "financeDirection"])
+    if (
+        !before ||
+        before.lifecycleManaged === "Y" ||
+        after.lifecycleManaged !== "Y" ||
+        !["PmntProposed", "PmntPromised"].includes(before.statusId) ||
+        before.paymentTypeEnumId !== "PtInvoicePayment" ||
+        before.refundForPaymentId ||
+        financialFields.some(field => !provenance.has(field) && !same(field, before[field], after[field]))
+    )
+        return false
+    const attempt = lib
+        .find("mantle.account.payment.PaymentGatewayAttempt", {
+            refundDraftPaymentId: after.paymentId,
+            action: "refund",
+            providerState: "reserved",
+            financialState: "none"
+        })
+        .useCache(false)
+        .forUpdate(true)
+        .one()
+    const preview =
+        attempt &&
+        lib
+            .find("mantle.account.payment.PaymentGatewayPreview", {previewId: attempt.previewId})
+            .useCache(false)
+            .forUpdate(true)
+            .one()
+    let reviewed = {}
+    try {
+        reviewed = JSON.parse(preview?.requestJson || "{}")
+    } catch (_) {
+        return false
+    }
+    if (
+        !preview ||
+        preview.userId !== ec.user.userId ||
+        preview.organizationPartyId !== attempt.organizationPartyId ||
+        preview.paymentId !== attempt.paymentId ||
+        preview.action !== "refund" ||
+        reviewed.refundPaymentId !== after.paymentId ||
+        reviewed.refundSourceVersion !==
+            ec.resource.script("component://mr-mantle/service/mantle/account/PaymentWorkflow.js").paymentVersion(before)
+    )
+        return false
+    const original = attempt && lib.find(P, {paymentId: attempt.paymentId}).useCache(false).forUpdate(true).one()
+    if (
+        !attempt ||
+        !original ||
+        attempt.userId !== ec.user.userId ||
+        attempt.organizationPartyId !== after.financeOrganizationPartyId ||
+        original.lifecycleManaged !== "Y" ||
+        original.gatewayRole !== "capture" ||
+        original.financeOrganizationPartyId !== attempt.organizationPartyId ||
+        original.financeDirection !== after.financeDirection ||
+        original.fromPartyId !== after.toPartyId ||
+        original.toPartyId !== after.fromPartyId ||
+        original.amountUomId !== after.amountUomId ||
+        attempt.currencyUomId !== after.amountUomId
+    )
+        return false
+    return true
+}
 function guard(p) {
     ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const values = lib.map(p.entityValue || p)
@@ -88,6 +157,7 @@ function guard(p) {
             lib.denied("GATEWAY_PAYMENT_MANAGED", "Use the reviewed provider workflow to change this payment")
         return
     }
+    if (refundDraftAdoption(before, after)) return
     const reviewed =
         /mantle\.account\.PaymentServices\.(create#PaymentDraft|store#PaymentDraft|change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment)(?:\b|$)/.test(
             stack

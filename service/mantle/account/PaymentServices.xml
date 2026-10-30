@@ -2903,6 +2903,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sourceMethodVersion"/>
             <parameter name="destinationMethodVersion"/>
             <parameter name="credentialSnapshot" type="Map"/>
+            <parameter name="originalCapture" type="Map"/>
             <parameter name="amount" type="BigDecimal" required="true"/>
             <parameter name="currencyUomId" required="true"/>
         </in-parameters>
@@ -2936,6 +2937,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="financialOnly" type="Boolean"/>
             <parameter name="organizationPartyId"/>
             <parameter name="paymentId"/>
+            <parameter name="originalPaymentId"/>
+            <parameter name="refundPaymentId"/>
+            <parameter name="refundSourceVersion"/>
+            <parameter name="draftClaim" type="Map"/>
             <parameter name="action"/>
             <parameter name="sourceVersion"/>
             <parameter name="attemptVersion"/>
@@ -2947,6 +2952,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="referenceNumber"/>
             <parameter name="paymentSummary" type="Map"/>
             <parameter name="gatewaySummary" type="Map"/>
+            <parameter name="refundSummary" type="Map"/>
             <parameter name="before" type="Map"/>
             <parameter name="after" type="Map"/>
             <parameter name="reservationEffects" type="List"/>
@@ -2989,7 +2995,7 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
     <service verb="preview" noun="PaymentGatewayAction" allow-remote="false">
-        <description>Review authorization, partial capture or release without contacting a provider or creating cash.</description>
+        <description>Review authorization, partial capture, release or original-reference refund without contacting a provider or creating cash.</description>
         <implements service="mantle.account.PaymentServices.define#PaymentGatewayPreviewResult"/>
         <in-parameters>
             <parameter name="organizationPartyId" required="true"/>
@@ -3003,6 +3009,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="paymentGatewayConfigId"/>
             <parameter name="gatewayBindingVersion"/>
             <parameter name="parentAttemptId"/>
+            <parameter name="refundPaymentId"/>
+            <parameter name="refundSourceVersion"/>
             <parameter name="evidenceContentIdList" type="List"/>
             <parameter name="evidenceVersions" type="Map"/>
         </in-parameters>
@@ -3030,6 +3038,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="organizationPartyId"/>
             <parameter name="paymentId"/>
             <parameter name="cashPaymentId"/>
+            <parameter name="originalPaymentId"/>
+            <parameter name="refundPaymentId"/>
+            <parameter name="draftClaim" type="Map"/>
             <parameter name="paymentLifecycleEventId"/>
             <parameter name="action"/>
             <parameter name="outcome"/>
@@ -3048,6 +3059,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="capabilities" type="Map"/>
             <parameter name="paymentSummary" type="Map"/>
             <parameter name="gatewaySummary" type="Map"/>
+            <parameter name="refundSummary" type="Map"/>
         </out-parameters>
     </service>
     <service verb="get" noun="PaymentGatewayAttempt" allow-remote="false">

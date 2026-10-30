@@ -10,7 +10,7 @@ function request(p) {
         p.merchantNamespace !== config.reviewedMerchantNamespace ||
         p.adapterVersion !== config.reviewedAdapterVersion ||
         !p.providerOperationId ||
-        !["authorize", "capture", "release"].includes(p.action)
+        !["authorize", "capture", "release", "refund"].includes(p.action)
     )
         throw new Error("TEST_PROVIDER_IDENTITY_INVALID: The deterministic provider requires its provisioned namespace")
     return {
@@ -21,6 +21,7 @@ function request(p) {
         paymentId: p.paymentId,
         action: p.action,
         parentProviderReference: p.parentProviderReference || null,
+        originalCapture: p.originalCapture || null,
         sourcePaymentMethodId: p.sourcePaymentMethodId || null,
         destinationPaymentMethodId: p.destinationPaymentMethodId || null,
         sourceMethodVersion: p.sourceMethodVersion || null,
@@ -88,10 +89,38 @@ function record(p) {
 }
 function invoke(p) {
     request(p)
-    for (const [side, id, version] of [
-        ["source", p.sourcePaymentMethodId, p.sourceMethodVersion],
-        ["destination", p.destinationPaymentMethodId, p.destinationMethodVersion]
-    ]) {
+    if (p.action === "refund") {
+        const original = p.originalCapture,
+            effect =
+                original &&
+                lib
+                    .find(EFFECT, {
+                        providerOperationId: original.providerOperationId,
+                        merchantNamespace: p.merchantNamespace,
+                        action: "capture",
+                        outcome: "accepted"
+                    })
+                    .useCache(false)
+                    .one()
+        if (
+            !effect ||
+            original.paymentId !== p.paymentId ||
+            original.providerReference !== p.parentProviderReference ||
+            effect.providerReference !== p.parentProviderReference ||
+            effect.currencyUomId !== p.currencyUomId ||
+            toDecimal(p.amount).compare(effect.amount) > 0 ||
+            p.credentialSnapshot
+        )
+            throw new Error(
+                "TEST_PROVIDER_REFUND_REFERENCE_INVALID: Refund requires its original capture reference and no mutable credential snapshot"
+            )
+    }
+    for (const [side, id, version] of p.action === "refund"
+        ? []
+        : [
+              ["source", p.sourcePaymentMethodId, p.sourceMethodVersion],
+              ["destination", p.destinationPaymentMethodId, p.destinationMethodVersion]
+          ]) {
         const snapshot = p.credentialSnapshot?.[side]
         if ((id && (!version || !snapshot || snapshot.method?.paymentMethodId !== id)) || (!id && snapshot))
             throw new Error("TEST_PROVIDER_SNAPSHOT_REQUIRED: Invocation requires native reviewed method snapshots")

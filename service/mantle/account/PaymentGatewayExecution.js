@@ -7,8 +7,10 @@ const isolation = ec.resource.script("component://mr-mantle/service/mantle/accou
 const {lib, P} = workflow
 const {find, one, rows, map, call, hash, policy, denied} = lib
 const {PREVIEW, INSTRUCTION, ATTEMPT, RESERVATION, RESPONSE, CONFIG, BINDING} = gateway
-const operations = {authorize: "PgoAuthorize", capture: "PgoCapture", release: "PgoRelease"}
+const operations = {authorize: "PgoAuthorize", capture: "PgoCapture", release: "PgoRelease", refund: "PgoRefund"}
 const namespace = "mantle.account.PaymentServices."
+const refundGateway = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js")
+const refunds = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefunds.js")
 function json(value) {
     try {
         return JSON.parse(value || "{}")
@@ -149,7 +151,10 @@ function reserve(p) {
     if (instruction.instructionId !== row.instructionId) denied("STALE_PREVIEW", "The payment acquired another instruction")
     const attemptId = row.attemptId,
         token = ec.user.randomString(40),
-        parent = n.request.parentAttemptId && one(ATTEMPT, {attemptId: n.request.parentAttemptId}),
+        parent =
+            n.request.action === "refund"
+                ? n.capture
+                : n.request.parentAttemptId && one(ATTEMPT, {attemptId: n.request.parentAttemptId}),
         responseId = ec.user.randomString(32),
         cashPaymentId = n.request.action === "capture" ? ec.user.randomString(32) : null
     call("create#" + ATTEMPT, {
@@ -158,7 +163,8 @@ function reserve(p) {
         paymentId: row.paymentId,
         partyId: n.scope.partyId,
         instructionId: instruction.instructionId,
-        parentAttemptId: n.request.parentAttemptId,
+        parentAttemptId: n.request.action === "refund" ? n.capture.attemptId : n.request.parentAttemptId,
+        refundDraftPaymentId: n.request.action === "refund" ? n.request.refundPaymentId : null,
         previewId: row.previewId,
         paymentGatewayResponseId: responseId,
         userId: ec.user.userId,
@@ -180,7 +186,7 @@ function reserve(p) {
         guaranteesJson: JSON.stringify(n.binding.declared),
         providerOperationId: ec.user.randomString(32),
         parentProviderReference: parent?.providerReference || null,
-        providerState: "dispatched",
+        providerState: n.request.action === "refund" ? "reserved" : "dispatched",
         financialState: "none",
         dispatchToken: token,
         leaseExpiresDate: Number(ec.user.nowTimestamp) + 300000,
@@ -191,14 +197,20 @@ function reserve(p) {
         createdDate: ec.user.nowTimestamp,
         dispatchedDate: ec.user.nowTimestamp
     })
+    if (n.request.action === "refund" && n.linked) {
+        const version = refundGateway.claim(find(ATTEMPT, {attemptId}).useCache(false).forUpdate(true).one(), n)
+        update(find(ATTEMPT, {attemptId}).useCache(false).forUpdate(true).one(), {refundDraftVersion: version})
+    }
+    if (n.request.action === "refund")
+        update(find(ATTEMPT, {attemptId}).useCache(false).forUpdate(true).one(), {providerState: "dispatched"})
     call("create#" + RESERVATION, {
         reservationId: ec.user.randomString(32),
         organizationPartyId: n.scope.organizationPartyId,
         attemptId,
         instructionId: instruction.instructionId,
         paymentId: row.paymentId,
-        sourceKind: "authorization",
-        sourceId: instruction.instructionId,
+        sourceKind: n.request.action === "refund" ? "capture" : "authorization",
+        sourceId: n.request.action === "refund" ? n.capture.attemptId : instruction.instructionId,
         holdKind: n.request.action === "authorize" ? "authorization" : n.request.action,
         amount: n.request.amount,
         currencyUomId: n.scope.record.amountUomId,
@@ -206,6 +218,22 @@ function reserve(p) {
         status: "held",
         createdDate: ec.user.nowTimestamp
     })
+    if (n.request.action === "refund")
+        call("create#" + RESERVATION, {
+            reservationId: ec.user.randomString(32),
+            organizationPartyId: n.scope.organizationPartyId,
+            attemptId,
+            instructionId: instruction.instructionId,
+            paymentId: row.paymentId,
+            sourceKind: "payment",
+            sourceId: row.paymentId,
+            holdKind: "cash",
+            amount: n.request.amount,
+            currencyUomId: n.scope.record.amountUomId,
+            accountingDate: n.request._accountingDay,
+            status: "held",
+            createdDate: ec.user.nowTimestamp
+        })
     // Every dispatched request has a durable response identity, including pending/uncertain work with no receipt yet.
     call("create#" + RESPONSE, {
         paymentGatewayResponseId: responseId,
@@ -251,6 +279,7 @@ function providerRequest(attempt) {
         destinationPaymentMethodId: incoming ? methods.organizationPaymentMethodId : methods.counterpartyPaymentMethodId,
         sourceMethodVersion: incoming ? methods.counterpartyMethodVersion : methods.organizationMethodVersion,
         destinationMethodVersion: incoming ? methods.organizationMethodVersion : methods.counterpartyMethodVersion,
+        originalCapture: request._capture || null,
         amount: attempt.amount,
         currencyUomId: attempt.currencyUomId
     }
@@ -297,6 +326,24 @@ function prepareDispatch(p) {
     const original = one(PREVIEW, {previewId: r.row.previewId}),
         request = original && json(original.requestJson)
     if (!request?._methods) denied("GATEWAY_EVIDENCE_UNAVAILABLE", "Original reviewed method identities are unavailable")
+    if (r.row.action === "refund") {
+        gateway.assertAction(
+            {declared: gateway.guarantees(one(CONFIG, {paymentGatewayConfigId: r.row.paymentGatewayConfigId}))},
+            "refund",
+            true
+        )
+        const c = refundGateway.capture(r.scope, true)
+        if (
+            c.attemptId !== r.row.parentAttemptId ||
+            c.providerReference !== r.row.parentProviderReference ||
+            c.merchantNamespace !== r.row.merchantNamespace
+        )
+            denied("GATEWAY_REFUND_SOURCE_INVALID", "Refund reference no longer matches original capture")
+        return {
+            adapterServiceName: r.row.operationServiceName,
+            adapterRequest: Object.assign(providerRequest(r.row), {credentialSnapshot: null})
+        }
+    }
     const methods = request._methods,
         sides = [
             {
@@ -367,7 +414,21 @@ function lockEvidenceAttempt(p) {
     if (!attempt) denied("GATEWAY_ATTEMPT_UNAVAILABLE", "The provider attempt is unavailable")
     // This internal evidence stage persists the actual provider result even if caller permissions changed during I/O.
     find("mantle.party.Party", {partyId: attempt.organizationPartyId}).forUpdate(true).one()
-    find(P, {paymentId: attempt.paymentId}).forUpdate(true).one()
+    const ids =
+        attempt.action === "refund"
+            ? [
+                  ...new Set(
+                      [
+                          attempt.paymentId,
+                          attempt.refundDraftPaymentId,
+                          ...Array.from(find(P, {refundForPaymentId: attempt.paymentId}).useCache(false).list()).map(
+                              row => row.paymentId
+                          )
+                      ].filter(Boolean)
+                  )
+              ].sort()
+            : [attempt.paymentId]
+    Array.from(find(P).condition("paymentId", "in", ids).orderBy("paymentId").useCache(false).forUpdate(true).list())
     find(INSTRUCTION, {instructionId: attempt.instructionId}).forUpdate(true).one()
     attempt = find(ATTEMPT, {attemptId: attempt.attemptId}).forUpdate(true).useCache(false).one()
     return attempt
@@ -491,6 +552,7 @@ function record(p) {
     if (result.providerState === "declined")
         for (const hold of find(RESERVATION, {attemptId: attempt.attemptId, status: "held"}).forUpdate(true).list())
             update(hold, {status: "released"})
+    if (attempt.action === "refund" && result.providerState === "declined") refundGateway.releaseClaim(attempt, "released")
     if (attempt.action === "authorize" && result.providerState === "declined")
         update(one(INSTRUCTION, {instructionId: attempt.instructionId}), {state: "declined"})
     persistVisibleResult(attempt)
@@ -537,6 +599,23 @@ function claimLookup(p) {
     return {attemptId: r.row.attemptId, token, shouldLookup: true, alreadyApplied: false}
 }
 function financialPlan(attempt, scope, lock = false) {
+    if (attempt.action === "refund") {
+        const original = one(PREVIEW, {previewId: attempt.previewId}),
+            request = original && json(original.requestJson)
+        if (
+            !request ||
+            gateway.financialSource(scope.record) !== attempt.financialSourceHash ||
+            request._financialSourceHash !== attempt.financialSourceHash ||
+            !toDecimal(request.amount).eq(attempt.amount) ||
+            request._accountingDay !== policy.calendarDateText(attempt.accountingDate)
+        )
+            denied("GATEWAY_SOURCE_CHANGED", "The accepted refund source or money changed")
+        refundGateway.held(attempt, lock)
+        const n = refundGateway.normalized(request, lock, attempt, decodeEvidence(attempt))
+        // Fresh financial policy/plans are compared against the immutable original review below. Preserve
+        // that original request separately; replacing its private plans here would compare fresh with fresh.
+        return Object.assign(n, {original, request})
+    }
     const preview = one(PREVIEW, {previewId: attempt.previewId}),
         request = preview && json(preview.requestJson)
     if (
@@ -587,14 +666,18 @@ function previewRecovery(p) {
     if (r.row.providerState !== "accepted" || r.row.financialState !== "accepted_unposted")
         denied("GATEWAY_RECOVERY_UNAVAILABLE", "Only accepted unposted provider work needs financial recovery")
     const ownHolds = rows(RESERVATION, {attemptId: r.row.attemptId, status: "held"})
-    if (ownHolds.length !== 1 || !toDecimal(ownHolds[0].amount).eq(r.row.amount))
+    if (
+        ownHolds.length !== (r.row.action === "refund" ? 2 : 1) ||
+        ownHolds.some(hold => !toDecimal(hold.amount).eq(r.row.amount))
+    )
         denied("GATEWAY_HOLD_UNAVAILABLE", "The accepted operation has no exact capacity hold")
     const reason = String(p.reason || "").trim()
     if (!reason || reason.length > 4000) denied("GATEWAY_REASON_REQUIRED", "Enter the financial recovery reason")
     const n = financialPlan(r.row, r.scope),
         previewId = ec.user.randomString(32),
         originalPayload = json(n.original.payloadJson),
-        before = gateway.instructionSummary(gateway.instructionFor(r.scope.record)),
+        before =
+            r.row.action === "refund" ? n.payload.before : gateway.instructionSummary(gateway.instructionFor(r.scope.record)),
         adjusted = Object.assign(
             {},
             before,
@@ -614,16 +697,21 @@ function previewRecovery(p) {
             financialOnly: true,
             reason,
             before,
-            after: Object.assign(gateway.plannedCapacity(adjusted, r.row.action, toDecimal(r.row.amount), r.row.currencyUomId), {
-                assumption: "localCompleted"
-            }),
+            after: Object.assign(
+                r.row.action === "refund"
+                    ? n.payload.after
+                    : gateway.plannedCapacity(adjusted, r.row.action, toDecimal(r.row.amount), r.row.currencyUomId),
+                {
+                    assumption: "localCompleted"
+                }
+            ),
             reservationEffects: (originalPayload.reservationEffects || []).map(row =>
                 Object.assign({}, row, {status: "consumed", effect: "consumeExistingHold"})
             ),
             ledgerPreview: n.plans,
             postingSummary: {
-                cashPostingCount: n.plans.length,
-                applicationPostingCount: 0,
+                cashPostingCount: r.row.action === "refund" ? 1 : n.plans.length,
+                applicationPostingCount: r.row.action === "refund" ? 1 : 0,
                 effect: "Complete the accepted provider operation locally; no provider request"
             }
         }),
@@ -697,9 +785,54 @@ function complete(p) {
         denied("GATEWAY_RECEIPT_MISMATCH", "The accepted provider receipt is inconsistent")
     const instruction = find(INSTRUCTION, {instructionId: attempt.instructionId}).forUpdate(true).one(),
         held = Array.from(find(RESERVATION, {attemptId: attempt.attemptId, status: "held"}).forUpdate(true).list())
-    if (!instruction || held.length !== 1 || !toDecimal(held[0].amount).eq(attempt.amount))
+    if (
+        !instruction ||
+        held.length !== (attempt.action === "refund" ? 2 : 1) ||
+        held.some(hold => !toDecimal(hold.amount).eq(attempt.amount))
+    )
         denied("GATEWAY_HOLD_UNAVAILABLE", "The accepted operation has no exact durable capacity hold")
     for (const hold of held) update(hold, {status: "consumed", consumedDate: ec.user.nowTimestamp})
+    if (attempt.action === "refund") {
+        refundGateway.releaseClaim(attempt, "consumed")
+        const cashPaymentId = attempt.refundDraftPaymentId || ec.user.randomString(32)
+        update(attempt, {cashPaymentId})
+        // Consuming both own holds in this transaction exposes only this exact reserved amount. Other holds
+        // remain in the authoritative availability calculation; no caller-supplied exclusion is accepted.
+        const available = refunds.funding(retained.scope, true)
+        if (toDecimal(attempt.amount).compare(available.refundable) > 0)
+            denied("REFUND_FUNDS_UNAVAILABLE", "Reserved refund cash is no longer available")
+        n.funding = available
+        const money = refunds.completeMoney(n, cashPaymentId, op, attempt),
+            result = Object.assign({}, money, {
+                attemptId: attempt.attemptId,
+                providerOperationId: attempt.providerOperationId,
+                organizationPartyId: attempt.organizationPartyId,
+                paymentId: attempt.paymentId,
+                originalPaymentId: attempt.paymentId,
+                cashPaymentId,
+                refundPaymentId: cashPaymentId,
+                action: "refund",
+                outcome: "completed",
+                providerState: "accepted",
+                financialState: "completed",
+                reasonCode: "GATEWAY_COMPLETED"
+            })
+        update(attempt, {
+            financialState: "completed",
+            completedDate: ec.user.nowTimestamp,
+            reasonCode: "GATEWAY_COMPLETED",
+            errorMessage: null,
+            resultJson: JSON.stringify(result)
+        })
+        update(review, {
+            status: "complete",
+            operationKey: review.previewKind === "gatewayRecovery" ? op.operationKey : attempt.operationKey,
+            resultJson: JSON.stringify(result)
+        })
+        persistVisibleResult(attempt)
+        lib.complete(op, ATTEMPT, attempt.attemptId, Object.assign({}, result, {operationKey: op.operationKey}))
+        return gateway.projectResult(Object.assign({}, result, {operationKey: op.operationKey}), retained.scope)
+    }
     let actualScope = retained.scope,
         acctgTransIds = [],
         outputRows = []

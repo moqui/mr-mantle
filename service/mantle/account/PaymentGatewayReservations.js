@@ -6,7 +6,13 @@ function cashHoldSummaries(p) {
     if (ids.length > 400) lib.denied("GATEWAY_SELECTION_LIMIT", "Read cash holds in bounded payment batches")
     if (!ids.length) return {}
     const payments = Array.from(
-            lib.find("mantle.account.payment.Payment").condition("paymentId", "in", ids).useCache(false).list()
+            lib
+                .find("mantle.account.payment.Payment")
+                .condition("paymentId", "in", ids)
+                .orderBy("paymentId")
+                .useCache(false)
+                .forUpdate(p.lock === true)
+                .list()
         ),
         records = Array.from(
             lib
@@ -14,6 +20,7 @@ function cashHoldSummaries(p) {
                 .condition("paymentId", "in", ids)
                 .useCache(false)
                 .orderBy("reservationId")
+                .forUpdate(p.lock === true)
                 .list()
         ),
         out = {}
@@ -59,6 +66,8 @@ function cashHoldSummaries(p) {
     return out
 }
 function cashHoldSummary(p) {
-    return cashHoldSummaries({organizationPartyId: p.organizationPartyId, paymentIdList: [p.paymentId]})[p.paymentId]
+    return cashHoldSummaries({organizationPartyId: p.organizationPartyId, paymentIdList: [p.paymentId], lock: p.lock === true})[
+        p.paymentId
+    ]
 }
 ;({cashHoldSummary, cashHoldSummaries})

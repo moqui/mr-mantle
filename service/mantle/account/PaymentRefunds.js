@@ -235,7 +235,7 @@ function funding(scope, lock = false) {
         totals = workflow.paymentTotals(r, apps),
         holds = ec.resource
             .script("component://mr-mantle/service/mantle/account/PaymentGatewayReservations.js")
-            .cashHoldSummary({organizationPartyId: scope.organizationPartyId, paymentId: r.paymentId}),
+            .cashHoldSummary({organizationPartyId: scope.organizationPartyId, paymentId: r.paymentId, lock}),
         refunds = Array.from(
             find(P, {refundForPaymentId: r.paymentId}).orderBy("paymentId").useCache(false).forUpdate(lock).limit(10001).list()
         )
@@ -538,7 +538,11 @@ function capabilities(scope, summary) {
     return {
         canPreviewRefund: canPreview,
         canRefund: canPreview && financialWriterAvailable,
-        canGatewayRefund: false,
+        canGatewayRefund:
+            scope.record.gatewayRole === "capture" && summary.complete
+                ? ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js").capabilities(scope)
+                      .canGatewayRefund
+                : false,
         canReadLedger: workflow.ledgerRead(),
         guardEnabled: scope.guardEnabled,
         reasons,
@@ -549,7 +553,11 @@ function summary(p) {
     const scope = scopeFor(p)
     let result
     try {
-        result = funding(scope).summary
+        result =
+            scope.record.gatewayRole === "capture"
+                ? ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js").summary(scope)
+                      .summary
+                : funding(scope).summary
     } catch (error) {
         ec.logger.error("Refund summary original " + scope.record.paymentId + ": " + error.message)
         result = {
@@ -564,7 +572,7 @@ function summary(p) {
     }
     let refundDefaults = {}
     try {
-        refundDefaults = defaults(scope)
+        refundDefaults = scope.record.gatewayRole === "capture" ? {} : defaults(scope)
     } catch (error) {
         ec.logger.error("Refund default methods for original " + scope.record.paymentId + ": " + error.message)
         result.errors.push({reasonCode: "REFUND_DEFAULTS_UNAVAILABLE"})
@@ -698,7 +706,7 @@ function findDrafts(p) {
         {rows: page.rows.map(project), selectedRows: selected.map(project), complete: true, errors: []}
     )
 }
-function draft(scope, p, lock = false) {
+function draft(scope, p, lock = false, claimAttemptId = null) {
     if (!p.refundPaymentId) return null
     const candidate = scopeFor({organizationPartyId: scope.organizationPartyId, paymentId: p.refundPaymentId}, true, lock)
     if (!p.refundSourceVersion || workflow.paymentVersion(candidate.record) !== p.refundSourceVersion)
@@ -718,8 +726,8 @@ function draft(scope, p, lock = false) {
         legacy.adoptionRefusal(row)
     )
         denied("REFUND_DRAFT_UNAVAILABLE", "Select an opposing clean manual draft in the original currency")
-    if (heldDraftClaim({paymentId: row.paymentId, organizationPartyId: scope.organizationPartyId, lock}))
-        denied("REFUND_DRAFT_CLAIMED", "This draft is held by a provider refund")
+    const claim = heldDraftClaim({paymentId: row.paymentId, organizationPartyId: scope.organizationPartyId, lock})
+    if (claim && claim.attemptId !== claimAttemptId) denied("REFUND_DRAFT_CLAIMED", "This draft is held by a provider refund")
     if (
         applications([row.paymentId], lock).length ||
         find(TX)
@@ -741,16 +749,16 @@ function draft(scope, p, lock = false) {
         denied("REFUND_DRAFT_UNAVAILABLE", "The refund draft already has financial or provider history")
     return candidate
 }
-function normalized(p, lock = false) {
+function normalized(p, lock = false, provider = null) {
     const scope = scopeFor(p, true, lock),
         r = scope.record
     lifecycle.requireGuard(scope)
     if (r.amountUomId !== policy.preference(scope.organizationPartyId).baseCurrencyUomId)
         denied("CURRENCY_MISMATCH", "Refunds require the organization's adopted base currency")
     eligibility(scope)
-    if (providerBacked(scope))
+    if (!provider && providerBacked(scope))
         denied("GATEWAY_REFUND_REQUIRED", "Provider-backed cash requires its original provider refund workflow")
-    legacy.assertAdoptable(r)
+    if (!provider) legacy.assertAdoptable(r)
     const f = funding(scope, lock)
     if (f.unrecordedRefunds.length)
         denied(
@@ -768,19 +776,19 @@ function normalized(p, lock = false) {
     if (!amount || amount.compare(0) <= 0) denied("AMOUNT_INVALID", "Enter a positive refund amount")
     if (!amount.eq(ec.l10n.roundCurrency(amount, r.amountUomId)))
         denied("CURRENCY_PRECISION", "The refund exceeds currency precision")
-    if (amount.compare(f.refundable) > 0)
+    if (!provider?.reserved && amount.compare(f.refundable) > 0)
         denied("REFUND_FUNDS_UNAVAILABLE", "The refund exceeds currently available unreserved original cash")
     const date = settlement.dateInput(p.effectiveDate, p._accountingDay || null)
     if (date.day < f.cash.postingDay)
         denied("REFUND_BEFORE_ORIGINAL_CASH", "The refund day cannot precede original actual cash posting")
-    const linked = draft(scope, p, lock),
+    const linked = provider && Object.prototype.hasOwnProperty.call(provider, "linked") ? provider.linked : draft(scope, p, lock),
         instrument =
             p.paymentInstrumentEnumId || linked?.record.paymentInstrumentEnumId || defaults(scope).paymentInstrumentEnumId
-    if (!workflow.manualInstruments.includes(instrument) || ["PiWriteOff", "PiDiscount"].includes(instrument))
+    if (!provider && (!workflow.manualInstruments.includes(instrument) || ["PiWriteOff", "PiDiscount"].includes(instrument)))
         denied("REFUND_INSTRUMENT_UNAVAILABLE", "Choose a manual cash refund instrument")
     const referenceNumber = String(p.referenceNumber || "").trim(),
         reason = String(p.reason || "").trim()
-    if (!referenceNumber || referenceNumber.length > 60 || !reason || reason.length > 4000)
+    if ((!provider && !referenceNumber) || referenceNumber.length > 60 || !reason || reason.length > 4000)
         denied("PAYMENT_EVIDENCE_REQUIRED", "Enter a human reference and reason for the refund")
     const requestMethods = {
             partyId: scope.partyId,
@@ -790,7 +798,7 @@ function normalized(p, lock = false) {
             counterpartyPaymentMethodId: p.counterpartyPaymentMethodId || null,
             counterpartyMethodVersion: p.counterpartyMethodVersion || null
         },
-        methods = lifecycle.methodEvidence(scope, requestMethods, date.timestamp, lock)
+        methods = provider?.methods || lifecycle.methodEvidence(scope, requestMethods, date.timestamp, lock)
     const outgoing = scope.cashDirection === "incoming",
         refund = Object.assign({}, map(r), {
             paymentId: linked?.record.paymentId || null,
@@ -841,7 +849,10 @@ function normalized(p, lock = false) {
             plans,
             lock
         ),
-        evidence = lifecycle.selectedEvidence(scope, p, lock),
+        evidence =
+            provider && Object.prototype.hasOwnProperty.call(provider, "evidence")
+                ? provider.evidence
+                : lifecycle.selectedEvidence(scope, p, lock),
         names = lib.partyNames([scope.partyId, scope.organizationPartyId]),
         after = Object.assign({}, f.summary, {
             completedRefundAmount: String(f.completed.add(amount)),
@@ -1185,6 +1196,35 @@ function refund(p) {
         n.scope.record.update()
     }
     const refundPaymentId = row.refundPaymentId,
+        result = completeMoney(n, refundPaymentId, op)
+    row.set("status", "complete")
+    row.set("operationKey", operationKey)
+    row.set("resultJson", JSON.stringify(result))
+    row.update()
+    lib.complete(op, RECORD, refundPaymentId, result)
+    return projectResult(result, scope)
+}
+function completeMoney(n, refundPaymentId, op, attempt = null) {
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
+    const controller = ec.artifactExecution
+        .getStackNameString()
+        .split(", ")
+        .find(name => name.startsWith("mantle.account.PaymentServices."))
+    if (
+        controller !== "mantle.account.PaymentServices.refund#ReviewedPayment" &&
+        controller !== "mantle.account.PaymentServices.complete#PaymentGatewayAttempt"
+    )
+        denied("REFUND_REVIEW_REQUIRED", "Use the exact reviewed refund controller")
+    if (
+        attempt &&
+        (controller !== "mantle.account.PaymentServices.complete#PaymentGatewayAttempt" ||
+            attempt.action !== "refund" ||
+            attempt.providerState !== "accepted" ||
+            attempt.cashPaymentId !== refundPaymentId)
+    )
+        denied("GATEWAY_NOT_ACCEPTED", "Provider refund money requires its exact accepted attempt")
+    const scope = n.scope,
+        operationKey = op.operationKey,
         existing = find(P, {paymentId: refundPaymentId}).useCache(false).forUpdate(true).one()
     if ((n.linked && !existing) || (!n.linked && existing))
         denied("REFUND_DRAFT_UNAVAILABLE", "The reviewed child identity is no longer available")
@@ -1205,10 +1245,10 @@ function refund(p) {
         refundForPaymentId: n.scope.record.paymentId,
         paymentMethodId: n.refundScope.record.paymentMethodId,
         toPaymentMethodId: n.refundScope.record.toPaymentMethodId,
-        paymentGatewayConfigId: null,
-        gatewayInstructionId: null,
-        gatewayAttemptId: null,
-        gatewayRole: null,
+        paymentGatewayConfigId: attempt?.paymentGatewayConfigId || null,
+        gatewayInstructionId: attempt?.instructionId || null,
+        gatewayAttemptId: attempt?.attemptId || null,
+        gatewayRole: attempt ? "refund" : null,
         overrideGlAccountId: null,
         overrideOrgPartyId: null,
         forInvoiceId: null,
@@ -1225,6 +1265,7 @@ function refund(p) {
     if (existing) child.update()
     else child.create()
     if (
+        !attempt &&
         n.refundScope.cashDirection === "outgoing" &&
         ["PiCompanyCheck", "PiCertifiedCheck"].includes(n.request.paymentInstrumentEnumId)
     ) {
@@ -1286,7 +1327,7 @@ function refund(p) {
     const acctgTransIds = [cashIds[0], apTx[0].acctgTransId],
         event = lifecycle.event(
             actualScope,
-            "refund",
+            attempt ? "gatewayRefund" : "refund",
             n.linked?.record.statusId || null,
             op,
             {
@@ -1352,14 +1393,10 @@ function refund(p) {
         paymentLifecycleEventId: event.paymentLifecycleEventId,
         createdDate: ec.user.nowTimestamp,
         userId: ec.user.userId,
-        resultJson: JSON.stringify(result)
+        resultJson: JSON.stringify(result),
+        gatewayAttemptId: attempt?.attemptId || null
     })
-    row.set("status", "complete")
-    row.set("operationKey", operationKey)
-    row.set("resultJson", JSON.stringify(result))
-    row.update()
-    lib.complete(op, RECORD, refundPaymentId, result)
-    return projectResult(result, scope)
+    return result
 }
 ;({
     PREVIEW,
@@ -1379,5 +1416,12 @@ function refund(p) {
     getPreview,
     projectPreview,
     projectResult,
-    refund
+    refund,
+    completeMoney,
+    draft,
+    cashEvidence,
+    controlAccount,
+    refundCashPlan,
+    applications,
+    providerBacked
 })

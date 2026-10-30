@@ -111,3 +111,17 @@ Per the user's code-completion priority, this delivery uses independent code rev
 of further browser/screenshot cycles. The first frozen money/invariant/concurrency/shared-regression gate passes all
 45 cases; the app gate passes 24, including real Treasury/admin money, exact retries and actual child-owned documents.
 The final 25-case gate also passes, including all 21 new native cases; 53 distinct focused native cases pass across the two gates. Acceptance commits are recorded in the app's implementation plan.
+
+## P5b2b2 provider refunds
+
+Reference-based refunds bind actual completed capture money and reuse the strict refund cash/application core.
+Original capture reference/merchant/currency remain authoritative through credential rotation/expiry and exact lookup.
+Two durable capacity holds and an optional reviewed draft claim survive pending, uncertain and accepted-unposted
+states. Accepted local completion consumes them in the same transaction as exact opposite cash, funding, immutable
+backing, events and issued documents. Caller rollback restores held capacity and the clean draft. A changed financial
+plan requires newly reviewed recovery; the provider operation is never repeated for financial repair.
+
+Independent review accepts all production/shared corrections. All 13 added native cases pass; the final focused gate's
+44 cases pass across its 43-pass run and corrected one-case fixture rerun. BOSS passes 34/34 including all eight new
+provider cases. Further screenshot/browser/full-suite cycles are omitted under the user's code-completion priority.
+Transfers remain the last P5 assignment; execution pauses before P6. Detailed findings and commits are in the app plan.

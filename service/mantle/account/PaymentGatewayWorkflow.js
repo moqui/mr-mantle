@@ -11,7 +11,7 @@ const PREVIEW = "mantle.account.payment.PaymentGatewayPreview",
     RESPONSE = "mantle.account.method.PaymentGatewayResponse",
     CONFIG = "mantle.account.method.PaymentGatewayConfig",
     BINDING = "mantle.account.method.PaymentGatewayOrganization"
-const actions = ["authorize", "capture", "release"]
+const actions = ["authorize", "capture", "release", "refund"]
 const operationEnums = {authorize: "PgoAuthorize", capture: "PgoCapture", release: "PgoRelease", refund: "PgoRefund"}
 const pageFields = ["recordCount", "pageIndex", "pageSize", "pageMaxIndex", "pageRangeLow", "pageRangeHigh"]
 const configFields = [
@@ -84,8 +84,39 @@ function instructionFor(record, lock = false) {
         ? find(INSTRUCTION, {instructionId: record.gatewayInstructionId})
         : find(INSTRUCTION, {paymentId: record.paymentId})
     const instruction = query.forUpdate(lock).useCache(false).one()
-    if (instruction && instruction.paymentId !== record.paymentId && record.gatewayRole !== "capture")
-        denied("GATEWAY_LINK_INVALID", "The gateway instruction belongs to another payment")
+    if (instruction && instruction.paymentId !== record.paymentId) {
+        const attempt =
+            record.gatewayAttemptId && find(ATTEMPT, {attemptId: record.gatewayAttemptId}).useCache(false).forUpdate(lock).one()
+        if (
+            !["capture", "refund"].includes(record.gatewayRole) ||
+            !attempt ||
+            attempt.action !== record.gatewayRole ||
+            attempt.providerState !== "accepted" ||
+            attempt.cashPaymentId !== record.paymentId ||
+            attempt.instructionId !== instruction.instructionId ||
+            attempt.organizationPartyId !== instruction.organizationPartyId ||
+            record.financeOrganizationPartyId !== instruction.organizationPartyId ||
+            attempt.currencyUomId !== record.amountUomId
+        )
+            denied("GATEWAY_LINK_INVALID", "The gateway instruction needs its exact accepted cash attempt")
+        if (record.gatewayRole === "refund") {
+            const original =
+                attempt.parentAttemptId &&
+                find(ATTEMPT, {attemptId: attempt.parentAttemptId}).useCache(false).forUpdate(lock).one()
+            if (
+                !original ||
+                original.action !== "capture" ||
+                original.providerState !== "accepted" ||
+                original.financialState !== "completed" ||
+                original.cashPaymentId !== attempt.paymentId ||
+                record.refundForPaymentId !== attempt.paymentId ||
+                original.instructionId !== instruction.instructionId ||
+                original.merchantNamespace !== attempt.merchantNamespace ||
+                original.providerReference !== attempt.parentProviderReference
+            )
+                denied("GATEWAY_LINK_INVALID", "Refund instruction evidence requires its exact original completed capture")
+        }
+    }
     return instruction
 }
 function instructionSummary(instruction) {
@@ -162,6 +193,8 @@ function guarantees(config) {
                     idempotent: value.idempotent === true,
                     exactLookup: value.exactLookup === true,
                     reviewedMethodSnapshot: value.reviewedMethodSnapshot === true,
+                    originalCaptureOnly: value.originalCaptureOnly === true,
+                    partialRefund: value.partialRefund === true,
                     partialCapture: value.partialCapture === true,
                     releaseRemaining: value.releaseRemaining === true
                 }
@@ -211,7 +244,8 @@ function assertAction(binding, action, partial = false) {
         !value.reviewedMethodSnapshot ||
         !value.exactLookup ||
         (!value.idempotent && !value.exactLookup) ||
-        (partial && !value.partialCapture) ||
+        (partial && action === "capture" && !value.partialCapture) ||
+        (action === "refund" && (!value.originalCaptureOnly || !value.partialRefund || !value.idempotent)) ||
         (action === "release" && !value.releaseRemaining)
     )
         denied("GATEWAY_ADAPTER_UNSUPPORTED", "The reviewed adapter does not guarantee this operation")
@@ -380,6 +414,11 @@ function capabilities(scope) {
         else out.gatewayReasons.push("GATEWAY_PAYMENT_UNAVAILABLE")
         return out
     }
+    if (scope.record.gatewayRole === "capture")
+        return Object.assign(
+            out,
+            ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js").capabilities(scope)
+        )
     if (!persistedEligibility(scope)) {
         out.gatewayReasons.push("GATEWAY_PAYMENT_INELIGIBLE")
         return out
@@ -538,6 +577,8 @@ function plannedCapacity(summary, action, requested, currency) {
     }
 }
 function normalized(p, lock = false) {
+    if (p.action === "refund")
+        return ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js").normalized(p, lock)
     const scope = scopeFor(p, true, lock, true),
         r = scope.record,
         action = p.action
@@ -722,6 +763,17 @@ function normalized(p, lock = false) {
 }
 function projectResult(result, scope) {
     const out = Object.assign({}, result)
+    if (out.attemptId) {
+        const a = one(ATTEMPT, {attemptId: out.attemptId})
+        if (
+            a?.action === "refund" &&
+            a.paymentId === scope.record.paymentId &&
+            a.organizationPartyId === scope.organizationPartyId
+        )
+            out.draftClaim = ec.resource
+                .script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js")
+                .claimStatus(a)
+    }
     if (!workflow.ledgerRead())
         for (const field of ["acctgTransIds", "originalAcctgTransIds", "reversalAcctgTransIds"]) delete out[field]
     if (out.outputRows)
@@ -763,6 +815,13 @@ function projectPreview(row, scope) {
                 lib.has("PAYMENT_EDIT"),
             capabilities: capabilities(scope)
         })
+    if (row.action === "refund") {
+        const a = one(ATTEMPT, {attemptId: row.attemptId})
+        if (a && a.paymentId === row.paymentId && a.organizationPartyId === scope.organizationPartyId)
+            out.draftClaim = ec.resource
+                .script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js")
+                .claimStatus(a)
+    }
     if (!workflow.ledgerRead()) delete out.ledgerPreview
     if (row.resultJson) out.results = projectResult(json(row.resultJson), scope)
     else if (row.previewKind === "gatewayRecovery") {
@@ -799,6 +858,19 @@ function previewAction(p) {
 function retained(p, write = false, lock = false) {
     let row = one(PREVIEW, {previewId: p.previewId})
     if (!row || row.userId !== ec.user.userId) denied("GATEWAY_PREVIEW_UNAVAILABLE", "The gateway review is unavailable")
+    if (lock && row.action === "refund") {
+        const request = json(row.requestJson),
+            attempt = row.previewKind === "gatewayRecovery" ? one(ATTEMPT, {attemptId: row.attemptId}) : null
+        ec.resource
+            .script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js")
+            .lockRows(
+                scopeFor(
+                    {organizationPartyId: p.organizationPartyId || row.organizationPartyId, paymentId: row.paymentId},
+                    write
+                ),
+                request.refundPaymentId || attempt?.refundDraftPaymentId
+            )
+    }
     const scope = scopeFor(
         {organizationPartyId: p.organizationPartyId || row.organizationPartyId, paymentId: row.paymentId},
         write,
@@ -838,6 +910,16 @@ function attemptVersion(row) {
 function attemptScope(p, write = false, lock = false) {
     let row = one(ATTEMPT, {attemptId: p.attemptId})
     if (!row) denied("GATEWAY_ATTEMPT_UNAVAILABLE", "The provider attempt is unavailable")
+    if (lock && row.action === "refund")
+        ec.resource
+            .script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js")
+            .lockRows(
+                scopeFor(
+                    {organizationPartyId: p.organizationPartyId || row.organizationPartyId, paymentId: row.paymentId},
+                    write
+                ),
+                row.refundDraftPaymentId
+            )
     const scope = scopeFor(
         {organizationPartyId: p.organizationPartyId || row.organizationPartyId, paymentId: row.paymentId},
         write,
@@ -855,6 +937,12 @@ function resultFor(row, alreadyApplied = false) {
         organizationPartyId: row.organizationPartyId,
         paymentId: row.paymentId,
         cashPaymentId: row.financialState === "completed" ? row.cashPaymentId : null,
+        originalPaymentId: row.action === "refund" ? row.paymentId : null,
+        refundPaymentId: row.action === "refund" && row.financialState === "completed" ? row.cashPaymentId : null,
+        draftClaim:
+            row.action === "refund"
+                ? ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayRefunds.js").claimStatus(row)
+                : null,
         action: row.action,
         outcome: row.providerState === "accepted" ? row.financialState : row.providerState,
         providerState: row.providerState,
@@ -884,7 +972,8 @@ function getAttempt(p) {
             canGatewayRecover: available && r.row.providerState === "accepted" && r.row.financialState === "accepted_unposted"
         }),
         paymentSummary: payload?.paymentSummary,
-        gatewaySummary: payload?.gatewaySummary
+        gatewaySummary: payload?.gatewaySummary,
+        refundSummary: payload?.refundSummary
     })
 }
 function findProviders(p) {
@@ -1109,6 +1198,8 @@ function findTransactions(p) {
             {
                 isLegacy: !row.attemptId,
                 cashPaymentId: row.financialState === "completed" ? row.cashPaymentId : null,
+                originalPaymentId: row.action === "refund" ? row.paymentId : null,
+                refundPaymentId: row.action === "refund" && row.financialState === "completed" ? row.cashPaymentId : null,
                 currencyUomId: row.amountUomId,
                 providerState:
                     row.providerState ||
@@ -1154,5 +1245,7 @@ function findTransactions(p) {
     projectResult,
     projectPreview,
     resultFor,
-    plannedCapacity
+    plannedCapacity,
+    json,
+    assertAction
 })

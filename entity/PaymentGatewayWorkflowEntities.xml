@@ -75,6 +75,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="partyId" type="id"/>
         <field name="instructionId" type="id"/>
         <field name="parentAttemptId" type="id"/>
+        <field name="refundDraftPaymentId" type="id"/>
+        <field name="refundDraftVersion" type="text-long"/>
         <field name="previewId" type="id"/>
         <field name="paymentGatewayResponseId" type="id"/>
         <field name="userId" type="id"/>

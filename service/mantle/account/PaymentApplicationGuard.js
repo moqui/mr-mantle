@@ -93,21 +93,10 @@ function applicationRows(records, ownId) {
 }
 function cashHold(record, organizationPartyId) {
     if (record.entity !== P) return {heldAmount: toDecimal(0)}
-    if (
-        !find("mantle.account.payment.PaymentGatewayReservation", {
-            paymentId: record.id,
-            organizationPartyId,
-            holdKind: "cash",
-            status: "held"
-        })
-            .useCache(false)
-            .limit(1)
-            .one()
-    )
-        return {heldAmount: toDecimal(0)}
     return ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayReservations.js").cashHoldSummary({
         organizationPartyId,
-        paymentId: record.id
+        paymentId: record.id,
+        lock: true
     })
 }
 function assertGatewaySettlement(records) {

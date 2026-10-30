@@ -64,7 +64,7 @@ function eachSource(tx, payments, callback) {
 
 function cashWrite(tx, payment, types, alreadyPosted = false) {
     eligible(payment)
-    if (payment?.gatewayRole !== "capture" || application(tx, payment, types)) return
+    if (!["capture", "refund"].includes(payment?.gatewayRole) || application(tx, payment, types)) return
     if (tx.paymentId !== payment.paymentId)
         lib.denied("GATEWAY_CASH_SOURCE_INVALID", "A cash target needs its exact payment application")
     const attempt = lib
@@ -83,7 +83,7 @@ function cashWrite(tx, payment, types, alreadyPosted = false) {
     if (
         !attempt ||
         attempt.providerState !== "accepted" ||
-        attempt.action !== "capture" ||
+        attempt.action !== payment.gatewayRole ||
         attempt.cashPaymentId !== payment.paymentId ||
         attempt.instructionId !== payment.gatewayInstructionId ||
         attempt.organizationPartyId !== payment.financeOrganizationPartyId ||
@@ -91,6 +91,33 @@ function cashWrite(tx, payment, types, alreadyPosted = false) {
         attempt.currencyUomId !== payment.amountUomId
     )
         lib.denied("GATEWAY_CASH_SOURCE_INVALID", "The cash posting needs its exact accepted provider attempt")
+    if (payment.gatewayRole === "refund") {
+        const capture =
+            attempt.parentAttemptId &&
+            lib
+                .find("mantle.account.payment.PaymentGatewayAttempt", {
+                    attemptId: attempt.parentAttemptId
+                })
+                .useCache(false)
+                .forUpdate(true)
+                .one()
+        if (
+            payment.paymentTypeEnumId !== "PtRefund" ||
+            payment.refundForPaymentId !== attempt.paymentId ||
+            !capture ||
+            capture.action !== "capture" ||
+            capture.providerState !== "accepted" ||
+            capture.financialState !== "completed" ||
+            capture.cashPaymentId !== attempt.paymentId ||
+            capture.instructionId !== attempt.instructionId ||
+            capture.organizationPartyId !== attempt.organizationPartyId ||
+            capture.currencyUomId !== attempt.currencyUomId ||
+            capture.merchantNamespace !== attempt.merchantNamespace ||
+            !capture.providerReference ||
+            capture.providerReference !== attempt.parentProviderReference
+        )
+            lib.denied("GATEWAY_CASH_SOURCE_INVALID", "Refund cash needs its exact completed original capture")
+    }
     if (
         !types.cashTypes.includes(tx.acctgTransTypeEnumId) ||
         tx.reverseOfAcctgTransId ||
@@ -110,7 +137,7 @@ function cashWrite(tx, payment, types, alreadyPosted = false) {
         .condition("acctgTransTypeEnumId", "not-in", types.applicationTypes)
     if (tx.acctgTransId) duplicate = duplicate.condition("acctgTransId", "not-equals", tx.acctgTransId)
     if (duplicate.selectField("acctgTransId").limit(1).one())
-        lib.denied("GATEWAY_CASH_POSTING_DUPLICATE", "The accepted capture already has its original cash posting")
+        lib.denied("GATEWAY_CASH_POSTING_DUPLICATE", "The accepted provider cash already has its original posting")
 }
 function posting(tx, types) {
     ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
@@ -135,7 +162,7 @@ function header(p, types) {
         if (
             !p.before &&
             p.after?.isPosted === "Y" &&
-            payments[p.after.paymentId]?.gatewayRole === "capture" &&
+            ["capture", "refund"].includes(payments[p.after.paymentId]?.gatewayRole) &&
             !application(p.after, payments[p.after.paymentId], types)
         )
             lib.denied("GATEWAY_CASH_POSTING_IMMUTABLE", "Construct provider cash before posting its reviewed entries")

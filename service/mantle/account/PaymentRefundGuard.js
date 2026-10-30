@@ -112,26 +112,50 @@ function guard(p, kind) {
         draft.lifecycleManaged !== "Y"
     )
         denied("REFUND_CLAIM_INVALID", "A draft claim needs its exact reviewed refund attempt and managed draft")
-    if (before?.status === "consumed") denied("REFUND_RECORD_IMMUTABLE", "Consumed draft claims never recycle")
-    if (before?.status === "held")
-        for (const field of ["refundPaymentId", "originalPaymentId", "organizationPartyId", "attemptId", "createdDate"])
-            if (String(before[field] ?? "") !== String(after[field] ?? ""))
-                denied("REFUND_CLAIM_INVALID", "A held draft claim cannot be rebound to another attempt or source")
-    if (before?.status === "released") {
-        const prior = one("mantle.account.payment.PaymentGatewayAttempt", {attemptId: before.attemptId})
+    if (!before) {
         if (
             service !== "reserve#PaymentGatewayAction" ||
             after.status !== "held" ||
-            prior?.providerState !== "declined" ||
-            after.attemptId === before.attemptId
+            attempt.providerState !== "reserved" ||
+            attempt.financialState !== "none"
         )
-            denied("REFUND_CLAIM_INVALID", "Only a fresh review after definitive decline may reclaim a released clean draft")
+            denied("REFUND_CLAIM_INVALID", "Only an exact reserved provider attempt can create a held draft claim")
+        return
     }
+    if (before.status === "consumed") denied("REFUND_RECORD_IMMUTABLE", "Consumed draft claims never recycle")
+    if (before.status === "held") {
+        for (const field of Object.keys(after).filter(
+            field => !["status", "releasedDate", "consumedDate", "lastUpdatedStamp"].includes(field)
+        ))
+            if (String(before[field] ?? "") !== String(after[field] ?? ""))
+                denied("REFUND_CLAIM_INVALID", "A held draft claim cannot be rebound to another attempt or source")
+        if (
+            !(
+                (service === "record#PaymentGatewayResult" &&
+                    after.status === "released" &&
+                    attempt.providerState === "declined" &&
+                    attempt.financialState === "none") ||
+                (service === "complete#PaymentGatewayAttempt" &&
+                    after.status === "consumed" &&
+                    attempt.providerState === "accepted" &&
+                    attempt.financialState === "accepted_unposted")
+            )
+        )
+            denied("REFUND_CLAIM_INVALID", "A held claim requires definitive decline or accepted financial completion")
+        return
+    }
+    const prior =
+        before.status === "released" && one("mantle.account.payment.PaymentGatewayAttempt", {attemptId: before.attemptId})
     if (
-        !["held", "released", "consumed"].includes(after.status) ||
-        (after.status === "released" && attempt.providerState !== "declined") ||
-        (after.status === "consumed" && (attempt.providerState !== "accepted" || service !== "complete#PaymentGatewayAttempt"))
+        !prior ||
+        prior.providerState !== "declined" ||
+        prior.financialState !== "none" ||
+        service !== "reserve#PaymentGatewayAction" ||
+        after.status !== "held" ||
+        attempt.providerState !== "reserved" ||
+        attempt.financialState !== "none" ||
+        after.attemptId === before.attemptId
     )
-        denied("REFUND_CLAIM_INVALID", "The draft claim requires authoritative provider outcome and financial completion")
+        denied("REFUND_CLAIM_INVALID", "Only a fresh reserved review after definitive decline may reclaim a released clean draft")
 }
 ;({guard})

@@ -194,6 +194,38 @@ function guard(p, kind) {
                 after.refundForPaymentId
             )
                 denied("GATEWAY_LINK_INVALID", "Only an accepted capture can create its exact cash leg")
+        } else if (after.gatewayRole === "refund") {
+            const attempt = after.gatewayAttemptId && one(entities.attempt, {attemptId: after.gatewayAttemptId}),
+                capture = attempt?.parentAttemptId && one(entities.attempt, {attemptId: attempt.parentAttemptId}),
+                original = attempt && one(workflow.P, {paymentId: attempt.paymentId})
+            if (
+                service !== "complete#PaymentGatewayAttempt" ||
+                !attempt ||
+                attempt.action !== "refund" ||
+                attempt.providerState !== "accepted" ||
+                attempt.financialState !== "accepted_unposted" ||
+                attempt.cashPaymentId !== after.paymentId ||
+                attempt.instructionId !== instruction.instructionId ||
+                !capture ||
+                capture.action !== "capture" ||
+                capture.providerState !== "accepted" ||
+                capture.financialState !== "completed" ||
+                capture.cashPaymentId !== attempt.paymentId ||
+                capture.merchantNamespace !== attempt.merchantNamespace ||
+                capture.providerReference !== attempt.parentProviderReference ||
+                !original ||
+                after.paymentTypeEnumId !== "PtRefund" ||
+                after.refundForPaymentId !== original.paymentId ||
+                after.fromPartyId !== original.toPartyId ||
+                after.toPartyId !== original.fromPartyId ||
+                after.amountUomId !== attempt.currencyUomId ||
+                !toDecimal(after.amount || 0).eq(attempt.amount) ||
+                after.forInvoiceId
+            )
+                denied(
+                    "GATEWAY_LINK_INVALID",
+                    "Only an accepted original-reference refund can create its exact opposing cash leg"
+                )
         } else denied("GATEWAY_ACTION_UNAVAILABLE", "This gateway role is unavailable")
         return
     }
@@ -224,7 +256,7 @@ function guard(p, kind) {
         !attempt ||
         !attempt.organizationPartyId ||
         !attempt.paymentId ||
-        !["authorize", "capture", "release"].includes(attempt.action)
+        !["authorize", "capture", "release", "refund"].includes(attempt.action)
     )
         denied("GATEWAY_LINK_INVALID", "Gateway evidence needs its native attempt")
     if (kind === "attempt") {
@@ -248,7 +280,17 @@ function guard(p, kind) {
                 "dispatchedDate",
                 "completedDate",
                 "resultJson",
-                "lastUpdatedStamp"
+                "lastUpdatedStamp",
+                ...(before.action === "refund" &&
+                !before.cashPaymentId &&
+                service === "complete#PaymentGatewayAttempt" &&
+                before.providerState === "accepted" &&
+                before.financialState === "accepted_unposted"
+                    ? ["cashPaymentId"]
+                    : []),
+                ...(before.action === "refund" && !before.refundDraftVersion && service === "reserve#PaymentGatewayAction"
+                    ? ["refundDraftVersion"]
+                    : [])
             ]
             immutable(
                 before,
@@ -289,10 +331,16 @@ function guard(p, kind) {
     if (kind === "reservation") {
         if (
             attempt.organizationPartyId !== after.organizationPartyId ||
+            after.paymentId !== attempt.paymentId ||
+            (attempt.action === "refund"
+                ? !["refund", "cash"].includes(after.holdKind) ||
+                  after.sourceKind !== (after.holdKind === "cash" ? "payment" : "capture") ||
+                  after.sourceId !== (after.holdKind === "cash" ? attempt.paymentId : attempt.parentAttemptId)
+                : after.holdKind !== (attempt.action === "authorize" ? "authorization" : attempt.action)) ||
             attempt.currencyUomId !== after.currencyUomId ||
             !toDecimal(after.amount || 0).eq(attempt.amount) ||
             after.instructionId !== attempt.instructionId ||
-            !["authorization", "capture", "release", "cash"].includes(after.holdKind)
+            !["authorization", "capture", "release", "refund", "cash"].includes(after.holdKind)
         )
             denied("GATEWAY_HOLD_INVALID", "A hold must match its exact gateway attempt")
         if (before) {

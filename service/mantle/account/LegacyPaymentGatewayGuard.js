@@ -159,7 +159,11 @@ function hasManualCash(payment) {
     )
         return false
     const entries = Array.from(
-        lib.find("mantle.ledger.transaction.AcctgTransEntry", {acctgTransId: tx.acctgTransId}).useCache(false).forUpdate(true).list()
+        lib
+            .find("mantle.ledger.transaction.AcctgTransEntry", {acctgTransId: tx.acctgTransId})
+            .useCache(false)
+            .forUpdate(true)
+            .list()
     )
     if (
         !entries.length ||
@@ -221,7 +225,7 @@ function assertInternalCaller(recording = false) {
         .split(", ")
         .find(name => !name.startsWith(internalPrefix))
     const adoption =
-        /^mantle\.account\.PaymentServices\.(store#PaymentDraft|preview#PaymentState|change#PaymentState|preview#PaymentUnapply|unapply#ReviewedPayment)$/.test(
+        /^mantle\.account\.PaymentServices\.(store#PaymentDraft|preview#PaymentState|change#PaymentState|preview#PaymentUnapply|unapply#ReviewedPayment|refund#ReviewedPayment|reserve#PaymentGatewayAction)$/.test(
             caller || ""
         )
     if (!caller || (!providerLeaf(caller) && (recording || !adoption)))
@@ -307,6 +311,8 @@ function lockUnmanagedPayments(ids) {
             .condition("paymentId", "in", unique)
             .condition("holdKind", "cash")
             .condition("status", "held")
+            .useCache(false)
+            .forUpdate(true)
             .limit(1)
             .one()
     )
