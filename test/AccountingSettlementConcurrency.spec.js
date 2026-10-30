@@ -6,7 +6,7 @@ spec({
     setupSpec() {
         login("john.doe")
         ec.artifactExecution.disableAuthz()
-        f = helper().fixtures("SETTLE_CONC")
+        f = helper().withoutSettlementFlag(helper().fixtures("SETTLE_CONC"))
     },
     setup() {
         login("john.doe")
@@ -158,7 +158,7 @@ feature("disjoint reviewed documents sharing control accounts both complete conc
         results.every(row => row.reasonCode === "OK" && !row.alreadyApplied)
     }
 })
-feature("legacy and reviewed apply compete safely for a shared source under adopted guards", {
+feature("Mantle apply#InvoicePayment and a reviewed settlement compete safely for a shared source payment", {
     when() {
         const h = helper(),
             payment = h.payment(f, "60"),
@@ -203,91 +203,5 @@ feature("legacy and reviewed apply compete safely for a shared source under adop
         results.some(row => row.result)
         toDecimal(applied).compare(60) <= 0
         toDecimal(applied).compare(40) >= 0
-    }
-})
-feature("legacy and reviewed apply compete safely for a shared target under adopted guards", {
-    when() {
-        const h = helper(),
-            invoice = h.invoice(f, "60"),
-            a = h.payment(f, "40"),
-            b = h.payment(f, "40"),
-            preview = h.review(f, [{sourceKey: h.key("payment", a), targetKey: h.key("invoice", invoice), amount: "40"}])
-        const args = {
-            requests: [
-                {
-                    service: "mantle.account.PaymentServices.apply#Settlement",
-                    params: {
-                        previewId: preview.previewId,
-                        inputFingerprint: preview.inputFingerprint,
-                        operationKey: "settle-legacy-target"
-                    }
-                },
-                {
-                    service: "mantle.account.PaymentServices.apply#InvoicePayment",
-                    params: {paymentId: b, invoiceId: invoice, amount: "40"}
-                }
-            ]
-        }
-        const results = parallel(
-            2,
-            (thread, args) => {
-                login("john.doe")
-                ec.artifactExecution.disableAuthz()
-                try {
-                    return {result: call(args.requests[thread].service, args.requests[thread].params)}
-                } catch (error) {
-                    ec.message.clearErrors()
-                    return {error: error.message}
-                }
-            },
-            args,
-            {transaction: false, timeout: 30}
-        )
-        const balance = h.lib.totals(h.lib.one(h.lib.invoiceEntity, {invoiceId: invoice})).unpaidTotal
-        return {results, balance}
-    },
-    then({results, balance}) {
-        results.some(row => row.result)
-        toDecimal(balance).compare(0) >= 0
-        toDecimal(balance).compare(20) <= 0
-    }
-})
-feature("application invariant also serializes competing raw applications when no source GL exists", {
-    when() {
-        const h = helper(),
-            invoice = h.invoice(f, "100"),
-            payment = h.call("create#mantle.account.payment.Payment", {
-                fromPartyId: f.customer,
-                toPartyId: f.org,
-                statusId: "PmntDelivered",
-                paymentTypeEnumId: "PtInvoicePayment",
-                amount: "60",
-                amountUomId: "USD",
-                effectiveDate: f.timestamp
-            }).paymentId
-        const args = {paymentId: payment, invoiceId: invoice, amountApplied: "40", appliedDate: f.timestamp}
-        const results = parallel(
-            2,
-            (thread, args) => {
-                login("john.doe")
-                ec.artifactExecution.disableAuthz()
-                try {
-                    return {result: call("create#mantle.account.payment.PaymentApplication", args)}
-                } catch (error) {
-                    ec.message.clearErrors()
-                    return {error: error.message}
-                }
-            },
-            args,
-            {transaction: false, timeout: 30}
-        )
-        const apps = h.lib.rows("mantle.account.payment.PaymentApplication", {paymentId: payment})
-        return {results, apps}
-    },
-    then({results, apps}) {
-        results.filter(row => row.result).length == 1
-        results.some(row => row.error && row.error.includes("APPLICATION_BALANCE_CHANGED"))
-        apps.length == 1
-        apps[0].acctgTransResultEnumId == "AtrPaymentNotPosted"
     }
 })

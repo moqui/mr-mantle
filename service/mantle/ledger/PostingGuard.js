@@ -3,6 +3,18 @@ const lib = ec.resource.script("component://mr-mantle/service/mantle/ledger/Acco
 const T = "mantle.ledger.transaction.AcctgTrans",
     E = "mantle.ledger.transaction.AcctgTransEntry"
 const {find, one, rows, map, ms, active, preference, hash} = lib
+const A = "mantle.account.payment.PaymentApplication"
+// A source's cash or document posting, and the postings of an application, by AcctgTrans type.
+const cashTypes = ["AttPayment", "AttDisbursement", "AttReceipt", "AttIncomingPayment", "AttOutgoingPayment"]
+const applicationTypes = [
+    "AttOutgoingPaymentAp",
+    "AttIncomingPaymentAp",
+    "AttPaymentInOutAppl",
+    "AttInvoiceInOutAppl",
+    "AttPaymentApplied",
+    "AttPaymentAdjust"
+]
+const gatewayPosting = () => ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayPostingGuard.js")
 function fiscal(org, date, lock = false, visited = [], calendarDay = null) {
     if (visited.includes(org))
         return {
@@ -210,9 +222,8 @@ function validate(p, lock = false) {
           ).one()
         : null
     if (applicationSource) sourceEvidence.paymentApplicationId = map(applicationSource)
-    // Captured history remains authoritative even if the general guard is later disabled. Settlement adoption
-    // independently preserves new application/payment/adjustment days without enabling other posting rules.
-    const sourceDay = calendarDay(tx, sourceEvidence, enabled || pref.settlementApplicationGuardEnabled === "Y")
+    // Captured history remains authoritative even if the general guard is later disabled.
+    const sourceDay = calendarDay(tx, sourceEvidence, true)
     const fiscalOut = fiscal(tx.organizationPartyId, tx.transactionDate, lock, [], sourceDay)
     findings.push(...fiscalOut.findings)
     if (enabled) {
@@ -311,38 +322,97 @@ function validate(p, lock = false) {
         automatic: automatic(tx)
     }
 }
+// The book day of an application: its reviewed accounting day, else the calendar day of its applied date.
+function applicationDay(application) {
+    return lib.calendarDateText(application.accountingDate || application.appliedDate)
+}
+// The positive applications that consume a posting's source documents. A cash posting consumes only its payment.
+function positiveApplications(tx) {
+    const cf = ec.entity.conditionFactory,
+        conditions = [],
+        linked = tx.paymentApplicationId ? one(A, {paymentApplicationId: tx.paymentApplicationId}) : null,
+        cash = tx.paymentId && cashTypes.includes(tx.acctgTransTypeEnumId)
+    for (const [sources, fields] of [
+        [cash ? [] : [tx.invoiceId, tx.toInvoiceId, linked?.invoiceId, linked?.toInvoiceId], ["invoiceId", "toInvoiceId"]],
+        [
+            [tx.paymentId, tx.toPaymentId, linked?.paymentId, linked?.toPaymentId],
+            ["paymentId", "toPaymentId"]
+        ]
+    ])
+        for (const id of [...new Set(sources.filter(Boolean))])
+            for (const field of fields) conditions.push(cf.makeCondition(field, "equals", id))
+    if (!conditions.length) return []
+    return Array.from(
+        find(A)
+            .condition(cf.makeCondition(conditions, "or"))
+            .condition("amountApplied", "greater", 0)
+            .orderBy("paymentApplicationId")
+            .list()
+    )
+}
+// A source document posts no later than the book day of an application that already consumes it.
+function checkSourceDay(tx) {
+    if (tx.isPosted === "Y" || tx.reverseOfAcctgTransId || applicationTypes.includes(tx.acctgTransTypeEnumId)) return
+    if (!tx.invoiceId && !tx.paymentId) return
+    const day = lib.postingDay(tx)
+    if (positiveApplications(tx).some(application => applicationDay(application) < day))
+        throw new Error("APPLICATION_BEFORE_SOURCE_POSTING: A source cannot post after the day of an existing application")
+}
+// An application's posting without its own accounting day takes the reviewed book day of its application (the day an
+// apply service was given), when it posts on the application's date. Other postings take theirs only through validate
+// with the posting guard on.
+function captureSourceDay(tx) {
+    if (tx.isPosted === "Y" || tx.accountingDate || !tx.paymentApplicationId) return
+    if (!applicationTypes.includes(tx.acctgTransTypeEnumId) || tx.reverseOfAcctgTransId) return
+    const application = one(A, {paymentApplicationId: tx.paymentApplicationId})
+    const day = calendarDay(tx, {paymentApplicationId: map(application)}, true)
+    if (day) lib.call("update#" + T, {acctgTransId: tx.acctgTransId, accountingDate: day})
+}
+// A posting that backs a positive application keeps its evidence: reverse or move it after the application is unapplied.
+// An unpost (operation "unpost") is not held to that: Mantle's revert#PaymentApplicationPost and
+// repost#PaymentAndApplications unpost, delete and post a source again in one transaction, and check#AcctgTrans checks
+// the new posting.
+function assertMutable(p) {
+    const initial = one(T, {acctgTransId: p.acctgTransId})
+    if (!initial) return
+    const gateway = gatewayPosting()
+    gateway.posting(initial, {cashTypes, applicationTypes})
+    gateway.heldCash(initial, cashTypes)
+    if (p.operation === "unpost" || initial.isPosted !== "Y") return
+    if (!initial.invoiceId && !initial.paymentId && !initial.paymentApplicationId) return
+    // The organization first, as the application writers lock it, then the transaction.
+    find("mantle.party.Party", {partyId: initial.organizationPartyId}).forUpdate(true).one()
+    const tx = find(T, {acctgTransId: initial.acctgTransId}).forUpdate(true).one()
+    const ownApplication = applicationTypes.includes(tx.acctgTransTypeEnumId) && !tx.reverseOfAcctgTransId
+    const linked = ownApplication && tx.paymentApplicationId ? one(A, {paymentApplicationId: tx.paymentApplicationId}) : null
+    const consumed = ownApplication ? toDecimal(linked?.amountApplied ?? 0).compare(0) > 0 : positiveApplications(tx).length > 0
+    if (consumed)
+        throw new Error("SOURCE_HAS_APPLICATIONS: Unapply the financial application before changing its posting evidence")
+}
+// The net amount the posted entries put on one account and side equals the document amount.
+function controlProof(evidence, account, flag, amount) {
+    const net = evidence.entries
+        .filter(row => row.glAccountId === account)
+        .reduce(
+            (sum, row) => (row.debitCreditFlag === flag ? sum.add(row.amount || 0) : sum.subtract(row.amount || 0)),
+            toDecimal(0)
+        )
+    if (!net.eq(amount || 0))
+        throw new Error("SOURCE_POSTING_INCOMPLETE: The posted control amount does not match its financial document")
+}
 function check(p) {
     if (!p.verifyOnly)
         ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const initial = one(T, {acctgTransId: p.acctgTransId})
     if (!initial) throw new Error("Accounting transaction is not available")
-    const legacyPaymentOnly =
-        !p.verifyOnly &&
-        ec.resource.script("component://mr-mantle/service/mantle/account/SourcePostingGuard.js").assertCashSource(initial)
+    const legacyPaymentOnly = !p.verifyOnly && gatewayPosting().posting(initial, {cashTypes, applicationTypes})
     const pref = preference(initial.organizationPartyId)
-    if (legacyPaymentOnly && (pref.postingGuardEnabled === "Y" || pref.settlementApplicationGuardEnabled === "Y"))
+    if (legacyPaymentOnly && pref.postingGuardEnabled === "Y")
         throw new Error("PAYMENT_SOURCE_CHANGED: Financial controls changed; retry the operation")
+    if (!p.verifyOnly) checkSourceDay(initial)
     const adopted = pref.postingGuardEnabled === "Y"
     if (!p.verifyOnly && !adopted) {
-        if (pref.settlementApplicationGuardEnabled === "Y" && initial.isPosted !== "Y" && !initial.accountingDate) {
-            find("mantle.party.Party", {partyId: initial.organizationPartyId}).forUpdate(true).one()
-            const current = find(T, {acctgTransId: initial.acctgTransId}).forUpdate(true).one()
-            const sources = {}
-            for (const [field, entity, key] of [
-                ["paymentApplicationId", "mantle.account.payment.PaymentApplication", "paymentApplicationId"],
-                ["paymentId", "mantle.account.payment.Payment", "paymentId"],
-                ["invoiceId", "mantle.account.invoice.Invoice", "invoiceId"]
-            ])
-                if (current[field])
-                    sources[field] = map(
-                        find(entity, {[key]: current[field]})
-                            .forUpdate(true)
-                            .one()
-                    )
-            const day = calendarDay(current, sources, true)
-            if (day && !current.accountingDate && current.isPosted !== "Y")
-                lib.call("update#" + T, {acctgTransId: current.acctgTransId, accountingDate: day})
-        }
+        captureSourceDay(initial)
         return {handled: false, valid: true, findings: []}
     }
     if (!p.verifyOnly) find("mantle.party.Party", {partyId: initial.organizationPartyId}).forUpdate(true).one()
@@ -406,4 +476,17 @@ function completed(acctgTransId) {
             completedDate: ec.user.nowTimestamp
         })
 }
-;({validate, check, completed, fiscal, scopes, postingLocks, calendarDay})
+;({
+    validate,
+    check,
+    completed,
+    fiscal,
+    scopes,
+    postingLocks,
+    calendarDay,
+    assertMutable,
+    applicationDay,
+    controlProof,
+    cashTypes,
+    applicationTypes
+})

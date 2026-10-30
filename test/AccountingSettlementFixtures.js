@@ -7,9 +7,15 @@ function native(name, p) {
 }
 function fixtures(prefix) {
     const f = base.fixtures(prefix)
+    // The gateway and refund reviews built on these fixtures still read settlementApplicationGuardEnabled; settlement and
+    // the application rules do not, and their specs turn it off (withoutSettlementFlag).
     call("update#mantle.ledger.config.PartyAcctgPreference", {organizationPartyId: f.org, settlementApplicationGuardEnabled: "Y"})
     f.day = ec.l10n.format(ec.user.nowTimestamp, "yyyy-MM-dd")
     f.timestamp = ec.l10n.parseTimestamp(f.day + " 12:00:00", "yyyy-MM-dd HH:mm:ss")
+    return f
+}
+function withoutSettlementFlag(f) {
+    call("update#mantle.ledger.config.PartyAcctgPreference", {organizationPartyId: f.org, settlementApplicationGuardEnabled: "N"})
     return f
 }
 function scope(f, direction = "receivable") {
@@ -68,13 +74,15 @@ function payment(f, amount = "60", direction = "receivable", extra = {}) {
     return made.paymentId
 }
 function credit(f, sourceInvoiceId, amount = "25") {
-    const result = call("mantle.account.InvoiceServices.create#LinkedCreditMemo", {
+    const result = call("mantle.account.InvoiceServices.create#InvoiceCreditMemo", {
         organizationPartyId: f.org,
-        invoiceId: sourceInvoiceId,
+        originalInvoiceId: sourceInvoiceId,
         amount,
+        linkToOriginal: true,
+        allocateToLines: true,
         operationKey: "settle-credit-" + sourceInvoiceId
     })
-    const row = lib.one(lib.invoiceEntity, {invoiceId: result.creditMemoInvoiceId})
+    const row = lib.one(lib.invoiceEntity, {invoiceId: result.invoiceId})
     call("mantle.account.InvoiceServices.change#InvoiceState", {
         organizationPartyId: f.org,
         invoiceId: row.invoiceId,
@@ -101,17 +109,21 @@ function review(f, allocations, adjustments = [], direction = "receivable", extr
         Object.assign(scope(f, direction), {effectiveDate: f.timestamp, allocations, adjustments, sourceVersions}, extra)
     )
 }
-function confirm(preview, operationKey) {
-    return native("apply#Settlement", {previewId: preview.previewId, inputFingerprint: preview.inputFingerprint, operationKey})
+// Confirm a review with its own operation key, or with the one given.
+function confirm(preview, operationKey = null) {
+    return native(
+        "apply#Settlement",
+        Object.assign(
+            {previewId: preview.previewId, inputFingerprint: preview.inputFingerprint},
+            operationKey ? {operationKey} : {}
+        )
+    )
 }
 function count(entity, conditions = {}) {
     return lib.find(entity, conditions).count()
 }
 function rejected(name, p) {
     return base.rejected(name.includes(".") ? name : services + name, p)
-}
-function auditCount() {
-    return count("moqui.entity.EntityAuditLog")
 }
 function user(f, suffix, permissions) {
     const id = f.org.slice(0, 25) + "_" + suffix
@@ -185,32 +197,9 @@ function legacyDirectPayment(f, invoiceId, amount = "10") {
         lib.one("mantle.account.payment.PaymentApplication", {paymentApplicationId: made.paymentApplicationId}) ||
         lib.rows("mantle.account.payment.PaymentApplication", {paymentId: made.paymentId})[0]
     if (!application) throw new Error("Real legacy direct cash source needs its initial application")
-    // A migrated legacy zero link can retain its original direct cash posting; no new GL is necessary to reapply it to the same invoice.
+    // A migrated zero application keeps its direct cash posting; reapplying it to the same invoice needs no new posting.
     clearImportedApplication(application.paymentApplicationId, invoiceId)
     return {paymentId: made.paymentId, originalApplicationId: application.paymentApplicationId}
-}
-function repostReviewed(acctgTransId) {
-    const preview = call("mantle.ledger.JournalServices.preview#Entry", {acctgTransId})
-    if (!preview.valid) throw new Error("Fixture posting review failed: " + JSON.stringify(preview.findings))
-    return call("mantle.ledger.JournalServices.post#Entry", {
-        acctgTransId,
-        previewId: preview.previewId,
-        inputFingerprint: preview.inputFingerprint,
-        operationKey: "settle-fixture-" + ec.user.randomString(24),
-        changeReason: "Reviewed native settlement fixture"
-    })
-}
-function importedApplication(f, parameters) {
-    const prior = lib.policy.preference(f.org).settlementApplicationGuardEnabled
-    call("update#mantle.ledger.config.PartyAcctgPreference", {organizationPartyId: f.org, settlementApplicationGuardEnabled: "N"})
-    try {
-        return native("apply#InvoicePayment", parameters)
-    } finally {
-        call("update#mantle.ledger.config.PartyAcctgPreference", {
-            organizationPartyId: f.org,
-            settlementApplicationGuardEnabled: prior
-        })
-    }
 }
 ;({
     base,
@@ -218,6 +207,7 @@ function importedApplication(f, parameters) {
     call,
     native,
     fixtures,
+    withoutSettlementFlag,
     scope,
     invoice,
     payment,
@@ -227,11 +217,8 @@ function importedApplication(f, parameters) {
     confirm,
     count,
     rejected,
-    auditCount,
     user,
     directPayment,
     legacyDirectPayment,
-    repostReviewed,
-    importedApplication,
     clearImportedApplication
 })

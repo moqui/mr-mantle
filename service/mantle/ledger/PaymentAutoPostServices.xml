@@ -110,7 +110,8 @@ along with this software (see the LICENSE.md file). If not, see
                             in-map="{paymentTypeEnumId:payment.paymentTypeEnumId, partyAcctgPreference:fromPartyAcctgPreference,
                                 acctgTrans:fromAcctgTrans, amount:payment.amount,
                                 organizationPartyId:payment.fromPartyId, otherPartyId:payment.toPartyId,
-                                isApplied:'N', isPayable:'Y', debitCreditFlag:'D', useErrorJournal:useErrorJournal}"
+                                isApplied:'N', isPayable:'Y', debitCreditFlag:'D', useErrorJournal:useErrorJournal,
+                                glAccountId:payment.overrideTypeGlAccountId}"
                             out-map="context"/>
                     <iterate list="paymentApplicationList" entry="paymentApplication">
                         <service-call name="mantle.ledger.PaymentAutoPostServices.post#PaymentApplication"
@@ -135,7 +136,8 @@ along with this software (see the LICENSE.md file). If not, see
                             in-map="{paymentTypeEnumId:payment.paymentTypeEnumId, partyAcctgPreference:toPartyAcctgPreference,
                                 acctgTrans:toAcctgTrans, amount:payment.amount,
                                 organizationPartyId:payment.toPartyId, otherPartyId:payment.fromPartyId,
-                                isApplied:'N', isPayable:'N', debitCreditFlag:'C', useErrorJournal:useErrorJournal}"
+                                isApplied:'N', isPayable:'N', debitCreditFlag:'C', useErrorJournal:useErrorJournal,
+                                glAccountId:payment.overrideTypeGlAccountId}"
                             out-map="context"/>
                     <iterate list="paymentApplicationList" entry="paymentApplication">
                         <service-call name="mantle.ledger.PaymentAutoPostServices.post#PaymentApplication"
@@ -156,7 +158,7 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- Payment Method entry for from Party (outgoing) -->
             <if condition="fromPartyAcctgPreference != null">
                 <service-call name="mantle.ledger.PaymentAutoPostServices.get#PaymentMethodGlAccount"
-                        in-map="{paymentId:payment.paymentId,
+                        in-map="{paymentId:payment.paymentId, isPayable:'Y',
                             organizationPartyId:payment.fromPartyId, otherPartyId:payment.toPartyId,
                             finAccountTypeId:financialAccount?.finAccountTypeId,
                             creditCardTypeEnumId:creditCard?.creditCardTypeEnumId}"
@@ -175,7 +177,7 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- Payment Method entry for to Party (incoming) -->
             <if condition="toPartyAcctgPreference != null">
                 <service-call name="mantle.ledger.PaymentAutoPostServices.get#PaymentMethodGlAccount"
-                        in-map="{paymentId:payment.paymentId,
+                        in-map="{paymentId:payment.paymentId, isPayable:'N',
                             organizationPartyId:payment.toPartyId, otherPartyId:payment.fromPartyId,
                             finAccountTypeId:financialAccount?.finAccountTypeId,
                             creditCardTypeEnumId:creditCard?.creditCardTypeEnumId}"
@@ -291,6 +293,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="isPayable" required="true"/>
             <parameter name="debitCreditFlag" required="true"/>
             <parameter name="useErrorJournal" type="Boolean" required="true"/>
+            <parameter name="glAccountId"><description>An explicit account, used instead of the mapped one</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="useErrorJournal" type="Boolean"/>
@@ -298,7 +301,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <service-call name="mantle.ledger.PaymentAutoPostServices.get#PaymentTypeGlAccount" out-map="paymentGlAccountOut"
                     in-map="{paymentTypeEnumId:paymentTypeEnumId, organizationPartyId:organizationPartyId,
-                        otherPartyId:otherPartyId, isApplied:isApplied, isPayable:isPayable}"/>
+                        otherPartyId:otherPartyId, isApplied:isApplied, isPayable:isPayable, glAccountId:glAccountId}"/>
             <set field="paymentGlAccountId" from="paymentGlAccountOut?.glAccountId"/>
             <set field="paymentGlAccountTypeEnumId" from="paymentGlAccountOut?.glAccountTypeEnumId"/>
             <if condition="!paymentGlAccountId"><set field="useErrorJournal" from="true"/></if>
@@ -315,6 +318,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="isApplied" required="true"/>
             <parameter name="isPayable" required="true"/>
             <parameter name="otherPartyId"/>
+            <parameter name="glAccountId"><description>An explicit account (Payment.overrideTypeGlAccountId), used instead of
+                the PaymentTypeGlAccount mapping</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="glAccountId"/>
@@ -358,6 +363,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="otherPartyId"/>
             <parameter name="finAccountTypeId"/>
             <parameter name="creditCardTypeEnumId"/>
+            <parameter name="isPayable"><description>Y for the from (outgoing) side, N for the to (incoming) side; needed when
+                the organization is both parties, as in an internal transfer. Defaults by organizationPartyId.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="glAccountId"/>
@@ -365,19 +372,23 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
-            <set field="isPayable" from="organizationPartyId == payment.fromPartyId ? 'Y' : 'N'"/>
+            <if condition="!isPayable">
+                <set field="isPayable" from="organizationPartyId == payment.fromPartyId ? 'Y' : 'N'"/>
+            </if>
             <set field="paymentInstrumentEnumId" from="payment.paymentInstrumentEnumId"/>
 
             <!-- try Payment.overrideGlAccountId (overrides all) -->
             <set field="glAccountId" from="payment.overrideGlAccountId"/>
 
             <!-- try PaymentMethod.glAccountId (for paymentMethodId or toPaymentMethodId depending on whether from/to is org) -->
-            <if condition="!glAccountId &amp;&amp; payment.paymentMethodId &amp;&amp; payment.fromPartyId == organizationPartyId">
+            <if condition="!glAccountId &amp;&amp; payment.paymentMethodId &amp;&amp; payment.fromPartyId == organizationPartyId
+                    &amp;&amp; isPayable == 'Y'">
                 <entity-find-one entity-name="mantle.account.method.PaymentMethod" value-field="paymentMethod">
                     <field-map field-name="paymentMethodId" from="payment.paymentMethodId"/></entity-find-one>
                 <set field="glAccountId" from="paymentMethod.glAccountId"/>
             </if>
-            <if condition="!glAccountId &amp;&amp; payment.toPaymentMethodId &amp;&amp; payment.toPartyId == organizationPartyId">
+            <if condition="!glAccountId &amp;&amp; payment.toPaymentMethodId &amp;&amp; payment.toPartyId == organizationPartyId
+                    &amp;&amp; isPayable == 'N'">
                 <entity-find-one entity-name="mantle.account.method.PaymentMethod" value-field="paymentMethod">
                     <field-map field-name="paymentMethodId" from="payment.toPaymentMethodId"/></entity-find-one>
                 <set field="glAccountId" from="paymentMethod.glAccountId"/>

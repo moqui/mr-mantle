@@ -9,10 +9,7 @@ function lockSources(transactions) {
     if (!ids.length) return {payments: {}, legacyOnly: false}
     const initial = Array.from(lib.find(P).condition("paymentId", "in", ids).useCache(false).list()),
         txOrgs = [...new Set(txs.map(tx => tx.organizationPartyId).filter(Boolean))].sort(),
-        adopted = org => {
-            const pref = lib.policy.preference(org)
-            return pref.settlementApplicationGuardEnabled === "Y" || pref.postingGuardEnabled === "Y"
-        },
+        adopted = org => lib.policy.preference(org).postingGuardEnabled === "Y",
         needsOrganization = initial.some(legacy.isManaged) || txOrgs.some(adopted)
     if (!needsOrganization) {
         const records = legacy.lockUnmanagedPayments(ids)
@@ -142,57 +139,35 @@ function cashWrite(tx, payment, types, alreadyPosted = false) {
 function posting(tx, types) {
     ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const {payments, legacyOnly} = lockSources([tx])
-    ec.resource
-        .script("component://mr-mantle/service/mantle/account/PaymentTransferGuard.js")
-        .source(tx, {alreadyPosted: tx.isPosted === "Y", operation: "post"})
     ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").source(tx, types)
     eachSource(tx, payments, payment => cashWrite(tx, payment, types, tx.isPosted === "Y"))
     return legacyOnly
 }
-function header(p, types) {
-    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
-    if (!p.financialChanged) return
-    const reversed =
-            p.after?.reverseOfAcctgTransId && lib.find(T, {acctgTransId: p.after.reverseOfAcctgTransId}).useCache(false).one(),
-        sources = [p.before, p.operation === "delete" ? null : p.after, reversed],
-        {payments, legacyOnly} = lockSources(sources)
-    for (const tx of sources.filter(Boolean))
-        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").source(tx, types)
-    for (const tx of sources.filter(Boolean))
-        ec.resource
-            .script("component://mr-mantle/service/mantle/account/PaymentTransferGuard.js")
-            .source(tx, {
-                alreadyPosted: tx === reversed ? tx.isPosted === "Y" : p.before?.isPosted === "Y",
-                operation: p.operation
-            })
-    for (const tx of sources.filter(Boolean)) eachSource(tx, payments, eligible)
-    if (p.before) eachSource(p.before, payments, payment => cashWrite(p.before, payment, types, p.before.isPosted === "Y"))
-    if (reversed) eachSource(reversed, payments, payment => cashWrite(reversed, payment, types, reversed.isPosted === "Y"))
-    if (p.operation !== "delete") {
-        if (
-            !p.before &&
-            p.after?.isPosted === "Y" &&
-            ["capture", "refund"].includes(payments[p.after.paymentId]?.gatewayRole) &&
-            !application(p.after, payments[p.after.paymentId], types)
-        )
-            lib.denied("GATEWAY_CASH_POSTING_IMMUTABLE", "Construct provider cash before posting its reviewed entries")
-        eachSource(p.after, payments, payment => cashWrite(p.after, payment, types, p.before?.isPosted === "Y"))
+// A payment with a pending provider refund hold keeps its original cash posting.
+function heldCash(tx, cashTypes) {
+    if (!tx?.paymentId || !cashTypes.includes(tx.acctgTransTypeEnumId) || !tx.organizationPartyId) return
+    const initial = lib.one(P, {paymentId: tx.paymentId})
+    if (!legacy.isManaged(initial)) {
+        legacy.lockUnmanagedPayments([tx.paymentId])
+        return
     }
-    return legacyOnly
+    lib.find("mantle.party.Party", {partyId: tx.organizationPartyId}).forUpdate(true).one()
+    lib.find(P, {paymentId: tx.paymentId}).forUpdate(true).one()
+    const held = lib
+        .find("mantle.account.payment.PaymentGatewayReservation", {
+            organizationPartyId: tx.organizationPartyId,
+            paymentId: tx.paymentId,
+            holdKind: "cash",
+            status: "held"
+        })
+        .useCache(false)
+        .limit(1)
+        .one()
+    if (!held) return
+    const hold = ec.resource
+        .script("component://mr-mantle/service/mantle/account/PaymentGatewayReservations.js")
+        .cashHoldSummary({organizationPartyId: tx.organizationPartyId, paymentId: tx.paymentId})
+    if (hold.heldAmount.compare(0) > 0)
+        lib.denied("GATEWAY_CASH_RESERVED", "Resolve the pending provider refund before changing its original cash posting")
 }
-function entry(p, types) {
-    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
-    if (!p.financialChanged) return
-    const ids = [...new Set([p.before?.acctgTransId, p.after?.acctgTransId].filter(Boolean))].sort(),
-        transactions = ids.length ? Array.from(lib.find(T).condition("acctgTransId", "in", ids).useCache(false).list()) : [],
-        {payments, legacyOnly} = lockSources(transactions)
-    for (const tx of transactions)
-        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").source(tx, types)
-    for (const tx of transactions)
-        ec.resource
-            .script("component://mr-mantle/service/mantle/account/PaymentTransferGuard.js")
-            .source(tx, {alreadyPosted: tx.isPosted === "Y", operation: p.operation})
-    for (const tx of transactions) eachSource(tx, payments, payment => cashWrite(tx, payment, types, tx.isPosted === "Y"))
-    return legacyOnly
-}
-;({posting, header, entry})
+;({posting, heldCash})

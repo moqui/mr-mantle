@@ -2,7 +2,7 @@
 const workflow = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentWorkflow.js")
 const lifecycle = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentLifecycle.js")
 const settlement = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentSettlement.js")
-const sourceGuard = ec.resource.script("component://mr-mantle/service/mantle/account/SourcePostingGuard.js")
+const sourceGuard = ec.resource.script("component://mr-mantle/service/mantle/ledger/PostingGuard.js")
 const legacy = ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
 const {lib, P, A} = workflow
 const {find, one, rows, map, call, policy, hash, denied} = lib

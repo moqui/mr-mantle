@@ -14,68 +14,10 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
     <extend-entity entity-name="Payment" package="mantle.account.payment">
-        <field name="internalTransferId" type="id"/>
-        <field name="internalTransferLeg" type="text-short"/>
+        <field name="overrideTypeGlAccountId" type="id"><description>Overrides the GlAccount for the payment type entry of an
+            unapplied payment, the other side of the PaymentMethod entry: the expense account of a charge paid without an
+            invoice, such as the fee of an internal transfer.</description></field>
+        <relationship type="one" title="OverrideType" related="mantle.ledger.account.GlAccount" short-alias="overrideTypeGlAccount">
+            <key-map field-name="overrideTypeGlAccountId"/></relationship>
     </extend-entity>
-    <entity entity-name="PaymentTransferPreview" package="mantle.account.payment" cache="never">
-        <field name="previewId" type="id" is-pk="true"/>
-        <field name="internalTransferId" type="id"/>
-        <field name="organizationPartyId" type="id"/>
-        <field name="userId" type="id"/>
-        <field name="inputFingerprint" type="text-long"/>
-        <field name="requestJson" type="text-very-long"/>
-        <field name="payloadJson" type="text-very-long"/>
-        <field name="status" type="text-short"/>
-        <field name="operationKey" type="id"/>
-        <field name="resultJson" type="text-very-long"/>
-        <field name="createdDate" type="date-time"/>
-        <field name="expiresDate" type="date-time"/>
-    </entity>
-    <entity entity-name="PaymentInternalTransfer" package="mantle.account.payment" cache="never">
-        <field name="internalTransferId" type="id" is-pk="true"/>
-        <field name="organizationPartyId" type="id"/>
-        <field name="userId" type="id"/>
-        <field name="principalAmount" type="currency-amount"/>
-        <field name="feeAmount" type="currency-amount"/>
-        <field name="currencyUomId" type="id"/>
-        <field name="effectiveDate" type="date-time"/>
-        <field name="accountingDate" type="date"/>
-        <field name="fromPaymentMethodId" type="id"/>
-        <field name="fromMethodVersion" type="text-long"/>
-        <field name="toPaymentMethodId" type="id"/>
-        <field name="toMethodVersion" type="text-long"/>
-        <field name="fromPaymentId" type="id"/>
-        <field name="toPaymentId" type="id"/>
-        <field name="fromAcctgTransId" type="id"/>
-        <field name="toAcctgTransId" type="id"/>
-        <field name="transitGlAccountId" type="id"/>
-        <field name="fromCashGlAccountId" type="id"/>
-        <field name="toCashGlAccountId" type="id"/>
-        <field name="feeGlAccountId" type="id"/>
-        <field name="referenceNumber" type="text-medium"/>
-        <field name="reason" type="text-very-long"/>
-        <field name="status" type="text-short"/>
-        <field name="inputFingerprint" type="text-long"/>
-        <field name="operationKey" type="id"/>
-        <field name="methodsJson" type="text-very-long"/>
-        <field name="plansJson" type="text-very-long"/>
-        <field name="resultJson" type="text-very-long"/>
-        <field name="createdDate" type="date-time"/>
-        <field name="completedDate" type="date-time"/>
-        <index name="TRANSFER_FROMPAYMENTID" unique="true">
-            <index-field name="fromPaymentId"/>
-        </index>
-        <index name="TRANSFER_TOPAYMENTID" unique="true">
-            <index-field name="toPaymentId"/>
-        </index>
-        <index name="TRANSFER_FROMACCTGTRANSID" unique="true">
-            <index-field name="fromAcctgTransId"/>
-        </index>
-        <index name="TRANSFER_TOACCTGTRANSID" unique="true">
-            <index-field name="toAcctgTransId"/>
-        </index>
-        <index name="TRANSFER_OPERATIONKEY" unique="true">
-            <index-field name="operationKey"/>
-        </index>
-    </entity>
 </entities>

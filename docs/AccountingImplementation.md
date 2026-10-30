@@ -128,17 +128,14 @@ Transfers remain the last P5 assignment; execution pauses before P6. Detailed fi
 
 ## P5b3 paired transfers and checkpoint
 
-`preview#InternalTransfer`, `get#InternalTransferPreview` and `create#InternalTransfer` now provide one reviewed atomic
-pair with exact retry identity. Source cash is principal plus explicit expense fee; destination cash is principal.
-Exactly two verified transactions clear one shared transit account. Two distinct owned methods may share a cash GL;
-one-sided Payment method slots and immutable leg identity preserve independent reconciliation. Native reads derive
-cash direction from the leg. The operation invokes no legacy org-self autoposter and creates no trade application.
-
-Common guards permanently protect paired money/GL identity with flags N. Current authority, private organization,
-fresh banking/subtype/policy/account rows, fiscal/typed locks and base currency are checked under lock. Each leg owns
-one immutable detail output; it cannot issue a check or receipt. Default transit mappings now include the missing
-258300000 template assignment. An explicitly targeted inert test fixture proves rollback after the first actual
-posting, followed by same-key success; it grants no financial admission.
+An internal transfer is one Mantle payment: `create#InternalTransfer` confirms a retained `preview#InternalTransfer`
+and creates a delivered `PtInternalTransfer` payment from the organization to itself, `paymentMethodId` the from method
+and `toPaymentMethodId` the to method, through `create#Payment`. Its `PaymentGlPost` SECA runs `post#Payment`, which posts
+the outgoing and incoming transactions through the `PtInternalTransfer` transit `PaymentTypeGlAccount` (258300000 by
+default); `get#PaymentMethodGlAccount` takes `isPayable` so each side finds its own method's cash account. One service
+transaction holds both sides, so they post together or not at all. A fee is its own `PtDisbursement` payment to the fee
+party, posted to the chosen expense account through `Payment.overrideTypeGlAccountId`. `get#InternalTransferPlan` holds
+the checks for the preview and the confirmation.
 
 Independent review is complete. The final focused native gate passes 45/45 across 13 specs, all 10 added transfer cases;
 BOSS passes 40/40 including its eight added cases. Changed XML validates and screen lint has no new failures/sites.

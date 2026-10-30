@@ -33,7 +33,6 @@ function context(p, write = false, lock = false, requireParty = true) {
     if (requireParty && one("mantle.party.PartyRole", {partyId: p.partyId, roleTypeId: "OrgInternal"}))
         denied("INTERCOMPANY_EXCLUDED", "Internal counterparties use the intercompany workflow")
     if (requireParty) lib.policy.currency(p.currencyUomId)
-    const guardEnabled = lib.policy.preference(organizationPartyId).settlementApplicationGuardEnabled === "Y"
     return {
         organizationPartyId,
         partyId: p.partyId,
@@ -41,9 +40,7 @@ function context(p, write = false, lock = false, requireParty = true) {
         currencyUomId: p.currencyUomId,
         capabilities: {
             canRead: true,
-            canApply: has(side + "_EDIT") && guardEnabled,
-            guardEnabled,
-            reasons: guardEnabled ? [] : ["SETTLEMENT_GUARD_REQUIRED"],
+            canApply: has(side + "_EDIT"),
             canReadLedger:
                 has("ACCOUNTING_VIEW") || has("ACCOUNTING_GL_POST") || has("ACCOUNTING_ADMIN") || lib.access.systemAdmin()
         }
@@ -401,8 +398,6 @@ const paymentFields = [
     "gatewayInstructionId",
     "gatewayAttemptId",
     "gatewayRole",
-    "internalTransferId",
-    "internalTransferLeg",
     "lastUpdatedStamp"
 ]
 const manualInstruments = [
@@ -623,11 +618,7 @@ function paymentScope(p, write = false, lock = false) {
         financeDirection,
         tradeExcluded: partyId === org || Boolean(one("mantle.party.PartyRole", {partyId, roleTypeId: "OrgInternal"})),
         cashDirection:
-            record.paymentTypeEnumId === "PtInternalTransfer"
-                ? record.internalTransferLeg
-                : record.fromPartyId === org
-                  ? "outgoing"
-                  : "incoming",
+            record.paymentTypeEnumId === "PtInternalTransfer" ? "transfer" : record.fromPartyId === org ? "outgoing" : "incoming",
         partyId
     })
 }
@@ -770,7 +761,7 @@ function paymentCapabilities(scope, applicationRows = [], posted = false) {
         canGatewayRefund: false,
         canRefund: false,
         canPreviewRefund: false,
-        canTransfer: Boolean(scope.broad && has("PAYMENT_EDIT") && scope.guardEnabled),
+        canTransfer: Boolean(scope.broad && has("PAYMENT_EDIT")),
         reasons: [],
         unavailableReason: "PAYMENT_SLICE_UNAVAILABLE"
     }
@@ -805,11 +796,7 @@ function paymentProjection(scope, record, appRows, names = {}) {
         }
     const org = scope.organizationPartyId,
         cashDirection =
-            record.paymentTypeEnumId === "PtInternalTransfer"
-                ? record.internalTransferLeg
-                : record.fromPartyId === org
-                  ? "outgoing"
-                  : "incoming",
+            record.paymentTypeEnumId === "PtInternalTransfer" ? "transfer" : record.fromPartyId === org ? "outgoing" : "incoming",
         partyId = cashDirection === "outgoing" ? record.toPartyId : record.fromPartyId,
         financeDirection =
             record.paymentTypeEnumId === "PtInternalTransfer"
@@ -864,10 +851,7 @@ function paymentProjection(scope, record, appRows, names = {}) {
         out.availableAmount = toDecimal(0)
     }
     if (record.paymentTypeEnumId === "PtInternalTransfer") {
-        const transfer = ec.resource
-            .script("component://mr-mantle/service/mantle/account/PaymentTransfers.js")
-            .projection(scope, record)
-        out.transferSummary = transfer.transferSummary
+        out.transferSummary = transferProjection(record).transferSummary
         Object.assign(out, {
             appliedTotal: toDecimal(0),
             unappliedTotal: toDecimal(0),
@@ -983,6 +967,36 @@ function methodVersion(method, identities = null) {
         bank: bank ? lib.policy.pick(lib.map(bank), bankIdentityFields) : null,
         card: card ? lib.policy.pick(lib.map(card), cardIdentityFields) : null
     })
+}
+// An internal transfer: one payment from the organization's from method (paymentMethodId) to its to method
+// (toPaymentMethodId), shown as its outgoing and incoming sides with masked method labels.
+function transferProjection(record) {
+    const label = paymentMethodId => {
+            const method = paymentMethodId && one("mantle.account.method.PaymentMethod", {paymentMethodId})
+            return method ? methodRows([method])[0].label : null
+        },
+        summary = {
+            paymentId: record.paymentId,
+            principalAmount: String(record.amount ?? 0),
+            currencyUomId: record.amountUomId,
+            accountingDateText: record.effectiveDate ? ec.l10n.format(record.effectiveDate, "yyyy-MM-dd") : null,
+            fromMethodLabel: label(record.paymentMethodId),
+            toMethodLabel: label(record.toPaymentMethodId),
+            referenceNumber: record.paymentRefNum,
+            reason: record.comments
+        },
+        side = (leg, maskedMethodLabel) => ({
+            paymentId: record.paymentId,
+            leg,
+            maskedMethodLabel,
+            amount: summary.principalAmount,
+            currencyUomId: summary.currencyUomId,
+            accountingDateText: summary.accountingDateText
+        })
+    return {
+        transferSummary: summary,
+        transferLegRows: [side("outgoing", summary.fromMethodLabel), side("incoming", summary.toMethodLabel)]
+    }
 }
 function methodRows(records) {
     const ids = records.map(row => row.paymentMethodId),
@@ -1182,10 +1196,7 @@ function paymentDetailRead(p) {
     out.outputRows = capabilities.outputRows
     delete capabilities.outputRows
     if (record.paymentTypeEnumId === "PtInternalTransfer") {
-        Object.assign(
-            out,
-            ec.resource.script("component://mr-mantle/service/mantle/account/PaymentTransfers.js").projection(scope, record)
-        )
+        Object.assign(out, transferProjection(record))
         Object.assign(out.totals, {
             appliedTotal: toDecimal(0),
             unappliedTotal: toDecimal(0),
@@ -1351,7 +1362,7 @@ function paymentDetailRead(p) {
     }
     return out
 }
-const operations = {payments, paymentDetail: paymentDetailRead, access, methodScope, maskedMethods}
+const operations = {openItems, payments, paymentDetail: paymentDetailRead, access, methodScope, maskedMethods}
 // Runs one payment read for its service and puts the results in the service's context.
 function execute(op, context) {
     if (!operations[op]) throw new Error("Unknown payment workflow operation " + op)

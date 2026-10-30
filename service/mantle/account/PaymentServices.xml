@@ -443,8 +443,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
-                <exclude field-name="internalTransferId"/>
-                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
@@ -480,8 +478,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
-                <exclude field-name="internalTransferId"/>
-                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
             </auto-parameters>
         </in-parameters>
@@ -603,8 +599,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
-                <exclude field-name="internalTransferId"/>
-                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="overrideGlAccountId"/><exclude field-name="acctgTransResultEnumId"/>
                 <exclude field-name="reconcileStatusId"/><exclude field-name="paymentMethodFileId"/></auto-parameters>
@@ -680,8 +674,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
-                <exclude field-name="internalTransferId"/>
-                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="fromPartyId"/><exclude field-name="toPartyId"/><exclude field-name="forInvoiceId"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
@@ -840,8 +832,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
-                <exclude field-name="internalTransferId"/>
-                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
@@ -864,6 +854,10 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ================================================== -->
 
     <service verb="apply" noun="InvoicePayment">
+        <description>Apply a delivered or confirmed payment to an issued invoice of the opposite parties, for at most the
+            invoice's unpaid and the payment's unapplied total, and mark the invoice paid when nothing is left unpaid. Locks
+            the organization and both documents first. Refuses an application dated before a document's posting, an internal
+            transfer, a gateway authorization or held provider cash, and an amount finer than the currency.</description>
         <in-parameters>
             <parameter name="paymentId" required="true"/>
             <parameter name="invoiceId" required="true"/>
@@ -871,12 +865,20 @@ along with this software (see the LICENSE.md file). If not, see
                 Actual amountApplied will never be greater than Invoice unpaidTotal or Payment unappliedTotal.</description></parameter>
             <parameter name="billingAccountId"/>
             <parameter name="overrideGlAccountId"/>
+            <parameter name="appliedDate" type="Timestamp"><description>The application's effective date; defaults to the later
+                of the two documents' dates. When given, an invoice the application pays in full gets it as its
+                paidDate.</description></parameter>
+            <parameter name="accountingDate" type="Date"><description>The book day of the application and its posting, as
+                reviewed by the caller; defaults to the day of the posting's transaction date.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="paymentApplicationId"/>
             <parameter name="amountApplied" type="BigDecimal"/>
         </out-parameters>
         <actions>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <script>ec.resource.script(settlement).execute('lockApplication',
+                {paymentIds:[paymentId], invoiceIds:[invoiceId]})</script>
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
             <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice"/>
             <set field="amountApplied" from="toDecimal(0)"/>
@@ -912,14 +914,17 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="mantle.account.PaymentServices.check#InvoiceStatusForPayment" in-map="{invoiceId:invoiceId}"/>
 
             <set field="amountApplied" from="amount"/>
+            <set field="paidDate" from="appliedDate"/>
             <!-- for appliedDate get latest between effectiveDate and invoiceDate -->
-            <set field="appliedDate" from="payment.effectiveDate != null &amp;&amp; invoice.invoiceDate != null ?
+            <set field="appliedDate" from="appliedDate ?? (payment.effectiveDate != null &amp;&amp; invoice.invoiceDate != null ?
                     (Number(payment.effectiveDate) &gt; Number(invoice.invoiceDate) ? payment.effectiveDate : invoice.invoiceDate) :
-                    (payment.effectiveDate || invoice.invoiceDate || ec.user.nowTimestamp)"/>
+                    (payment.effectiveDate || invoice.invoiceDate || ec.user.nowTimestamp))"/>
+            <script>ec.resource.script(settlement).execute('checkApplication', {paymentId:paymentId, invoiceId:invoiceId,
+                amount:amountApplied, appliedDate:appliedDate, accountingDate:accountingDate})</script>
             <service-call name="create#mantle.account.payment.PaymentApplication" out-map="context"
                     in-map="{paymentId:paymentId, invoiceId:invoiceId, billingAccountId:billingAccountId,
                         overrideGlAccountId:overrideGlAccountId, amountApplied:amountApplied,
-                        appliedDate:appliedDate}"/>
+                        appliedDate:appliedDate, accountingDate:accountingDate}"/>
 
             <!-- Payment Applied, now update Invoice status -->
             <service-call name="mantle.account.InvoiceServices.get#InvoiceTotal" in-map="{invoiceId:invoiceId}" out-map="context"/>
@@ -933,6 +938,9 @@ along with this software (see the LICENSE.md file). If not, see
             </then><else>
                 <log message="After apply payment ${paymentId} to invoice ${invoiceId} not setting to Payment Sent/Received because unpaidTotal is ${unpaidTotal}"/>
             </else></if>
+            <if condition="paidDate &amp;&amp; toDecimal(unpaidTotal).isZero()">
+                <service-call name="update#mantle.account.invoice.Invoice" in-map="{invoiceId:invoiceId, paidDate:paidDate}"/>
+            </if>
         </actions>
     </service>
     <service verb="apply" noun="PaymentForInvoice">
@@ -1025,6 +1033,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="apply" noun="PaymentToPayment">
+        <description>Apply a payment to an opposite payment of the same parties, both delivered or confirmed, for at most the
+            unapplied total of either. Locks the organization and both payments first, and refuses as apply#InvoicePayment
+            does.</description>
         <in-parameters>
             <parameter name="paymentId" required="true"/>
             <parameter name="toPaymentId" required="true"/>
@@ -1032,12 +1043,20 @@ along with this software (see the LICENSE.md file). If not, see
                 Actual amountApplied will never be greater than unappliedTotal of either Payment.</description></parameter>
             <parameter name="billingAccountId"/>
             <parameter name="overrideGlAccountId"/>
+            <parameter name="appliedDate" type="Timestamp"><description>The application's effective date; defaults to the later
+                of the two documents' dates. When given, an invoice the application pays in full gets it as its
+                paidDate.</description></parameter>
+            <parameter name="accountingDate" type="Date"><description>The book day of the application and its posting, as
+                reviewed by the caller; defaults to the day of the posting's transaction date.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="paymentApplicationId"/>
             <parameter name="amountApplied" type="BigDecimal"/>
         </out-parameters>
         <actions>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <script>ec.resource.script(settlement).execute('lockApplication',
+                {paymentIds:[paymentId, toPaymentId], invoiceIds:[]})</script>
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="toPayment">
                 <field-map field-name="paymentId" from="toPaymentId"/></entity-find-one>
@@ -1074,16 +1093,22 @@ along with this software (see the LICENSE.md file). If not, see
 
             <set field="amountApplied" from="amount"/>
             <!-- for appliedDate get latest between effectiveDate and invoiceDate -->
-            <set field="appliedDate" from="payment.effectiveDate != null &amp;&amp; toPayment.effectiveDate != null ?
+            <set field="appliedDate" from="appliedDate ??
+                    (payment.effectiveDate != null &amp;&amp; toPayment.effectiveDate != null ?
                     (Number(payment.effectiveDate) &gt; Number(toPayment.effectiveDate) ? payment.effectiveDate : toPayment.effectiveDate) :
-                    (payment.effectiveDate || toPayment.effectiveDate || ec.user.nowTimestamp)"/>
+                    (payment.effectiveDate || toPayment.effectiveDate || ec.user.nowTimestamp))"/>
+            <script>ec.resource.script(settlement).execute('checkApplication', {paymentId:paymentId, toPaymentId:toPaymentId,
+                amount:amountApplied, appliedDate:appliedDate, accountingDate:accountingDate})</script>
             <service-call name="create#mantle.account.payment.PaymentApplication" out-map="context"
                     in-map="{paymentId:paymentId, toPaymentId:toPaymentId, billingAccountId:billingAccountId,
                         overrideGlAccountId:overrideGlAccountId, amountApplied:amountApplied,
-                        appliedDate:appliedDate}"/>
+                        appliedDate:appliedDate, accountingDate:accountingDate}"/>
         </actions>
     </service>
     <service verb="apply" noun="InvoiceToInvoice">
+        <description>Apply an issued invoice, usually a credit memo, to an opposite issued invoice of the same parties, for at
+            most the unpaid total of either, and mark each paid when nothing is left unpaid. Locks the organization and both
+            invoices first, and refuses as apply#InvoicePayment does.</description>
         <in-parameters>
             <parameter name="invoiceId" required="true"/>
             <parameter name="toInvoiceId" required="true"/>
@@ -1091,12 +1116,20 @@ along with this software (see the LICENSE.md file). If not, see
                 Actual amountApplied will never be greater than unpaidTotal of either Invoice.</description></parameter>
             <parameter name="billingAccountId"/>
             <parameter name="overrideGlAccountId"/>
+            <parameter name="appliedDate" type="Timestamp"><description>The application's effective date; defaults to the later
+                of the two documents' dates. When given, an invoice the application pays in full gets it as its
+                paidDate.</description></parameter>
+            <parameter name="accountingDate" type="Date"><description>The book day of the application and its posting, as
+                reviewed by the caller; defaults to the day of the posting's transaction date.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="paymentApplicationId"/>
             <parameter name="amountApplied" type="BigDecimal"/>
         </out-parameters>
         <actions>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <script>ec.resource.script(settlement).execute('lockApplication',
+                {paymentIds:[], invoiceIds:[invoiceId, toInvoiceId]})</script>
             <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice"/>
             <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="toInvoice">
                 <field-map field-name="invoiceId" from="toInvoiceId"/></entity-find-one>
@@ -1137,14 +1170,17 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="mantle.account.PaymentServices.check#InvoiceStatusForPayment" in-map="{invoiceId:toInvoiceId}"/>
 
             <set field="amountApplied" from="amount"/>
+            <set field="paidDate" from="appliedDate"/>
             <!-- for appliedDate get latest between effectiveDate and invoiceDate -->
-            <set field="appliedDate" from="invoice.invoiceDate != null &amp;&amp; toInvoice.invoiceDate != null ?
+            <set field="appliedDate" from="appliedDate ?? (invoice.invoiceDate != null &amp;&amp; toInvoice.invoiceDate != null ?
                     (Number(invoice.invoiceDate) &gt; Number(toInvoice.invoiceDate) ? invoice.invoiceDate : toInvoice.invoiceDate) :
-                    (invoice.invoiceDate || toInvoice.invoiceDate || ec.user.nowTimestamp)"/>
+                    (invoice.invoiceDate || toInvoice.invoiceDate || ec.user.nowTimestamp))"/>
+            <script>ec.resource.script(settlement).execute('checkApplication', {invoiceId:invoiceId, toInvoiceId:toInvoiceId,
+                amount:amountApplied, appliedDate:appliedDate, accountingDate:accountingDate})</script>
             <service-call name="create#mantle.account.payment.PaymentApplication" out-map="context"
                     in-map="{invoiceId:invoiceId, toInvoiceId:toInvoiceId, billingAccountId:billingAccountId,
                         overrideGlAccountId:overrideGlAccountId, amountApplied:amountApplied,
-                        appliedDate:appliedDate}"/>
+                        appliedDate:appliedDate, accountingDate:accountingDate}"/>
 
             <!-- Payment Applied, now update from Invoice status -->
             <service-call name="mantle.account.InvoiceServices.get#InvoiceTotal" in-map="{invoiceId:invoiceId}" out-map="afterOut"/>
@@ -1158,6 +1194,9 @@ along with this software (see the LICENSE.md file). If not, see
             </then><else>
                 <log message="After apply invoice ${invoiceId} to invoice ${toInvoiceId} not setting to Payment Sent/Received because from invoice unpaidTotal is ${afterOut.unpaidTotal}"/>
             </else></if>
+            <if condition="paidDate &amp;&amp; toDecimal(afterOut.unpaidTotal).isZero()">
+                <service-call name="update#mantle.account.invoice.Invoice" in-map="{invoiceId:invoiceId, paidDate:paidDate}"/>
+            </if>
 
             <!-- Payment Applied, now update to Invoice status -->
             <service-call name="mantle.account.InvoiceServices.get#InvoiceTotal" in-map="{invoiceId:toInvoiceId}" out-map="toAfterOut"/>
@@ -1172,6 +1211,10 @@ along with this software (see the LICENSE.md file). If not, see
             </then><else>
                 <log message="After apply invoice ${invoiceId} to invoice ${toInvoiceId} not setting to Payment Sent/Received because to invoice unpaidTotal is ${toAfterOut.unpaidTotal}"/>
             </else></if>
+            <if condition="paidDate &amp;&amp; toDecimal(toAfterOut.unpaidTotal).isZero()">
+                <service-call name="update#mantle.account.invoice.Invoice"
+                        in-map="{invoiceId:toInvoiceId, paidDate:paidDate}"/>
+            </if>
         </actions>
     </service>
 
@@ -1222,12 +1265,17 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="unapply" noun="PaymentApplication">
+        <description>Set an application's amount to zero, keeping the amount in amountOriginallyApplied, and set a paid
+            invoice back to unpaid; the PaymentApplicationRevertGlPost SECA reverses its posting. Refuses the application
+            that funds a completed refund.</description>
         <in-parameters>
             <parameter name="paymentApplicationId" required="true"/>
         </in-parameters>
         <actions>
             <entity-find-one entity-name="mantle.account.payment.PaymentApplication" value-field="paymentApplication" for-update="true"/>
             <if condition="!toDecimal(paymentApplication.amountApplied ?? 0).isZero()">
+                <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js')
+                    .execute('checkUnapply', {paymentApplication:paymentApplication})</script>
                 <service-call name="update#mantle.account.payment.PaymentApplication"
                         in-map="{paymentApplicationId:paymentApplicationId, amountApplied:0.0,
                             amountOriginallyApplied:paymentApplication.amountApplied}"/>
@@ -1265,7 +1313,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="autoApply" noun="Payment" allow-remote="false">
-        <description>Confirm a reviewed automatic application only for individually adopted organizations; default-off remains a no-op.</description>
+        <description>Confirm a reviewed automatic application of a payment (preview#PaymentAutoApplication) as
+            apply#Settlement does. Without a review it applies nothing, as Mantle's original stub.</description>
         <implements service="mantle.account.PaymentServices.define#SettlementResult"/>
         <in-parameters>
             <parameter name="organizationPartyId"/>
@@ -1276,10 +1325,10 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters>
             <parameter name="invoiceIdList" type="List"/>
-            <parameter name="enabled" type="Boolean"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').autoApply(context))</script>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <script>ec.resource.script(settlement).execute('autoApply', context)</script>
         </actions>
     </service>
 
@@ -2222,7 +2271,10 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="find" noun="OpenItems" allow-remote="false">
-        <description>Current authoritative scoped invoice, credit and payment balances with independent paging and selected-row lookup.</description>
+        <description>Find a counterparty's open invoices, credits, receipts and payment targets in one currency, with their
+            current balances, a page at a time for each kind, and the selected records by key. Needs the side's view
+            permission (RECEIVABLE_VIEW or PAYABLE_VIEW) or a broad accounting view; refuses a private or internal
+            counterparty.</description>
         <implements service="mantle.account.PaymentServices.define#SettlementScope"/>
         <in-parameters>
             <parameter name="sourceKind"/>
@@ -2260,26 +2312,27 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="pageRangeHigh" type="Integer"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentWorkflow.js').openItems(context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
+            <script>ec.resource.script(workflow).execute('openItems', context)</script>
         </actions>
     </service>
     <service verb="find" noun="SettlementAdjustmentAccounts" allow-remote="false">
-        <description>Narrow identities of active assigned postable accounts for an explicit reviewed settlement adjustment.</description>
+        <description>Find the accounts a settlement discount or write-off can post to: assigned to the organization or an
+            organization it rolls up to, active on the effective date and open to posting, searched by ID, code or name
+            ignoring case, a page at a time; with the selected accounts that are still available. Needs the side's edit
+            permission.</description>
         <in-parameters>
             <parameter name="organizationPartyId"/>
-            <parameter name="direction" default="'receivable'"/>
+            <parameter name="direction" default-value="receivable"/>
             <parameter name="effectiveDate" type="Timestamp" required="true"/>
             <parameter name="text"/>
             <parameter name="selectedIdList" type="List"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
         </in-parameters>
         <out-parameters>
             <parameter name="rows" type="List"/>
             <parameter name="selectedRows" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="incomplete" type="Boolean"/>
-            <parameter name="errors" type="List"/>
             <parameter name="recordCount" type="Integer"/>
             <parameter name="pageIndex" type="Integer"/>
             <parameter name="pageSize" type="Integer"/>
@@ -2288,11 +2341,57 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="pageRangeHigh" type="Integer"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').adjustmentAccounts(context))</script>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <set field="scope" from="ec.resource.script(settlement).execute('scope',
+                    {organizationPartyId:organizationPartyId, direction:direction, write:true, requireParty:false})"/>
+            <set field="policy" value="component://mr-mantle/service/mantle/ledger/AccountingPolicy.js"/>
+            <set field="organizationIds"
+                    from="ec.resource.script(policy).organizationChain(scope.organizationPartyId, effectiveDate)"/>
+            <set field="pageSize" from="Math.min(100, Math.max(1, pageSize || 20))"/>
+            <set field="searchText" from="text ? '%' + text + '%' : null"/>
+            <entity-find entity-name="mantle.ledger.account.GlAccountAndOrganization" list="rows" distinct="true"
+                    disable-authz="true">
+                <search-form-inputs input-fields-map="{pageIndex:pageIndex, pageSize:pageSize}"
+                        default-order-by="accountCode,glAccountId"/>
+                <econdition field-name="organizationPartyId" operator="in" from="organizationIds"/>
+                <econdition field-name="disallowPosting" operator="not-equals" value="Y" or-null="true"/>
+                <date-filter valid-date="effectiveDate"/>
+                <econditions combine="or">
+                    <econdition field-name="glAccountId" operator="like" from="searchText" ignore-case="true"
+                            ignore="!searchText"/>
+                    <econdition field-name="accountCode" operator="like" from="searchText" ignore-case="true"
+                            ignore="!searchText"/>
+                    <econdition field-name="accountName" operator="like" from="searchText" ignore-case="true"
+                            ignore="!searchText"/>
+                </econditions>
+                <select-field field-name="glAccountId"/>
+                <select-field field-name="accountCode"/>
+                <select-field field-name="accountName"/>
+            </entity-find>
+            <set field="recordCount" from="rowsCount"/>
+            <set field="pageIndex" from="rowsPageIndex"/>
+            <set field="pageMaxIndex" from="rowsPageMaxIndex"/>
+            <set field="pageRangeLow" from="rowsPageRangeLow"/>
+            <set field="pageRangeHigh" from="rowsPageRangeHigh"/>
+            <set field="selectedRows" from="[]"/>
+            <if condition="selectedIdList">
+                <entity-find entity-name="mantle.ledger.account.GlAccountAndOrganization" list="selectedRows" distinct="true"
+                        disable-authz="true">
+                    <econdition field-name="glAccountId" operator="in" from="selectedIdList"/>
+                    <econdition field-name="organizationPartyId" operator="in" from="organizationIds"/>
+                    <econdition field-name="disallowPosting" operator="not-equals" value="Y" or-null="true"/>
+                    <date-filter valid-date="effectiveDate"/>
+                    <select-field field-name="glAccountId"/>
+                    <select-field field-name="accountCode"/>
+                    <select-field field-name="accountName"/>
+                    <order-by field-name="accountCode,glAccountId"/>
+                </entity-find>
+            </if>
         </actions>
     </service>
     <service verb="define" noun="SettlementPreviewResult" type="interface">
-        <description>Retained reviewed settlement output, canonical accounting day and authorized posting evidence.</description>
+        <description>A retained settlement review: its rows, balances before and after, its book day, the posting lines
+            the user may see, and the operation key that confirms it once.</description>
         <out-parameters>
             <parameter name="previewId"/>
             <parameter name="inputFingerprint"/>
@@ -2324,7 +2423,11 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="preview" noun="Settlement" allow-remote="false">
-        <description>Review or atomically confirm allocations and explicit-account adjustments using a durable owner-scoped preview.</description>
+        <description>Review a settlement: allocations of receipts and credits to invoices or of payments to opposite
+            payments, and discounts or write-offs on an explicit account (allocation item types ItemPromptDiscount and
+            ItemWriteOff), on one book day. Checks the current balances and revisions, the source postings and their days,
+            the fiscal period and posting locks, and keeps the review for ten minutes. Needs the side's edit permission.
+            Changes no financial record.</description>
         <implements service="mantle.account.PaymentServices.define#SettlementScope"/>
         <implements service="mantle.account.PaymentServices.define#SettlementPreviewResult"/>
         <in-parameters>
@@ -2334,25 +2437,137 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sourceVersions" type="Map" required="true"/>
         </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').preview(context))</script>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <script>ec.resource.script(settlement).execute('preview', context)</script>
         </actions>
     </service>
     <service verb="get" noun="SettlementPreview" allow-remote="false">
-        <description>Read an owner-scoped retained settlement preview with current authorization.</description>
+        <description>Read the user's own retained settlement review with the user's current authority: the posting lines
+            and posting IDs only with ledger view authority. Refuses another user's review.</description>
         <implements service="mantle.account.PaymentServices.define#SettlementPreviewResult"/>
         <in-parameters>
             <parameter name="previewId" required="true"/>
             <parameter name="organizationPartyId"/>
         </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').getPreview(context))</script>
+            <entity-find-one entity-name="mantle.account.payment.SettlementPreview" value-field="previewRow"
+                    disable-authz="true"/>
+            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.status == 'draft'">
+                <return error="true" message="SETTLEMENT_PREVIEW_UNAVAILABLE: Settlement preview is unavailable"/>
+            </if>
+            <if condition="organizationPartyId &amp;&amp; organizationPartyId != previewRow.organizationPartyId">
+                <return error="true" message="ORGANIZATION_DENIED: The settlement belongs to another organization"/>
+            </if>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <set field="scope" from="ec.resource.script(settlement).execute('scope', previewRow.getMap())"/>
+            <set field="retainedReview" from="JSON.parse(previewRow.payloadJson).dto"/>
+            <set field="partyName" from="retainedReview.partyName"/>
+            <set field="balanceBasis" from="retainedReview.balanceBasis"/>
+            <set field="selectionThroughDate" from="retainedReview.selectionThroughDate"/>
+            <set field="selectionThroughDateText" from="retainedReview.selectionThroughDateText"/>
+            <set field="balanceAsOfDate" from="retainedReview.balanceAsOfDate"/>
+            <set field="effectiveDate" from="retainedReview.effectiveDate"/>
+            <set field="accountingDate" from="retainedReview.accountingDate"/>
+            <set field="accountingDateText" from="retainedReview.accountingDateText"/>
+            <set field="allocationRows" from="retainedReview.allocationRows"/>
+            <set field="adjustmentRows" from="retainedReview.adjustmentRows"/>
+            <set field="beforeBalances" from="retainedReview.beforeBalances"/>
+            <set field="afterBalances" from="retainedReview.afterBalances"/>
+            <set field="sourceVersions" from="retainedReview.sourceVersions"/>
+            <set field="errors" from="retainedReview.errors"/>
+            <set field="inputFingerprint" from="previewRow.inputFingerprint"/>
+            <set field="expiresDate" from="previewRow.expiresDate"/>
+            <set field="status" from="previewRow.status"/>
+            <set field="operationKey" from="previewRow.operationKey"/>
+            <set field="results" from="previewRow.resultJson ? JSON.parse(previewRow.resultJson) : null"/>
+            <set field="ledgerPreview" from="retainedReview.ledgerPreview"/>
+            <if condition="!capabilities.canReadLedger">
+                <set field="ledgerPreview" from="adjustmentRows.map(row =&gt; ({itemTypeEnumId:row.itemTypeEnumId,
+                        glAccountId:row.glAccountId, accountCode:row.accountCode, accountName:row.accountName,
+                        amount:row.amount}))"/>
+                <if condition="results">
+                    <set field="withoutPostings" from="(row) =&gt; Object.assign({}, row, {acctgTransIds:[]})"/>
+                    <set field="results" from="Object.assign({}, results, {acctgTransIds:[],
+                            allocationResults:Array.from(results.allocationResults || []).map(withoutPostings),
+                            adjustmentResults:Array.from(results.adjustmentResults || []).map(withoutPostings)})"/>
+                </if>
+            </if>
+            <set field="canApply" from="capabilities.canApply &amp;&amp; status == 'review' &amp;&amp;
+                    Number(expiresDate) &gt; Number(ec.user.nowTimestamp)"/>
+        </actions>
+    </service>
+    <service verb="store" noun="SettlementDraft" allow-remote="false">
+        <description>Keep the settlement selection a user is drafting behind an ID, so a screen carries the ID and not the
+            selection: replaces the user's own draft with the given ID, else creates one. The draft is the caller's JSON, kept
+            for a day; it changes no financial record. Needs the side's edit permission; refuses a draft over
+            256 KB.</description>
+        <in-parameters>
+            <parameter name="draftId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="direction" default-value="receivable"/>
+            <parameter name="draftJson" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="draftId"/>
+        </out-parameters>
+        <actions>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <set field="scope" from="ec.resource.script(settlement).execute('scope',
+                    {organizationPartyId:organizationPartyId, direction:direction, write:true, requireParty:false})"/>
+            <if condition="draftJson.length &gt; 262144">
+                <return error="true" message="SETTLEMENT_DRAFT_TOO_LARGE: The settlement selection is too large"/>
+            </if>
+            <set field="draftValues" from="{organizationPartyId:scope.organizationPartyId, userId:ec.user.userId,
+                    direction:direction, payloadJson:draftJson, status:'draft', previewKind:'draft',
+                    createdDate:ec.user.nowTimestamp, expiresDate:Number(ec.user.nowTimestamp) + 86400000}"/>
+            <entity-find-one entity-name="mantle.account.payment.SettlementPreview" value-field="draftRow" for-update="true"
+                    disable-authz="true">
+                <field-map field-name="previewId" from="draftId"/>
+            </entity-find-one>
+            <set field="ownDraft"
+                    from="draftRow &amp;&amp; draftRow.userId == ec.user.userId &amp;&amp; draftRow.status == 'draft'"/>
+            <if condition="draftId &amp;&amp; ownDraft">
+                <then>
+                    <service-call name="update#mantle.account.payment.SettlementPreview" disable-authz="true"
+                            in-map="Object.assign({previewId:draftId}, draftValues)"/>
+                </then>
+                <else>
+                    <service-call name="create#mantle.account.payment.SettlementPreview" disable-authz="true"
+                            in-map="draftValues" out-map="createdDraft"/>
+                    <set field="draftId" from="createdDraft.previewId"/>
+                </else>
+            </if>
+        </actions>
+    </service>
+    <service verb="get" noun="SettlementDraft" allow-remote="false">
+        <description>Read the user's own settlement draft; an expired, unknown or other user's draft reads as none.</description>
+        <in-parameters>
+            <parameter name="draftId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="draftJson"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.SettlementPreview" value-field="draftRow" disable-authz="true">
+                <field-map field-name="previewId" from="draftId"/>
+            </entity-find-one>
+            <if condition="draftRow == null || draftRow.userId != ec.user.userId || draftRow.status != 'draft' ||
+                    Number(draftRow.expiresDate) &lt;= Number(ec.user.nowTimestamp)">
+                <return/>
+            </if>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <set field="scope" from="ec.resource.script(settlement).execute('scope',
+                    {organizationPartyId:draftRow.organizationPartyId, direction:draftRow.direction, requireParty:false})"/>
+            <set field="draftJson" from="draftRow.payloadJson"/>
         </actions>
     </service>
     <service verb="define" noun="SettlementResult" type="interface">
-        <description>Durable exact settlement outcome and application, adjustment and permitted posting identities.</description>
+        <description>A confirmed settlement: its applications, adjustment credit memos, the posting IDs the user may see,
+            and the remaining balances of its records.</description>
         <out-parameters>
             <parameter name="settlementId"/>
             <parameter name="previewId"/>
+            <parameter name="operationKey"/>
             <parameter name="accountingDate" type="Date"/>
             <parameter name="accountingDateText"/>
             <parameter name="applicationIds" type="List"/>
@@ -2366,19 +2581,26 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="apply" noun="Settlement" allow-remote="false">
-        <description>Review or atomically confirm allocations and explicit-account adjustments using a durable owner-scoped preview.</description>
+        <description>Confirm the user's own retained settlement review once: recheck it against current balances, postings
+            and policy, then apply each allocation through apply#InvoicePayment, apply#PaymentToPayment or
+            apply#InvoiceToInvoice on the reviewed date and book day, and each adjustment as a credit memo through
+            create#InvoiceCreditMemo applied to its invoice; each posting must match the review. The operation key defaults
+            to the review's; a retry with it answers the first result. Refuses a changed, expired or confirmed
+            review.</description>
         <implements service="mantle.account.PaymentServices.define#SettlementResult"/>
         <in-parameters>
             <parameter name="previewId" required="true"/>
             <parameter name="inputFingerprint" required="true"/>
-            <parameter name="operationKey" required="true"/>
+            <parameter name="operationKey"/>
         </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').apply(context))</script>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <script>ec.resource.script(settlement).execute('apply', context)</script>
         </actions>
     </service>
     <service verb="preview" noun="PaymentAutoApplication" allow-remote="false">
-        <description>Review deterministic oldest-due automatic payment application without applying money.</description>
+        <description>Review applying a payment to the counterparty's open invoices, oldest due first, as a retained
+            settlement review that autoApply#Payment confirms. Changes no financial record.</description>
         <implements service="mantle.account.PaymentServices.define#SettlementPreviewResult"/>
         <in-parameters>
             <parameter name="organizationPartyId"/>
@@ -2387,7 +2609,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sourceVersion" required="true"/>
         </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').previewAuto(context))</script>
+            <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
+            <script>ec.resource.script(settlement).execute('previewAuto', context)</script>
         </actions>
     </service>
 
@@ -2511,6 +2734,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="effectiveDate" type="Timestamp" default="ec.user.nowTimestamp"/>
             <parameter name="text"/>
             <parameter name="selectedPaymentMethodIdList" type="List"/>
+            <parameter name="paymentMethodTypeEnumIdList" type="List"><description>Only methods of these types</description>
+            </parameter>
             <parameter name="pageIndex" type="Integer" default="0"/>
             <parameter name="pageSize" type="Integer" default="20"/>
         </in-parameters>
@@ -2557,6 +2782,8 @@ along with this software (see the LICENSE.md file). If not, see
                     offset="pageIndex * pageSize" limit="pageSize">
                 <econdition field-name="ownerPartyId"/>
                 <econdition field-name="currencyUomId" ignore-if-empty="true"/>
+                <econdition field-name="paymentMethodTypeEnumId" operator="in" from="paymentMethodTypeEnumIdList"
+                        ignore-if-empty="true"/>
                 <date-filter valid-date="effectiveDate"/>
                 <econditions combine="or">
                     <econdition field-name="paymentMethodId" operator="like" from="searchLike" ignore-case="true"/>
@@ -2567,6 +2794,8 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find-count entity-name="mantle.account.method.PaymentMethod" count-field="recordCount" disable-authz="true">
                 <econdition field-name="ownerPartyId"/>
                 <econdition field-name="currencyUomId" ignore-if-empty="true"/>
+                <econdition field-name="paymentMethodTypeEnumId" operator="in" from="paymentMethodTypeEnumIdList"
+                        ignore-if-empty="true"/>
                 <date-filter valid-date="effectiveDate"/>
                 <econditions combine="or">
                     <econdition field-name="paymentMethodId" operator="like" from="searchLike" ignore-case="true"/>
@@ -2582,6 +2811,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <entity-find entity-name="mantle.account.method.PaymentMethod" list="selectedMethodList" disable-authz="true">
                     <econdition field-name="ownerPartyId"/>
                     <econdition field-name="currencyUomId" ignore-if-empty="true"/>
+                <econdition field-name="paymentMethodTypeEnumId" operator="in" from="paymentMethodTypeEnumIdList"
+                        ignore-if-empty="true"/>
                     <econdition field-name="paymentMethodId" operator="in" from="selectedIdList"/>
                     <date-filter valid-date="effectiveDate"/>
                 </entity-find>
@@ -3629,145 +3860,450 @@ along with this software (see the LICENSE.md file). If not, see
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').refund(context))</script>
         </actions>
     </service>
-    <!-- Reviewed internal transfers: both explicit cash legs commit as one native operation. -->
+    <!-- Internal transfers: one PtInternalTransfer payment from the organization to itself, from one of its bank or cash
+        methods (paymentMethodId) to another (toPaymentMethodId); post#Payment posts its outgoing and incoming sides
+        through the transit account (PaymentTypeGlAccount for PtInternalTransfer). A fee is its own disbursement. -->
+    <service verb="check" noun="InternalTransferAccess" allow-remote="false">
+        <description>Refuses an organization the user may not use and a user without the payment view and payment edit
+            authority that internal transfers need.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+        </in-parameters>
+        <actions>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
+            <script>ec.resource.script(workflow).execute('methodScope', context)</script>
+            <set field="access" value="component://mr-mantle/service/mantle/product/ProductAccess.js"/>
+            <if condition="!ec.resource.script(access).has('PAYMENT_EDIT')">
+                <return error="true" message="PERMISSION_DENIED: Payment edit authority is required for internal transfers"/>
+            </if>
+        </actions>
+    </service>
     <service verb="find" noun="InternalTransferMethods" allow-remote="false">
-        <description>Search owned active bank/cash methods and retain selected masked identities before count and paging.</description>
+        <description>Search the organization's bank and cash methods active on a date, a page at a time, as masked rows with
+            their method versions (find#PaymentMethods). Needs payment view and payment edit authority.</description>
         <in-parameters>
             <parameter name="organizationPartyId" required="true"/>
             <parameter name="currencyUomId"/>
-            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="effectiveDate" type="Timestamp" default="ec.user.nowTimestamp"/>
             <parameter name="text"/>
             <parameter name="selectedIdList" type="List"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
             <parameter name="recordCount" type="Integer"/>
             <parameter name="pageIndex" type="Integer"/>
             <parameter name="pageSize" type="Integer"/>
             <parameter name="pageMaxIndex" type="Integer"/>
             <parameter name="pageRangeLow" type="Integer"/>
             <parameter name="pageRangeHigh" type="Integer"/>
-            <parameter name="rows" type="List"/>
-            <parameter name="selectedRows" type="List"/>
             <parameter name="complete" type="Boolean"/>
-            <parameter name="incomplete" type="Boolean"/>
             <parameter name="errors" type="List"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').methods(context))</script>
+            <service-call name="mantle.account.PaymentServices.check#InternalTransferAccess"
+                    in-map="{organizationPartyId:organizationPartyId}"/>
+            <service-call name="mantle.account.PaymentServices.find#PaymentMethods" out-map="context"
+                    in-map="{organizationPartyId:organizationPartyId, methodRole:'organization', currencyUomId:currencyUomId,
+                        effectiveDate:effectiveDate, text:text, selectedPaymentMethodIdList:selectedIdList,
+                        paymentMethodTypeEnumIdList:['PmtBankAccount', 'PmtOther'], pageIndex:pageIndex, pageSize:pageSize}"/>
         </actions>
     </service>
     <service verb="find" noun="InternalTransferFeeAccounts" allow-remote="false">
-        <description>Search dated assigned posting expense identities without exposing balances.</description>
+        <description>Search the expense accounts (classes under EXPENSE and NON_OP_EXPENSE) assigned to the organization or
+            a parent organization on a date and open to posting, a page at a time, without balances. Needs payment view and
+            payment edit authority.</description>
         <in-parameters>
             <parameter name="organizationPartyId" required="true"/>
-            <parameter name="currencyUomId"/>
-            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="effectiveDate" type="Timestamp" default="ec.user.nowTimestamp"/>
             <parameter name="text"/>
             <parameter name="selectedIdList" type="List"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
             <parameter name="recordCount" type="Integer"/>
             <parameter name="pageIndex" type="Integer"/>
             <parameter name="pageSize" type="Integer"/>
             <parameter name="pageMaxIndex" type="Integer"/>
             <parameter name="pageRangeLow" type="Integer"/>
             <parameter name="pageRangeHigh" type="Integer"/>
-            <parameter name="rows" type="List"/>
-            <parameter name="selectedRows" type="List"/>
             <parameter name="complete" type="Boolean"/>
-            <parameter name="incomplete" type="Boolean"/>
             <parameter name="errors" type="List"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').feeAccounts(context))</script>
+            <service-call name="mantle.account.PaymentServices.check#InternalTransferAccess"
+                    in-map="{organizationPartyId:organizationPartyId}"/>
+            <service-call name="mantle.ledger.LedgerServices.expand#ParentOrganizationList" out-map="context"
+                    in-map="{organizationPartyId:organizationPartyId}"/>
+            <entity-find entity-name="moqui.basic.Enumeration" list="classList" cache="true">
+                <econdition field-name="enumTypeId" value="GlAccountClass"/>
+            </entity-find>
+            <set field="classIdList" from="['EXPENSE', 'NON_OP_EXPENSE']"/>
+            <script>for (let size = 0; size !== classIdList.length; ) {
+                size = classIdList.length
+                for (const row of classList)
+                    if (classIdList.includes(row.parentEnumId) &amp;&amp; !classIdList.includes(row.enumId))
+                        classIdList.push(row.enumId)
+            }</script>
+            <set field="searchLike" from="'%' + String(text || '').trim().slice(0, 200) + '%'"/>
+            <set field="selectedIdList" from="[...new Set(Array.from(selectedIdList || []).map(String))]"/>
+            <if condition="selectedIdList.length &gt; 200">
+                <return error="true" message="Select at most two hundred accounts"/>
+            </if>
+            <entity-find entity-name="mantle.ledger.account.GlAccountAndOrganization" list="accountList" distinct="true"
+                    disable-authz="true" offset="pageIndex * pageSize" limit="pageSize">
+                <econdition field-name="organizationPartyId" operator="in" from="orgPartyIdList"/>
+                <econdition field-name="glAccountClassEnumId" operator="in" from="classIdList"/>
+                <econdition field-name="disallowPosting" operator="not-equals" value="Y" or-null="true"/>
+                <date-filter valid-date="effectiveDate"/>
+                <econditions combine="or">
+                    <econdition field-name="glAccountId" operator="like" from="searchLike" ignore-case="true"/>
+                    <econdition field-name="accountCode" operator="like" from="searchLike" ignore-case="true"/>
+                    <econdition field-name="accountName" operator="like" from="searchLike" ignore-case="true"/>
+                </econditions>
+                <select-field field-name="glAccountId,accountCode,accountName"/>
+                <order-by field-name="accountCode,glAccountId"/>
+            </entity-find>
+            <entity-find entity-name="mantle.ledger.account.GlAccountAndOrganization" list="countList" distinct="true"
+                    disable-authz="true">
+                <econdition field-name="organizationPartyId" operator="in" from="orgPartyIdList"/>
+                <econdition field-name="glAccountClassEnumId" operator="in" from="classIdList"/>
+                <econdition field-name="disallowPosting" operator="not-equals" value="Y" or-null="true"/>
+                <date-filter valid-date="effectiveDate"/>
+                <econditions combine="or">
+                    <econdition field-name="glAccountId" operator="like" from="searchLike" ignore-case="true"/>
+                    <econdition field-name="accountCode" operator="like" from="searchLike" ignore-case="true"/>
+                    <econdition field-name="accountName" operator="like" from="searchLike" ignore-case="true"/>
+                </econditions>
+                <select-field field-name="glAccountId"/>
+            </entity-find>
+            <set field="selectedList" from="[]"/>
+            <if condition="selectedIdList.length">
+                <entity-find entity-name="mantle.ledger.account.GlAccountAndOrganization" list="selectedList" distinct="true"
+                        disable-authz="true">
+                    <econdition field-name="organizationPartyId" operator="in" from="orgPartyIdList"/>
+                    <econdition field-name="glAccountClassEnumId" operator="in" from="classIdList"/>
+                    <econdition field-name="disallowPosting" operator="not-equals" value="Y" or-null="true"/>
+                    <econdition field-name="glAccountId" operator="in" from="selectedIdList"/>
+                    <date-filter valid-date="effectiveDate"/>
+                    <select-field field-name="glAccountId,accountCode,accountName"/>
+                </entity-find>
+            </if>
+            <set field="rows" from="Array.from(accountList).map((row) =&gt; ({glAccountId:row.glAccountId,
+                    accountCode:row.accountCode, accountName:row.accountName,
+                    label:row.accountCode + ' · ' + row.accountName}))"/>
+            <set field="selectedRows" from="Array.from(selectedList).map((row) =&gt; ({glAccountId:row.glAccountId,
+                    accountCode:row.accountCode, accountName:row.accountName,
+                    label:row.accountCode + ' · ' + row.accountName}))"/>
+            <set field="recordCount" from="countList.length"/>
+            <set field="pageMaxIndex" from="Math.max(Math.ceil(recordCount / pageSize) - 1, 0)"/>
+            <set field="pageRangeLow" from="recordCount ? pageIndex * pageSize + 1 : 0"/>
+            <set field="pageRangeHigh" from="Math.min((pageIndex + 1) * pageSize, recordCount)"/>
+            <set field="complete" from="true"/>
+            <set field="errors" from="[]"/>
         </actions>
     </service>
-    <service verb="define" noun="InternalTransferPreviewResult" type="interface">
-        <description>Owner-bound retained paired transfer intent, exact money movement and current authority.</description>
+    <service verb="define" noun="InternalTransferReview" type="interface">
+        <description>What an internal transfer moves and posts, for its review.</description>
         <out-parameters>
-            <parameter name="previewId"/>
-            <parameter name="internalTransferId"/>
-            <parameter name="transferId"/>
-            <parameter name="inputFingerprint"/>
-            <parameter name="previewKind"/>
             <parameter name="organizationPartyId"/>
-            <parameter name="status"/>
-            <parameter name="operationKey"/>
-            <parameter name="amount"/>
-            <parameter name="principalAmount"/>
-            <parameter name="feeAmount"/>
-            <parameter name="totalAmount"/>
-            <parameter name="feeGlAccountId"/>
-            <parameter name="feeAccountLabel"/>
-            <parameter name="currencyUomId"/>
-            <parameter name="accountingDateText"/>
             <parameter name="fromPaymentMethodId"/>
             <parameter name="fromMethodVersion"/>
             <parameter name="toPaymentMethodId"/>
             <parameter name="toMethodVersion"/>
+            <parameter name="principalAmount"/>
+            <parameter name="feeAmount"/>
+            <parameter name="totalAmount"><description>The principal and fee, what leaves the from method</description>
+            </parameter>
+            <parameter name="currencyUomId"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="feeGlAccountId"/>
+            <parameter name="feeAccountLabel"/>
+            <parameter name="feePartyId"/>
             <parameter name="referenceNumber"/>
             <parameter name="reason"/>
+            <parameter name="maskedMethods" type="Map"><description>from and to: the masked method rows</description></parameter>
+            <parameter name="legRows" type="List"><description>The transfer and fee payments to be created</description>
+            </parameter>
+            <parameter name="ledgerPreview" type="List"><description>The transactions post#Payment makes, with their lines
+                </description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="InternalTransferPlan" allow-remote="false">
+        <description>Check an internal transfer and plan its payments and postings; changes nothing. Refuses a user without
+            payment view and edit authority; a principal that is not positive, a negative fee and an amount finer than the
+            currency; a currency other than the organization's; the same method twice; a method that is not one of the
+            organization's bank or cash methods active on the date, that changed since its version or has no cash account;
+            transit accounts (PaymentTypeGlAccount for PtInternalTransfer) missing, differing between the two sides or the
+            same as a cash account; a fee without an expense account (find#InternalTransferFeeAccounts) or an outside party
+            to pay, by default the from bank's party; and a missing reference or reason.</description>
+        <implements service="mantle.account.PaymentServices.define#InternalTransferReview"/>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="fromPaymentMethodId" required="true"/>
+            <parameter name="fromMethodVersion"/>
+            <parameter name="toPaymentMethodId" required="true"/>
+            <parameter name="toMethodVersion"/>
+            <parameter name="amount" type="BigDecimal" required="true"/>
+            <parameter name="currencyUomId" required="true"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="feeAmount" type="BigDecimal" default="0"/>
+            <parameter name="feeGlAccountId"/>
+            <parameter name="feePartyId"><description>Who is paid the fee; defaults to the from bank (BankAccount.bankPartyId)
+                </description></parameter>
+            <parameter name="paymentInstrumentEnumId"><description>Defaults by the to method (create#Payment)</description>
+            </parameter>
+            <parameter name="referenceNumber" required="true"/>
+            <parameter name="reason" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="request" type="Map"><description>The checked request, to plan again on confirmation</description>
+            </parameter>
+            <parameter name="inputFingerprint"/>
+        </out-parameters>
+        <actions>
+            <service-call name="mantle.account.PaymentServices.check#InternalTransferAccess"
+                    in-map="{organizationPartyId:organizationPartyId}"/>
+            <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference" out-map="preferenceOut"
+                    in-map="{organizationPartyId:organizationPartyId}"/>
+            <if condition="currencyUomId != preferenceOut.partyAcctgPreference?.baseCurrencyUomId">
+                <return error="true" message="CURRENCY_MISMATCH: Internal transfers are in the organization's base currency"/>
+            </if>
+            <if condition="toDecimal(amount).compare(0) &lt;= 0">
+                <return error="true" message="AMOUNT_INVALID: Enter a positive principal amount"/>
+            </if>
+            <if condition="toDecimal(feeAmount).compare(0) &lt; 0">
+                <return error="true" message="TRANSFER_FEE_INVALID: Enter a fee of zero or more"/>
+            </if>
+            <set field="roundedAmounts"
+                    from="[amount, feeAmount].map((value) =&gt; ec.l10n.roundCurrency(value, currencyUomId))"/>
+            <if condition="!toDecimal(amount).eq(roundedAmounts[0]) || !toDecimal(feeAmount).eq(roundedAmounts[1])">
+                <return error="true" message="CURRENCY_PRECISION: The amount is finer than the currency"/>
+            </if>
+            <set field="referenceNumber" from="String(referenceNumber).trim()"/>
+            <set field="reason" from="String(reason).trim()"/>
+            <if condition="!referenceNumber || referenceNumber.length &gt; 60 || !reason || reason.length &gt; 255">
+                <return error="true"
+                        message="PAYMENT_EVIDENCE_REQUIRED: Enter a reference of at most 60 characters and a reason"/>
+            </if>
+            <if condition="fromPaymentMethodId == toPaymentMethodId">
+                <return error="true" message="TRANSFER_METHODS_DISTINCT: Choose two different methods"/>
+            </if>
+
+            <!-- both methods: the organization's bank or cash methods, active on the date, unchanged, with a cash account -->
+            <service-call name="mantle.account.PaymentServices.find#InternalTransferMethods" out-map="methodsOut"
+                    in-map="{organizationPartyId:organizationPartyId, currencyUomId:currencyUomId, effectiveDate:effectiveDate,
+                        selectedIdList:[fromPaymentMethodId, toPaymentMethodId], pageSize:1}"/>
+            <set field="fromRow" from="methodsOut.selectedRows.find((row) =&gt; row.paymentMethodId == fromPaymentMethodId)"/>
+            <set field="toRow" from="methodsOut.selectedRows.find((row) =&gt; row.paymentMethodId == toPaymentMethodId)"/>
+            <if condition="!fromRow || !toRow">
+                <return error="true"
+                        message="PAYMENT_METHOD_UNAVAILABLE: Choose bank or cash methods of the organization active on the date"/>
+            </if>
+            <if condition="(fromMethodVersion &amp;&amp; fromMethodVersion != fromRow.version)
+                    || (toMethodVersion &amp;&amp; toMethodVersion != toRow.version)">
+                <return error="true" message="STALE_PAYMENT_METHOD: A payment method changed; choose it again"/>
+            </if>
+            <entity-find entity-name="mantle.account.method.PaymentMethod" list="methodList" disable-authz="true">
+                <econdition field-name="paymentMethodId" operator="in" from="[fromPaymentMethodId, toPaymentMethodId]"/>
+            </entity-find>
+            <set field="cashAccounts" from="Object.fromEntries(Array.from(methodList).map((row) =&gt;
+                    [row.paymentMethodId, row.glAccountId]))"/>
+            <set field="fromGlAccountId" from="cashAccounts[fromPaymentMethodId]"/>
+            <set field="toGlAccountId" from="cashAccounts[toPaymentMethodId]"/>
+            <if condition="!fromGlAccountId || !toGlAccountId">
+                <return error="true" message="TRANSFER_CASH_MAPPING_REQUIRED: Both methods need a cash account"/>
+            </if>
+
+            <!-- the transit account of both sides, as post#Payment finds it -->
+            <service-call name="mantle.ledger.PaymentAutoPostServices.get#PaymentTypeGlAccount" out-map="outgoingTransit"
+                    in-map="{paymentTypeEnumId:'PtInternalTransfer', organizationPartyId:organizationPartyId,
+                        otherPartyId:organizationPartyId, isApplied:'N', isPayable:'Y'}"/>
+            <service-call name="mantle.ledger.PaymentAutoPostServices.get#PaymentTypeGlAccount" out-map="incomingTransit"
+                    in-map="{paymentTypeEnumId:'PtInternalTransfer', organizationPartyId:organizationPartyId,
+                        otherPartyId:organizationPartyId, isApplied:'N', isPayable:'N'}"/>
+            <set field="transitGlAccountId" from="outgoingTransit.glAccountId"/>
+            <if condition="!transitGlAccountId || !incomingTransit.glAccountId">
+                <return error="true" message="TRANSFER_TRANSIT_REQUIRED: Configure the internal transfer transit account"/>
+            </if>
+            <if condition="transitGlAccountId != incomingTransit.glAccountId
+                    || [fromGlAccountId, toGlAccountId].includes(transitGlAccountId)">
+                <return error="true"
+                        message="TRANSFER_TRANSIT_MISMATCH: Both sides need one transit account, apart from the cash accounts"/>
+            </if>
+
+            <set field="hasFee" from="toDecimal(feeAmount).compare(0) &gt; 0"/>
+            <set field="feeAccountLabel" from="null"/>
+            <if condition="hasFee"><then>
+                <if condition="!feeGlAccountId">
+                    <return error="true" message="TRANSFER_FEE_ACCOUNT_REQUIRED: Choose an expense account for the fee"/>
+                </if>
+                <service-call name="mantle.account.PaymentServices.find#InternalTransferFeeAccounts" out-map="feeOut"
+                        in-map="{organizationPartyId:organizationPartyId, effectiveDate:effectiveDate,
+                            selectedIdList:[feeGlAccountId], pageSize:1}"/>
+                <if condition="!feeOut.selectedRows.length">
+                    <return error="true" message="TRANSFER_FEE_ACCOUNT_REQUIRED: Choose an expense account for the fee"/>
+                </if>
+                <set field="feeAccountLabel" from="feeOut.selectedRows[0].label"/>
+                <if condition="!feePartyId">
+                    <entity-find-one entity-name="mantle.account.method.BankAccount" value-field="fromBank" disable-authz="true">
+                        <field-map field-name="paymentMethodId" from="fromPaymentMethodId"/>
+                    </entity-find-one>
+                    <set field="feePartyId" from="fromBank?.bankPartyId"/>
+                </if>
+                <entity-find-one entity-name="mantle.party.Party" value-field="feeParty" disable-authz="true">
+                    <field-map field-name="partyId" from="feePartyId"/>
+                </entity-find-one>
+                <entity-find-count entity-name="mantle.party.PartyRole" count-field="internalCount" disable-authz="true">
+                    <econdition field-name="partyId" from="feePartyId"/>
+                    <econdition field-name="roleTypeId" value="OrgInternal"/>
+                </entity-find-count>
+                <!-- an internal organization would book the fee as intercompany income -->
+                <if condition="!feePartyId || feeParty == null || internalCount &gt; 0">
+                    <return error="true"
+                            message="TRANSFER_FEE_PARTY_REQUIRED: Choose who is paid the fee, or give the bank its party"/>
+                </if>
+            </then><else>
+                <set field="feeGlAccountId" from="null"/>
+                <set field="feePartyId" from="null"/>
+            </else></if>
+
+            <set field="fromMethodVersion" from="fromRow.version"/>
+            <set field="toMethodVersion" from="toRow.version"/>
+            <set field="principalAmount" from="String(amount)"/>
+            <set field="feeAmount" from="String(feeAmount)"/>
+            <set field="totalAmount" from="String(toDecimal(amount).add(feeAmount))"/>
+            <set field="accountingDateText" from="ec.l10n.format(effectiveDate, 'yyyy-MM-dd')"/>
+            <set field="maskedMethods" from="{from:fromRow, to:toRow}"/>
+            <set field="legRows" from="[{leg:'transfer', amount:principalAmount, currencyUomId:currencyUomId,
+                    maskedMethodLabel:fromRow.label + ' → ' + toRow.label}].concat(hasFee ? [{leg:'fee', amount:feeAmount,
+                    currencyUomId:currencyUomId, maskedMethodLabel:fromRow.label}] : [])"/>
+            <!-- each transaction: its type, then debit and credit account of its amount -->
+            <set field="ledgerPreview" from="[
+                    ['outgoing', 'AttOutgoingPayment', transitGlAccountId, fromGlAccountId, principalAmount],
+                    ['incoming', 'AttIncomingPayment', toGlAccountId, transitGlAccountId, principalAmount]
+                ].concat(hasFee ? [['fee', 'AttOutgoingPayment', feeGlAccountId, fromGlAccountId, feeAmount]] : [])
+                .map(([leg, type, debit, credit, lineAmount]) =&gt; ({leg:leg, acctgTransTypeEnumId:type,
+                    currencyUomId:currencyUomId, lines:[{glAccountId:debit, debitCreditFlag:'D', amount:lineAmount},
+                        {glAccountId:credit, debitCreditFlag:'C', amount:lineAmount}]}))"/>
+            <set field="request" from="{organizationPartyId:organizationPartyId,
+                    fromPaymentMethodId:fromPaymentMethodId, fromMethodVersion:fromMethodVersion,
+                    toPaymentMethodId:toPaymentMethodId, toMethodVersion:toMethodVersion, amount:principalAmount,
+                    currencyUomId:currencyUomId, effectiveDate:Number(effectiveDate), feeAmount:feeAmount,
+                    feeGlAccountId:feeGlAccountId, feePartyId:feePartyId, paymentInstrumentEnumId:paymentInstrumentEnumId,
+                    referenceNumber:referenceNumber, reason:reason}"/>
+            <set field="inputFingerprint" from="ec.user.singleUseCodeHash(JSON.stringify({request:request,
+                    ledgerPreview:ledgerPreview}))"/>
+        </actions>
+    </service>
+    <service verb="define" noun="InternalTransferPreviewResult" type="interface">
+        <description>A retained internal transfer review and, once confirmed, its results.</description>
+        <implements service="mantle.account.PaymentServices.define#InternalTransferReview"/>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="previewKind"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="status"><description>review, then complete</description></parameter>
+            <parameter name="operationKey"/>
             <parameter name="expiresDate" type="Timestamp"/>
             <parameter name="canApply" type="Boolean"/>
-            <parameter name="maskedMethods" type="Map"/>
-            <parameter name="transferSummary" type="Map"/>
-            <parameter name="before" type="Map"/>
-            <parameter name="after" type="Map"/>
-            <parameter name="postingSummary" type="Map"/>
             <parameter name="capabilities" type="Map"/>
-            <parameter name="results" type="Map"/>
-            <parameter name="legRows" type="List"/>
-            <parameter name="ledgerPreview" type="List"/>
+            <parameter name="results" type="Map"><description>What create#InternalTransfer returned</description></parameter>
         </out-parameters>
     </service>
     <service verb="preview" noun="InternalTransfer" allow-remote="false">
-        <description>Review exact principal, fee and two cash/transit plans without creating money.</description>
+        <description>Review an internal transfer (get#InternalTransferPlan), retained for thirty minutes for its user to
+            confirm with create#InternalTransfer; changes no financial record.</description>
         <implements service="mantle.account.PaymentServices.define#InternalTransferPreviewResult"/>
         <in-parameters>
             <parameter name="organizationPartyId" required="true"/>
             <parameter name="fromPaymentMethodId" required="true"/>
-            <parameter name="fromMethodVersion" required="true"/>
+            <parameter name="fromMethodVersion"/>
             <parameter name="toPaymentMethodId" required="true"/>
-            <parameter name="toMethodVersion" required="true"/>
+            <parameter name="toMethodVersion"/>
             <parameter name="amount" type="BigDecimal" required="true"/>
             <parameter name="currencyUomId" required="true"/>
             <parameter name="effectiveDate" type="Timestamp" required="true"/>
             <parameter name="feeAmount" type="BigDecimal"/>
             <parameter name="feeGlAccountId"/>
+            <parameter name="feePartyId"/>
+            <parameter name="paymentInstrumentEnumId"/>
             <parameter name="referenceNumber" required="true"/>
             <parameter name="reason" required="true"/>
         </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').preview(context))</script>
+            <service-call name="mantle.account.PaymentServices.get#InternalTransferPlan" in-map="context" out-map="context"/>
+            <set field="expiresDate" from="Number(ec.user.nowTimestamp) + 1800000"/>
+            <set field="review" from="{organizationPartyId:organizationPartyId, fromPaymentMethodId:fromPaymentMethodId,
+                    fromMethodVersion:fromMethodVersion, toPaymentMethodId:toPaymentMethodId, toMethodVersion:toMethodVersion,
+                    principalAmount:principalAmount, feeAmount:feeAmount, totalAmount:totalAmount, currencyUomId:currencyUomId,
+                    accountingDateText:accountingDateText, feeGlAccountId:feeGlAccountId, feeAccountLabel:feeAccountLabel,
+                    feePartyId:feePartyId, referenceNumber:referenceNumber, reason:reason, maskedMethods:maskedMethods,
+                    legRows:legRows, ledgerPreview:ledgerPreview}"/>
+            <service-call name="create#mantle.account.payment.PaymentStatePreview" out-map="previewOut"
+                    in-map="{organizationPartyId:organizationPartyId, userId:ec.user.userId, previewKind:'transfer',
+                        inputFingerprint:inputFingerprint, requestJson:JSON.stringify(request),
+                        payloadJson:JSON.stringify(review),
+                        createdDate:ec.user.nowTimestamp, expiresDate:expiresDate, status:'review'}"/>
+            <service-call name="mantle.account.PaymentServices.get#InternalTransferPreview" out-map="context"
+                    in-map="{previewId:previewOut.previewId}"/>
         </actions>
     </service>
     <service verb="get" noun="InternalTransferPreview" allow-remote="false">
-        <description>Reload exact retained transfer intent and recorded results with current Treasury authority.</description>
+        <description>Read the user's own retained internal transfer review and its results with the user's current
+            authority; the ledger preview and posted transactions need ledger read authority. Changes nothing.</description>
         <implements service="mantle.account.PaymentServices.define#InternalTransferPreviewResult"/>
         <in-parameters>
             <parameter name="organizationPartyId"/>
             <parameter name="previewId" required="true"/>
         </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').getPreview(context))</script>
+            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
+                    disable-authz="true"/>
+            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'transfer'
+                    || (organizationPartyId &amp;&amp; organizationPartyId != previewRow.organizationPartyId)">
+                <return error="true" message="TRANSFER_PREVIEW_UNAVAILABLE: The transfer review is unavailable"/>
+            </if>
+            <service-call name="mantle.account.PaymentServices.check#InternalTransferAccess"
+                    in-map="{organizationPartyId:previewRow.organizationPartyId}"/>
+            <script>ec.context.putAll(JSON.parse(previewRow.payloadJson))</script>
+            <set field="previewKind" from="previewRow.previewKind"/>
+            <set field="inputFingerprint" from="previewRow.inputFingerprint"/>
+            <set field="status" from="previewRow.status"/>
+            <set field="operationKey" from="previewRow.operationKey"/>
+            <set field="expiresDate" from="previewRow.expiresDate"/>
+            <set field="canApply" from="status == 'review' &amp;&amp; Number(expiresDate) &gt; Number(ec.user.nowTimestamp)"/>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
+            <set field="canReadLedger" from="ec.resource.script(workflow).ledgerRead()"/>
+            <set field="capabilities" from="{canTransfer:true, canReadLedger:canReadLedger}"/>
+            <set field="results" from="previewRow.resultJson ? JSON.parse(previewRow.resultJson) : null"/>
+            <if condition="!canReadLedger">
+                <set field="ledgerPreview" from="null"/>
+                <if condition="results"><set field="results.acctgTransIds" from="null"/></if>
+            </if>
         </actions>
     </service>
     <service verb="create" noun="InternalTransfer" allow-remote="false">
-        <description>Confirm a retained review atomically, creating exactly two native cash legs and postings; exact retries return recorded identities.</description>
+        <description>Confirm a retained internal transfer review: plan it again (get#InternalTransferPlan), create the
+            PtInternalTransfer payment delivered through mantle.account.PaymentServices.create#Payment, whose PaymentGlPost
+            SECA posts its outgoing and incoming transactions, and a fee as its own PtDisbursement payment to the fee party
+            posted to the fee account (overrideTypeGlAccountId); then issue the transfer's detail (issue#PaymentDocuments).
+            Refuses another user's, an expired, used or changed review and an operation key used for another review, and
+            fails, changing nothing, unless every payment posts. Confirming again with the same operation key returns the
+            first result.</description>
         <in-parameters>
             <parameter name="previewId" required="true"/>
             <parameter name="inputFingerprint" required="true"/>
             <parameter name="operationKey" required="true"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="transferId"/>
-            <parameter name="internalTransferId"/>
-            <parameter name="fromPaymentId"/>
-            <parameter name="toPaymentId"/>
+            <parameter name="paymentId"><description>The PtInternalTransfer payment</description></parameter>
+            <parameter name="feePaymentId"><description>The fee's PtDisbursement payment, if any</description></parameter>
             <parameter name="principalAmount"/>
             <parameter name="feeAmount"/>
             <parameter name="totalAmount"/>
@@ -3781,7 +4317,102 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="outputRows" type="List"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').create(context))</script>
+            <if condition="operationKey.length &gt; 40">
+                <return error="true" message="OPERATION_KEY_REQUIRED: An operation key of at most 40 characters is required"/>
+            </if>
+            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
+                    for-update="true" disable-authz="true"/>
+            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'transfer'">
+                <return error="true" message="TRANSFER_PREVIEW_UNAVAILABLE: The transfer review is unavailable"/>
+            </if>
+            <set field="organizationPartyId" from="previewRow.organizationPartyId"/>
+            <service-call name="mantle.account.PaymentServices.check#InternalTransferAccess"
+                    in-map="{organizationPartyId:organizationPartyId}"/>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
+            <if condition="previewRow.status == 'complete'">
+                <if condition="previewRow.operationKey == operationKey">
+                    <script>ec.context.putAll(JSON.parse(previewRow.resultJson))</script>
+                    <set field="alreadyApplied" from="true"/>
+                    <if condition="!ec.resource.script(workflow).ledgerRead()"><set field="acctgTransIds" from="null"/></if>
+                    <return/>
+                </if>
+                <return error="true" message="TRANSFER_PREVIEW_CONSUMED: This transfer review was already confirmed"/>
+            </if>
+            <if condition="inputFingerprint != previewRow.inputFingerprint">
+                <return error="true" message="TRANSFER_PREVIEW_MISMATCH: Confirm the transfer as reviewed"/>
+            </if>
+            <if condition="Number(previewRow.expiresDate) &lt;= Number(ec.user.nowTimestamp)">
+                <return error="true" message="TRANSFER_PREVIEW_EXPIRED: Review the transfer again"/>
+            </if>
+            <entity-find-count entity-name="mantle.account.payment.PaymentStatePreview" count-field="keyCount"
+                    disable-authz="true">
+                <econdition field-name="operationKey"/>
+            </entity-find-count>
+            <if condition="keyCount &gt; 0">
+                <return error="true" message="OPERATION_KEY_CONFLICT: The operation key was used for another request"/>
+            </if>
+            <service-call name="mantle.account.PaymentServices.get#InternalTransferPlan" out-map="plan"
+                    in-map="JSON.parse(previewRow.requestJson)"/>
+            <if condition="plan.inputFingerprint != previewRow.inputFingerprint">
+                <return error="true" message="STALE_PREVIEW: The methods or accounts of the transfer changed; review it again"/>
+            </if>
+            <set field="request" from="plan.request"/>
+
+            <service-call name="mantle.account.PaymentServices.create#Payment" out-map="transferOut"
+                    in-map="{paymentTypeEnumId:'PtInternalTransfer', statusId:'PmntDelivered',
+                        fromPartyId:organizationPartyId, toPartyId:organizationPartyId,
+                        paymentMethodId:request.fromPaymentMethodId, toPaymentMethodId:request.toPaymentMethodId,
+                        paymentInstrumentEnumId:request.paymentInstrumentEnumId, amount:request.amount,
+                        amountUomId:request.currencyUomId, effectiveDate:request.effectiveDate,
+                        paymentRefNum:request.referenceNumber, comments:request.reason}"/>
+            <set field="paymentId" from="transferOut.paymentId"/>
+            <entity-find entity-name="mantle.ledger.transaction.AcctgTrans" list="transferTransList" disable-authz="true">
+                <econdition field-name="paymentId"/>
+                <econdition field-name="acctgTransTypeEnumId" operator="in" from="['AttOutgoingPayment', 'AttIncomingPayment']"/>
+                <econdition field-name="isPosted" value="Y"/>
+                <econdition field-name="reverseOfAcctgTransId" from="null"/>
+            </entity-find>
+            <if condition="transferTransList.length != 2">
+                <return error="true"
+                        message="TRANSFER_NOT_POSTED: The transfer did not post both its sides through the transit account"/>
+            </if>
+            <set field="acctgTransIds" from="Array.from(transferTransList).map((row) =&gt; row.acctgTransId)"/>
+            <set field="feePaymentId" from="null"/>
+            <if condition="toDecimal(request.feeAmount).compare(0) &gt; 0">
+                <entity-find-one entity-name="mantle.account.payment.Payment" value-field="transferPayment" disable-authz="true"/>
+                <service-call name="mantle.account.PaymentServices.create#Payment" out-map="feeOut"
+                        in-map="{paymentTypeEnumId:'PtDisbursement', statusId:'PmntDelivered',
+                            fromPartyId:organizationPartyId, toPartyId:request.feePartyId,
+                            paymentMethodId:request.fromPaymentMethodId, overrideTypeGlAccountId:request.feeGlAccountId,
+                            paymentInstrumentEnumId:transferPayment.paymentInstrumentEnumId, amount:request.feeAmount,
+                            amountUomId:request.currencyUomId, effectiveDate:request.effectiveDate,
+                            paymentRefNum:request.referenceNumber, comments:'Fee of internal transfer ' + paymentId}"/>
+                <set field="feePaymentId" from="feeOut.paymentId"/>
+                <entity-find entity-name="mantle.ledger.transaction.AcctgTrans" list="feeTransList" disable-authz="true">
+                    <econdition field-name="paymentId" from="feePaymentId"/>
+                    <econdition field-name="isPosted" value="Y"/>
+                </entity-find>
+                <if condition="feeTransList.length != 1">
+                    <return error="true" message="TRANSFER_NOT_POSTED: The transfer fee did not post to its account"/>
+                </if>
+                <set field="acctgTransIds" from="acctgTransIds.concat([feeTransList[0].acctgTransId])"/>
+            </if>
+            <service-call name="mantle.account.PaymentServices.issue#PaymentDocuments" out-map="documentsOut"
+                    in-map="{paymentId:paymentId, organizationPartyId:organizationPartyId}"/>
+
+            <set field="review" from="JSON.parse(previewRow.payloadJson)"/>
+            <set field="legRows" from="review.legRows.map((row) =&gt; Object.assign({}, row,
+                    {paymentId:row.leg == 'fee' ? feePaymentId : paymentId}))"/>
+            <set field="result" from="{paymentId:paymentId, feePaymentId:feePaymentId, principalAmount:review.principalAmount,
+                    feeAmount:review.feeAmount, totalAmount:review.totalAmount, currencyUomId:review.currencyUomId,
+                    accountingDateText:review.accountingDateText, operationKey:operationKey,
+                    reasonCode:'INTERNAL_TRANSFER_COMPLETED', alreadyApplied:false, legRows:legRows,
+                    acctgTransIds:acctgTransIds, outputRows:documentsOut.outputRows}"/>
+            <service-call name="update#mantle.account.payment.PaymentStatePreview"
+                    in-map="{previewId:previewId, status:'complete', operationKey:operationKey,
+                        resultJson:JSON.stringify(result)}"/>
+            <script>ec.context.putAll(result)</script>
+            <if condition="!ec.resource.script(workflow).ledgerRead()"><set field="acctgTransIds" from="null"/></if>
         </actions>
     </service>
 </services>

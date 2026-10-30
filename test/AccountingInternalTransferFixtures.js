@@ -1,12 +1,23 @@
-// Standalone paired transfers use two distinct owned banks; sharing one cash GL account is intentional.
+// Internal transfer fixtures: the lifecycle organization's bank (cash 111100000, paid to a bank party for fees) and a
+// destination bank with its own spec-local cash account, so a spec can make only the incoming side fail to post.
 const lifecycle = ec.resource.script("component://mr-mantle/test/AccountingPaymentLifecycleFixtures.js")
 const {lib, call, native} = lifecycle
 function fixtures(prefix) {
     const f = lifecycle.fixtures(prefix)
     f.feeAccountId = "710000000"
-    if (!lib.one("mantle.ledger.account.GlAccountOrganization", {organizationPartyId: f.org, glAccountId: f.feeAccountId}))
-        call("create#mantle.ledger.account.GlAccountOrganization", {organizationPartyId: f.org, glAccountId: f.feeAccountId})
+    f.toCashAccountId = prefix + "_CASH"
     f.toMethodId = prefix + "_DEST_BANK"
+    f.bankPartyId = prefix + "_BANK"
+    call("create#mantle.ledger.account.GlAccountOrganization", {organizationPartyId: f.org, glAccountId: f.feeAccountId})
+    call("create#mantle.ledger.account.GlAccount", {
+        glAccountId: f.toCashAccountId,
+        accountName: "Destination reserve cash",
+        glAccountClassEnumId: "CASH_EQUIVALENT"
+    })
+    call("create#mantle.ledger.account.GlAccountOrganization", {organizationPartyId: f.org, glAccountId: f.toCashAccountId})
+    call("create#mantle.party.Party", {partyId: f.bankPartyId, partyTypeEnumId: "PtyOrganization"})
+    call("create#mantle.party.Organization", {partyId: f.bankPartyId, organizationName: prefix + " bank"})
+    call("update#mantle.account.method.BankAccount", {paymentMethodId: f.methodId, bankPartyId: f.bankPartyId})
     call("create#mantle.account.method.PaymentMethod", {
         paymentMethodId: f.toMethodId,
         ownerPartyId: f.org,
@@ -14,37 +25,36 @@ function fixtures(prefix) {
         currencyUomId: "USD",
         fromDate: 0,
         description: "Destination reserve bank",
-        glAccountId: "111100000"
+        glAccountId: f.toCashAccountId
     })
     call("create#mantle.account.method.BankAccount", {
         paymentMethodId: f.toMethodId,
-        bankName: "Native destination bank",
+        bankName: "Destination bank",
         typeEnumId: "BatChecking",
         accountNumber: "123123456",
         routingNumber: "111000025",
         lastCheckNumber: 1
     })
+    // payment view and edit without ledger read
+    f.users.transfer = lifecycle.settlement.user(f, "TRANSFER", ["PAYMENT_VIEW", "PAYMENT_EDIT"])
     return f
 }
 function request(f, extra = {}) {
-    const workflow = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentWorkflow.js")
+    const workflow = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentWorkflow.js"),
+        version = paymentMethodId => workflow.methodVersion(lib.one("mantle.account.method.PaymentMethod", {paymentMethodId}))
     return Object.assign(
         {
             organizationPartyId: f.org,
             fromPaymentMethodId: f.methodId,
-            fromMethodVersion: workflow.methodVersion(
-                lib.one("mantle.account.method.PaymentMethod", {paymentMethodId: f.methodId})
-            ),
+            fromMethodVersion: version(f.methodId),
             toPaymentMethodId: f.toMethodId,
-            toMethodVersion: workflow.methodVersion(
-                lib.one("mantle.account.method.PaymentMethod", {paymentMethodId: f.toMethodId})
-            ),
+            toMethodVersion: version(f.toMethodId),
             amount: "50",
             feeAmount: "0",
             currencyUomId: "USD",
             effectiveDate: f.timestamp,
-            referenceNumber: "Reviewed internal bank transfer",
-            reason: "Move principal between owned cash accounts"
+            referenceNumber: "Bank transfer",
+            reason: "Move cash to the reserve account"
         },
         extra
     )
@@ -52,21 +62,30 @@ function request(f, extra = {}) {
 function preview(f, extra = {}) {
     return native("preview#InternalTransfer", request(f, extra))
 }
-function confirm(review, operationKey = "transfer-" + ec.user.randomString(24)) {
+function confirm(review, operationKey = lifecycle.key("xfer-")) {
     return native("create#InternalTransfer", {
         previewId: review.previewId,
         inputFingerprint: review.inputFingerprint,
         operationKey
     })
 }
+// What a transfer creates in the organization: payments, transactions and issued documents.
 function counts(f) {
+    const payments = paymentTypeEnumId => lib.find("mantle.account.payment.Payment", {fromPartyId: f.org, paymentTypeEnumId})
     return {
-        pairs: lib.find("mantle.account.payment.PaymentInternalTransfer", {organizationPartyId: f.org}).count(),
-        payments: lib
-            .find("mantle.account.payment.Payment", {financeOrganizationPartyId: f.org, paymentTypeEnumId: "PtInternalTransfer"})
-            .count(),
-        transactions: lib.find("mantle.ledger.transaction.AcctgTrans", {organizationPartyId: f.org}).count(),
-        outputs: lib.find("mantle.account.payment.PaymentContent").condition("contentTypeEnumId", "in", ["PctReceipt", "PctPaymentDocument", "PctCheckImage"]).count()
+        transfers: payments("PtInternalTransfer").count(),
+        disbursements: payments("PtDisbursement").count(),
+        transactions: lib.find("mantle.ledger.transaction.AcctgTrans", {organizationPartyId: f.org}).count()
     }
 }
-;({lifecycle, lib, call, native, fixtures, request, preview, confirm, counts})
+// The posted entries of a payment's transactions.
+function entries(paymentId) {
+    return lib
+        .rows("mantle.ledger.transaction.AcctgTrans", {paymentId})
+        .flatMap(tx =>
+            lib
+                .rows("mantle.ledger.transaction.AcctgTransEntry", {acctgTransId: tx.acctgTransId})
+                .map(row => Object.assign({isPosted: tx.isPosted, acctgTransTypeEnumId: tx.acctgTransTypeEnumId}, row))
+        )
+}
+;({lifecycle, lib, call, native, fixtures, request, preview, confirm, counts, entries})

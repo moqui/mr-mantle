@@ -26,13 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     </extend-entity>
     <extend-entity entity-name="PaymentApplication" package="mantle.account.payment">
         <field name="accountingDate" type="date" enable-audit-log="true"/>
-        <field name="settlementOperationKey" type="id"/>
-        <field name="settlementRowSeq" type="id"/>
         <field name="currencyUomId" type="id"/>
-    </extend-entity>
-    <extend-entity entity-name="Invoice" package="mantle.account.invoice">
-        <field name="settlementOperationKey" type="id"/>
-        <field name="settlementAdjustmentKind" type="text-short"/>
     </extend-entity>
     <view-entity entity-name="PaymentFinance" package="mantle.account.payment" cache="never">
         <member-entity entity-alias="P" entity-name="mantle.account.payment.Payment"/>
