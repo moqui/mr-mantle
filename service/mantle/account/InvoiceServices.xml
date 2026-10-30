@@ -3793,6 +3793,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="invoiceId" required="true"/>
             <parameter name="organizationPartyId"/>
             <parameter name="asPdf" type="Boolean" default="false"/>
+            <parameter name="templateLocation"><description>An html.fancy template in place of the one the settings
+                name.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="printHtml"/>
@@ -3809,8 +3811,9 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="mantle.account.InvoiceServices.get#InvoicePrintInfo" in-map="{invoiceId:invoiceId}"
                     out-map="printInfo" disable-authz="true"/>
             <set field="defaultTemplate" value="component://mr-mantle/template/account/Invoice.print.html.fancy"/>
-            <set field="templateLocation" from="String(printInfo.templateLocation || '').endsWith('.html.fancy') ?
-                printInfo.templateLocation : defaultTemplate"/>
+            <set field="templateLocation" from="templateLocation || printInfo.templateLocation"/>
+            <set field="templateLocation" from="String(templateLocation || '').endsWith('.html.fancy') ? templateLocation :
+                defaultTemplate"/>
             <!-- the organization issues a receivable, a customer credit too; the vendor issues a payable -->
             <set field="issuerPartyId" from="scope.receivable ? scope.organizationPartyId : scope.invoice.fromPartyId"/>
             <set field="issuerIsFrom" from="issuerPartyId == scope.invoice.fromPartyId"/>
@@ -3873,8 +3876,9 @@ along with this software (see the LICENSE.md file). If not, see
             copies of the supporting files the sender reviewed (by their versions); each recipient (toAddresses, else the
             customer's billing addresses) gets it through send#EmailTemplate (emailTemplateId, MANTLE_INVOICE_EMAIL by
             default), recorded in InvoiceEmailMessage; a finalized invoice sent to anyone becomes Sent. A bad address is named
-            in recipientResults and the others are sent. The same operationKey and request answers the first result. Refuses
-            a stale lastUpdatedStamp or sourceVersion, a payable, and a user without RECEIVABLE_EDIT.</description>
+            in recipientResults and the others are sent. The same operationKey and request answers the first result. A
+            caller with its own print of the invoice names it in printLocation, which Mantle renders. Refuses a stale
+            lastUpdatedStamp or sourceVersion, a payable, and a user without RECEIVABLE_EDIT.</description>
         <in-parameters>
             <parameter name="invoiceId" required="true"/>
             <parameter name="organizationPartyId"/>
@@ -3887,6 +3891,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="emailTemplateId" default-value="MANTLE_INVOICE_EMAIL"/>
             <parameter name="attachmentContentIdList" type="List"/>
             <parameter name="attachmentVersions" type="Map"/>
+            <parameter name="printLocation"><description>The print to send in place of get#InvoiceOutput's: a screen
+                (.xml), rendered as html-print with invoiceId and organizationPartyId, or an html.fancy template, rendered
+                over get#InvoicePrintInfo as get#InvoiceOutput renders its own. A location, never HTML.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="invoiceId"/>
@@ -3928,7 +3935,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <return error="true" message="RECIPIENT_LIMIT: Send to at most 100 recipients at once"/></if>
 
             <set field="request" from="{invoiceId:invoiceId, recipients:recipientList, note:note || null, subject:subject || null,
-                emailTemplateId:emailTemplateId,
+                emailTemplateId:emailTemplateId, printLocation:printLocation || null,
                 attachmentContentIdList:Array.from(attachmentContentIdList ?? []).map(String).sort(),
                 attachmentVersions:attachmentVersions ?? {}}"/>
             <set field="replay" from="ec.resource.script(workflow).execute('replay', {operationKey:operationKey,
@@ -3962,14 +3969,21 @@ along with this software (see the LICENSE.md file). If not, see
             </if>
 
             <!-- the issued PDF: one for each version of the print, kept as an immutable file of the invoice -->
+            <set field="printScreen" from="String(printLocation || '').endsWith('.xml')"/>
             <service-call name="mantle.account.InvoiceServices.get#InvoiceOutput" out-map="output" disable-authz="true"
-                    in-map="{invoiceId:invoiceId, organizationPartyId:scope.organizationPartyId}"/>
-            <set field="contentHash" from="output.contentHash"/>
+                    in-map="{invoiceId:invoiceId, organizationPartyId:scope.organizationPartyId,
+                        templateLocation:(printLocation &amp;&amp; !printScreen ? printLocation : null)}"/>
+            <set field="printHtml" from="output.printHtml"/>
+            <if condition="printScreen">
+                <set field="printHtml" from="ec.screen.render({rootScreen:printLocation, renderMode:'html-print',
+                    parameters:{invoiceId:invoiceId, organizationPartyId:scope.organizationPartyId}}).text"/>
+            </if>
+            <set field="contentHash" from="printScreen ? ec.user.singleUseCodeHash(printHtml) : output.contentHash"/>
             <set field="issueKey" from="contentHash.replace(/[^A-Za-z0-9]/g, '').slice(0, 24)"/>
             <set field="pdfFileName" from="'Invoice-' + invoiceId + '.pdf'"/>
             <set field="pdfLocation" from="'dbresource://mantle/content/invoice-issued/' + invoiceId + '/' + issueKey + '/' +
                 pdfFileName"/>
-            <set field="pdfBytes" from="ec.resource.xslFoTransform(output.printHtml, null, null, 'application/pdf')"/>
+            <set field="pdfBytes" from="ec.resource.xslFoTransform(printHtml, null, null, 'application/pdf')"/>
             <entity-find entity-name="mantle.account.invoice.InvoiceContent" list="issuedList" limit="1" disable-authz="true">
                 <econdition field-name="contentLocation" from="pdfLocation"/></entity-find>
             <if condition="issuedList.length"><then>
