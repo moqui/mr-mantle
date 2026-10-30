@@ -1,4 +1,4 @@
-// Finance billing of approved project time without requiring a Projects launcher or revealing unapproved rates.
+// Finance billing of approved project time and worker expenses, by project and worker, at the billing rates.
 const lib = ec.resource.script("component://mr-mantle/service/mantle/account/InvoiceWorkflowLib.js")
 const {find, one, call, denied, display} = lib
 function project(p) {
@@ -97,10 +97,11 @@ function expenses(p, ids) {
         ).map(row => row.vendorInvoiceId + ":" + row.vendorInvoiceItemSeqId)
     )
     const amounts = Object.fromEntries(invoiceIds.map(id => [id, toDecimal(0)]))
+    const currencies = Object.fromEntries(records.map(row => [row.invoiceId, row.currencyUomId]))
     for (const line of find("mantle.account.invoice.InvoiceItem").condition("invoiceId", "in", invoiceIds).list()) {
         const key = line.invoiceId + ":" + line.invoiceItemSeqId
         if (!through.has(key) && !timeLines.has(key))
-            amounts[line.invoiceId] = amounts[line.invoiceId].add(toDecimal(line.quantity ?? 1).multiply(line.amount ?? 0))
+            amounts[line.invoiceId] = amounts[line.invoiceId].add(lib.lineTotal(line, currencies[line.invoiceId]))
     }
     return records
         .filter(row => !amounts[row.invoiceId].isZero())
@@ -111,6 +112,22 @@ function expenses(p, ids) {
             currencyUomId: row.currencyUomId,
             amount: amounts[row.invoiceId]
         }))
+}
+// One page of rows, with the records page fields of a paged list.
+function pageOf(all, p) {
+    const recordsPageSize = Math.min(100, Math.max(1, Number(p.pageSize) || 20)),
+        recordsCount = all.length
+    const recordsPageMaxIndex = Math.max(0, Math.ceil(recordsCount / recordsPageSize) - 1)
+    const recordsPageIndex = Math.min(recordsPageMaxIndex, Math.max(0, Number(p.pageIndex) || 0))
+    return {
+        records: all.slice(recordsPageIndex * recordsPageSize, (recordsPageIndex + 1) * recordsPageSize),
+        recordsCount,
+        recordsPageSize,
+        recordsPageIndex,
+        recordsPageMaxIndex,
+        recordsPageRangeLow: recordsCount ? recordsPageIndex * recordsPageSize + 1 : 0,
+        recordsPageRangeHigh: Math.min(recordsCount, (recordsPageIndex + 1) * recordsPageSize)
+    }
 }
 function list(p) {
     lib.organization(p.organizationPartyId)
@@ -130,8 +147,7 @@ function list(p) {
     if (projectIds.length > 2000) denied("BILLING_SCOPE_TOO_LARGE", "Narrow the project selection")
     if (p.workEffortId && !projectIds.includes(p.workEffortId)) denied("PROJECT_UNAVAILABLE", "Project is not available")
     const ids = p.workEffortId ? [p.workEffortId] : projectIds
-    if (!ids.length)
-        return {rows: [], recordCount: 0, pageIndex: 0, pageSize: 20, pageMaxIndex: 0, pageRangeLow: 0, pageRangeHigh: 0}
+    if (!ids.length) return pageOf([], p)
     const list = approved(p, ids)
     const customerRoles = Array.from(
         find("mantle.work.effort.WorkEffortParty")
@@ -217,25 +233,13 @@ function list(p) {
             row.workEffortName
         ])
     )
-    const pageSize = Math.min(100, Math.max(1, Number(p.pageSize) || 20)),
-        recordCount = all.length
-    const pageMaxIndex = Math.max(0, Math.ceil(recordCount / pageSize) - 1),
-        pageIndex = Math.min(pageMaxIndex, Math.max(0, Number(p.pageIndex) || 0))
-    const currencyUomId = lib.policy.preference(p.organizationPartyId).baseCurrencyUomId
-    const result = {
-        recordCount,
-        pageSize,
-        pageIndex,
-        pageMaxIndex,
-        pageRangeLow: recordCount ? pageIndex * pageSize + 1 : 0,
-        pageRangeHigh: Math.min(recordCount, (pageIndex + 1) * pageSize)
-    }
-    result.rows = all.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize).map(row =>
+    const result = pageOf(all, p)
+    result.records = result.records.map(row =>
         Object.assign(row, {
             workEffortName: projectNames[row.workEffortId],
             customerName: names[row.customerPartyId],
             workerName: names[row.workerPartyId],
-            currencyUomId,
+            currencyUomId: currency,
             canInvoice: row.missingRateCount === 0 && !row.sourceCurrencyMismatch,
             reason: row.sourceCurrencyMismatch
                 ? "An expense has another currency"

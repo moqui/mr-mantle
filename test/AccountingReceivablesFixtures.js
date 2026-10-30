@@ -1,4 +1,5 @@
-// Shared standalone fixture builder: spec-local organizations, permissions and mail accounts, with no application dependency.
+// Shared standalone fixture builder: spec-local organizations, users with finance permissions and an invoice email
+// template, with no application dependency.
 const lib = ec.resource.script("component://mr-mantle/service/mantle/account/InvoiceWorkflowLib.js")
 const call = lib.call
 function fixtures(prefix) {
@@ -58,8 +59,10 @@ function fixtures(prefix) {
             fromDate: 0
         })
     }
+    // Invoices and statements are sent through send#EmailTemplate from the organization's billing address, by this
+    // spec-local template on a server the mail capture intercepts.
     const server = prefix + "_SMTP",
-        emailAccountId = prefix + "_MAIL"
+        emailTemplateId = prefix + "_INVOICE_EMAIL"
     call("create#moqui.basic.email.EmailServer", {
         emailServerId: server,
         smtpHost: "127.0.0.1",
@@ -67,19 +70,20 @@ function fixtures(prefix) {
         smtpStartTls: "N",
         smtpSsl: "N"
     })
-    call("create#moqui.basic.email.EmailAccount", {
-        emailAccountId,
-        ownerPartyId: org,
-        accountKindEnumId: "EakShared",
+    call("create#moqui.basic.email.EmailTemplate", {
+        emailTemplateId,
+        description: "Native finance invoice",
         emailServerId: server,
-        emailAddress: "accounts@native.example",
-        accountName: "Native finance mail",
-        statusId: "EasActive",
-        recordFilingEnumId: "ErfLinkedOnly"
+        fromAddress: "${fromAddress}",
+        fromName: "${fromName}",
+        subject: "${subject}"
     })
-    for (const id of [users.ar, users.edit, ec.user.userId])
-        call("create#moqui.basic.email.EmailAccountUser", {emailAccountId, userId: id, fromDate: 0, permissionEnumId: "EapSend"})
-    return {org, customer, users, emailAccountId}
+    call("mantle.party.ContactServices.create#EmailAddress", {
+        partyId: org,
+        emailAddress: "accounts@native.example",
+        contactMechPurposeId: "EmailBilling"
+    })
+    return {org, customer, users, emailTemplateId}
 }
 function draft(f, amount = "100", currencyUomId = "USD") {
     const made = call("mantle.account.InvoiceServices.create#Receivable", {

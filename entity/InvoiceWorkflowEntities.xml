@@ -12,7 +12,8 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
     <extend-entity entity-name="PartyAcctgPreference" package="mantle.ledger.config">
         <field name="singleCurrencyDocumentsOnly" type="text-indicator" default="'N'" enable-audit-log="update"/>
         <field name="invoiceApprovalRequired" type="text-indicator" default="'N'" enable-audit-log="update"/>
@@ -44,29 +45,9 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="INVOICE_WORKFLOW_SOURCE"><index-field name="workflowSourceKey"/></index>
     </extend-entity>
     <extend-entity entity-name="InvoiceContent" package="mantle.account.invoice">
-        <field name="isImmutable" type="text-indicator" default="'N'"/>
+        <field name="isImmutable" type="text-indicator" default="'N'">
+            <description>Y for an issued file: the PDF send#Invoice froze and each supporting copy it sent.</description></field>
     </extend-entity>
-    <entity entity-name="InvoiceDelivery" package="mantle.account.invoice" cache="never">
-        <description>Frozen authoritative source and exact issued PDF, with independently durable recipient outcomes.</description>
-        <field name="deliveryId" type="id" is-pk="true"/>
-        <field name="invoiceId" type="id"/>
-        <field name="organizationPartyId" type="id"/>
-        <field name="userId" type="id"/>
-        <field name="operationKey" type="id"/>
-        <field name="sourceVersion" type="text-long"/>
-        <field name="contentHash" type="text-long"/>
-        <field name="invoiceContentId" type="id"/>
-        <field name="contentLocation" type="text-long"/>
-        <field name="sourceJson" type="text-very-long"/>
-        <field name="printHtml" type="text-very-long"/>
-        <field name="subject" type="text-long"/>
-        <field name="bodyText" type="text-very-long"/>
-        <field name="emailTemplateId" type="id"/>
-        <field name="status" type="text-short"/>
-        <field name="createdDate" type="date-time"/>
-        <field name="resultJson" type="text-very-long"/>
-        <relationship type="one" related="mantle.account.invoice.Invoice"/>
-    </entity>
     <view-entity entity-name="InvoiceFinance" package="mantle.account.invoice" cache="never">
         <member-entity entity-alias="INV" entity-name="mantle.account.invoice.Invoice"/>
         <member-entity entity-alias="SRC" entity-name="mantle.account.invoice.Invoice" join-from-alias="INV" join-optional="true">
@@ -84,49 +65,6 @@ along with this software (see the LICENSE.md file). If not, see
         <alias entity-alias="FROMP" name="fromPrivateOwnerUserId" field="privateOwnerUserId"/>
         <alias entity-alias="TOP" name="toPrivateOwnerUserId" field="privateOwnerUserId"/>
     </view-entity>
-    <entity entity-name="InvoiceDeliveryRecipient" package="mantle.account.invoice" cache="never">
-        <field name="deliveryId" type="id" is-pk="true"/>
-        <field name="recipient" type="text-medium" is-pk="true"/>
-        <field name="emailMessageId" type="id"/>
-        <field name="status" type="text-short"/>
-        <field name="reasonCode" type="text-short"/>
-        <field name="errorMessage" type="text-long"/>
-        <field name="attemptDate" type="date-time"/>
-        <field name="priorDeliveryId" type="id"/>
-        <relationship type="one" related="mantle.account.invoice.InvoiceDelivery"/>
-    </entity>
-    <entity entity-name="InvoiceDeliveryClaim" package="mantle.account.invoice" cache="never">
-        <description>One durable send claim per invoice version and normalized recipient, including prepared and pending deliveries.</description>
-        <field name="claimId" type="id" is-pk="true"/>
-        <field name="deliveryId" type="id"/>
-        <field name="recipient" type="text-medium"/>
-    </entity>
-    <entity entity-name="ReceivableStatementSnapshot" package="mantle.account.invoice" cache="never">
-        <field name="snapshotId" type="id" is-pk="true"/>
-        <field name="organizationPartyId" type="id"/>
-        <field name="userId" type="id"/>
-        <field name="fromDate" type="date-time"/>
-        <field name="asOfDate" type="date-time"/>
-        <field name="inputFingerprint" type="text-long"/>
-        <field name="createdDate" type="date-time"/>
-        <field name="expiresDate" type="date-time"/>
-        <field name="snapshotJson" type="text-very-long"/>
-        <field name="printHtml" type="text-very-long"/>
-        <field name="resultJson" type="text-very-long"/>
-    </entity>
-    <entity entity-name="ReceivableStatementDelivery" package="mantle.account.invoice" cache="never">
-        <field name="deliveryKey" type="id" is-pk="true"/>
-        <field name="snapshotId" type="id"/>
-        <field name="customerPartyId" type="id"/>
-        <field name="currencyUomId" type="id"/>
-        <field name="recipient" type="text-medium"/>
-        <field name="emailMessageId" type="id"/>
-        <field name="contentLocation" type="text-long"/>
-        <field name="status" type="text-short"/>
-        <field name="reasonCode" type="text-short"/>
-        <field name="errorMessage" type="text-long"/>
-        <field name="createdDate" type="date-time"/>
-    </entity>
     <extend-entity entity-name="PartyIdentification" package="mantle.party">
         <field name="idValue" type="text-medium" encrypt="true" enable-audit-log="update"/>
         <field name="issuedBy" type="text-medium" enable-audit-log="update"/>

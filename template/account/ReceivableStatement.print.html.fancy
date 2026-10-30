@@ -1,0 +1,97 @@
+<#--
+This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<#-- One customer's statement in one currency, printed and sent by mantle.account.CollectionServices: a statement row of
+     get#Statements (over get#ReceivableStatementInfo) with organizationName and asOfDateText. -->
+<#assign money = (value) => ec.l10n.formatCurrency(toDecimal(value ?? 0), statement.currencyUomId)>
+<#assign periodDays = Number(statement.periodDays ?? 30)>
+<!doctype html>
+<html><head><meta charset="utf-8"><title>${ec.l10n.localize('Statement')} ${statement.customerName}</title>
+<style>
+@page { size: A4; margin: 18mm; }
+body { font: 10pt Helvetica, Arial, sans-serif; color: #20252b; }
+h1 { font-size: 18pt; margin: 0 0 4mm; }
+h2 { font-size: 12pt; margin: 6mm 0 2mm; }
+table { border-collapse: collapse; width: 100%; }
+td, th { padding: 4px 6px; text-align: left; vertical-align: top; border-bottom: 1px solid #ddd; }
+th { border-bottom: 1px solid #20252b; }
+thead { display: table-header-group; }
+tbody tr { break-inside: avoid; }
+.amount { text-align: right; white-space: nowrap; }
+.total td { font-weight: bold; border-bottom: none; }
+</style></head>
+<body>
+<h1>${ec.l10n.localize('Statement')}</h1>
+<p><strong>${organizationName}</strong></p>
+<p>${statement.customerName} · ${statement.currencyUomId} · ${ec.l10n.localize('As of')} ${asOfDateText}</p>
+<table><tbody>
+    <tr><th>${ec.l10n.localize('Unpaid invoices')}</th><td class="amount">${money(statement.unpaidTotal)}</td></tr>
+    <tr><th>${ec.l10n.localize('Unapplied payments')}</th><td class="amount">${money(statement.unappliedTotal)}</td></tr>
+    <tr class="total"><td>${ec.l10n.localize('Balance due')}</td><td class="amount">${money(statement.closingBalance)}</td></tr>
+</tbody></table>
+<#if statement.invoiceRows.length>
+<h2>${ec.l10n.localize('Invoices')}</h2>
+<table>
+    <thead><tr>
+        <th>${ec.l10n.localize('Invoice')}</th><th>${ec.l10n.localize('Reference')}</th><th>${ec.l10n.localize('Date')}</th>
+        <th>${ec.l10n.localize('Due')}</th><th class="amount">${ec.l10n.localize('Total')}</th>
+        <th class="amount">${ec.l10n.localize('Unpaid')}</th>
+    </tr></thead>
+    <tbody>
+    <#list statement.invoiceRows as invoice>
+        <tr>
+            <td>${invoice.invoiceId}</td><td>${invoice.referenceNumber ?? ''}</td><td>${invoice.invoiceDateText}</td>
+            <td>${invoice.dueDateText}</td><td class="amount">${money(invoice.invoiceTotal)}</td>
+            <td class="amount">${money(invoice.unpaidTotal)}</td>
+        </tr>
+    </#list>
+    </tbody>
+</table>
+</#if>
+<#if statement.paymentRows.length>
+<h2>${ec.l10n.localize('Unapplied payments')}</h2>
+<table>
+    <thead><tr>
+        <th>${ec.l10n.localize('Payment')}</th><th>${ec.l10n.localize('Date')}</th>
+        <th class="amount">${ec.l10n.localize('Amount')}</th><th class="amount">${ec.l10n.localize('Unapplied')}</th>
+    </tr></thead>
+    <tbody>
+    <#list statement.paymentRows as payment>
+        <tr>
+            <td>${payment.paymentId}</td><td>${payment.effectiveDateText}</td>
+            <td class="amount">${money(payment.amount)}</td><td class="amount">${money(payment.unappliedTotal)}</td>
+        </tr>
+    </#list>
+    </tbody>
+</table>
+</#if>
+<h2>${ec.l10n.localize('Aging')}</h2>
+<table>
+    <thead><tr>
+        <th></th><th class="amount">${ec.l10n.localize('Current')}</th>
+        <th class="amount">0 - ${periodDays - 1}</th><th class="amount">${periodDays} - ${periodDays * 2 - 1}</th>
+        <th class="amount">${periodDays * 2} - ${periodDays * 3 - 1}</th><th class="amount">${periodDays * 3} +</th>
+        <th class="amount">${ec.l10n.localize('Total')}</th>
+    </tr></thead>
+    <tbody>
+    <#list statement.agingSummaryList as aging>
+        <tr>
+            <td>${ec.l10n.localize(aging.description)}</td><td class="amount">${money(aging.current)}</td>
+            <td class="amount">${money(aging.period0)}</td><td class="amount">${money(aging.period1)}</td>
+            <td class="amount">${money(aging.period2)}</td>
+            <td class="amount">${money(toDecimal(aging.period3 ?? 0).add(aging.periodRemaining ?? 0))}</td>
+            <td class="amount">${money(aging.total)}</td>
+        </tr>
+    </#list>
+    </tbody>
+</table>
+</body></html>

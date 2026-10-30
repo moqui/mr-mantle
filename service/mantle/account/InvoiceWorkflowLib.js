@@ -28,15 +28,6 @@ function denied(code, message) {
 function requirePermission(permission) {
     if (!has(permission)) denied("PERMISSION_DENIED", permission + " authority is required")
 }
-function emailAccount(p) {
-    const available = call("org.moqui.impl.EmailClientServices.get#EmailAccountAccess")
-    const candidates = Array.from(available.accountList || []).filter(row => row.canSend && !row.isInternal)
-    const chosen = p.emailAccountId
-        ? candidates.find(row => row.emailAccountId === p.emailAccountId)
-        : candidates.find(row => row.ownerPartyId === p.organizationPartyId) || (candidates.length === 1 ? candidates[0] : null)
-    if (!chosen) denied("EMAIL_ACCOUNT_REQUIRED", "Choose an email account you may send from")
-    return chosen.emailAccountId
-}
 function organization(organizationPartyId, permission, lock = false) {
     if (permission) requirePermission(permission)
     if (!organizationPartyId || !one("mantle.party.PartyRole", {partyId: organizationPartyId, roleTypeId: "OrgInternal"}))
@@ -177,59 +168,47 @@ function previous(op) {
     }
     return Object.assign(result, {alreadyApplied: true})
 }
-function totals(record) {
-    const currency = record.currencyUomId
-    let invoiceTotal = toDecimal(0),
-        appliedPayments = toDecimal(0)
-    for (const line of rows("mantle.account.invoice.InvoiceItem", {invoiceId: record.invoiceId}))
-        invoiceTotal = invoiceTotal.add(ec.l10n.roundCurrency(toDecimal(line.quantity ?? 1).multiply(line.amount ?? 0), currency))
-    const applications = find("mantle.account.payment.PaymentApplication")
-        .condition(
-            ec.entity.conditionFactory.makeCondition(
-                [
-                    ec.entity.conditionFactory.makeCondition("invoiceId", "equals", record.invoiceId),
-                    ec.entity.conditionFactory.makeCondition("toInvoiceId", "equals", record.invoiceId)
-                ],
-                "or"
-            )
-        )
-        .list()
-    for (const item of applications) appliedPayments = appliedPayments.add(item.amountApplied || 0)
+// One invoice line's amount, rounded to its currency.
+function lineTotal(line, currencyUomId) {
+    return ec.l10n.roundCurrency(toDecimal(line.quantity ?? 1).multiply(line.amount ?? 0), currencyUomId)
+}
+// The totals Mantle stores on the Invoice (update#InvoiceTotals, run by the InvoiceItem and PaymentApplication EECAs).
+function storedTotals(row) {
+    const appliedPayments = toDecimal(row.appliedPaymentsTotal ?? 0)
     return {
-        invoiceTotal: ec.l10n.roundCurrency(invoiceTotal, currency),
+        invoiceTotal: toDecimal(row.invoiceTotal ?? 0),
         appliedPayments,
         appliedPaymentsTotal: appliedPayments,
-        unpaidTotal: invoiceTotal.subtract(appliedPayments),
-        currencyUomId: currency
+        unpaidTotal: toDecimal(row.unpaidTotal ?? 0),
+        currencyUomId: row.currencyUomId
     }
 }
+// The stored totals of an invoice, read again so a change earlier in the transaction is included.
+function totals(record) {
+    return storedTotals(one(invoiceEntity, {invoiceId: record.invoiceId}) || record)
+}
+// The stored totals of several invoices by invoice ID; with asOfDate also the applications on or before it, and the
+// applied and unpaid amounts as of that date.
 function totalsMany(records, asOfDate = null) {
     if (!records.length) return {}
     const ids = records.map(row => row.invoiceId)
-    const values = Object.fromEntries(
-        records.map(row => [
-            row.invoiceId,
-            Object.assign(
-                {invoiceTotal: toDecimal(0), appliedPayments: toDecimal(0), currencyUomId: row.currencyUomId},
-                asOfDate == null ? {} : {applications: []}
-            )
-        ])
+    const stored = Object.fromEntries(
+        Array.from(find(invoiceEntity).condition("invoiceId", "in", ids).list()).map(row => [row.invoiceId, row])
     )
-    for (const line of find("mantle.account.invoice.InvoiceItem").condition("invoiceId", "in", ids).list()) {
-        const value = values[line.invoiceId]
-        value.invoiceTotal = value.invoiceTotal.add(
-            ec.l10n.roundCurrency(toDecimal(line.quantity ?? 1).multiply(line.amount ?? 0), value.currencyUomId)
-        )
+    const values = Object.fromEntries(records.map(row => [row.invoiceId, storedTotals(stored[row.invoiceId] || row)]))
+    if (asOfDate == null) return values
+    for (const value of Object.values(values)) {
+        value.applications = []
+        value.appliedPayments = toDecimal(0)
     }
     const cf = ec.entity.conditionFactory
-    let applications = find("mantle.account.payment.PaymentApplication").condition(
-        cf.makeCondition([cf.makeCondition("invoiceId", "in", ids), cf.makeCondition("toInvoiceId", "in", ids)], "or")
-    )
-    if (asOfDate != null) applications = applications.condition("appliedDate", "less-equals", asOfDate)
+    const applications = find("mantle.account.payment.PaymentApplication")
+        .condition(cf.makeCondition([cf.makeCondition("invoiceId", "in", ids), cf.makeCondition("toInvoiceId", "in", ids)], "or"))
+        .condition("appliedDate", "less-equals", asOfDate)
     for (const item of applications.list())
         for (const id of new Set([item.invoiceId, item.toInvoiceId].filter(id => values[id]))) {
             values[id].appliedPayments = values[id].appliedPayments.add(item.amountApplied || 0)
-            if (asOfDate != null) values[id].applications.push(map(item))
+            values[id].applications.push(map(item))
         }
     for (const value of Object.values(values)) {
         value.appliedPaymentsTotal = value.appliedPayments
@@ -237,15 +216,17 @@ function totalsMany(records, asOfDate = null) {
     }
     return values
 }
+// Names of the parties the user may see, by party ID, read in one query; a party another user keeps private is left out.
 function partyNames(ids) {
     const unique = [...new Set(ids.filter(Boolean))]
     if (!unique.length) return {}
-    return Object.fromEntries(
-        Array.from(find("mantle.party.PartyDetail").condition("partyId", "in", unique).list()).map(row => [
-            row.partyId,
+    const names = {}
+    for (const row of find("mantle.party.PartyDetail").condition("partyId", "in", unique).list()) {
+        if (row.privateOwnerUserId && row.privateOwnerUserId !== ec.user.userId && !access.systemAdmin()) continue
+        names[row.partyId] =
             row.organizationName || [row.firstName, row.middleName, row.lastName].filter(Boolean).join(" ") || row.partyId
-        ])
-    )
+    }
+    return names
 }
 function page(query, p, field = "records", recordCount) {
     const pageSize = Math.min(100, Math.max(1, Number(p.pageSize) || 20))
@@ -293,7 +274,6 @@ function escapeHtml(value) {
     has,
     denied,
     requirePermission,
-    emailAccount,
     organization,
     invoice,
     readInvoice,
@@ -303,6 +283,8 @@ function escapeHtml(value) {
     operation,
     complete,
     previous,
+    lineTotal,
+    storedTotals,
     totals,
     totalsMany,
     partyNames,

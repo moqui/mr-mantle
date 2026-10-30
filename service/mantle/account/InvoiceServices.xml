@@ -496,6 +496,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fromPartyId"/>
             <parameter name="periodDays" type="Integer" default="30"/>
             <parameter name="asOfDate" type="Date"/>
+            <parameter name="currencyUomId">
+                <description>Only the invoices and payments in this currency.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="toParty" type="Map"/>
@@ -546,6 +548,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <econdition field-name="unpaidTotal" operator="not-equals" from="toDecimal(0)"/>
                 <econdition field-name="toPartyId"/>
                 <econdition field-name="fromPartyId" ignore-if-empty="true"/>
+                <econdition field-name="currencyUomId" ignore-if-empty="true"/>
                 <order-by field-name="invoiceDate"/>
             </entity-find>
             <!-- all Payments -->
@@ -554,6 +557,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <econdition field-name="toPartyId" from="fromPartyId" ignore-if-empty="true"/>
                 <econdition field-name="unappliedTotal" operator="not-equals" from="toDecimal(0)"/>
                 <econdition field-name="statusId" operator="in" value="PmntDelivered,PmntConfirmed"/>
+                <econdition field-name="amountUomId" from="currencyUomId" ignore-if-empty="true"/>
             </entity-find>
             <set field="fromPartyIds" from="Array.from(new Set(Array.from(allInvoiceList).map((it) => it.fromPartyId).concat(Array.from(allUnappliedPaymentList).map((it) => it.toPartyId)))).sort()"/>
 
@@ -2166,7 +2170,14 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="create" noun="InvoiceCreditMemo">
-        <description>Create a Credit Memo type Invoice for the specified Invoice with reverse parties, item for amount specified, etc.</description>
+        <description>Create a Credit Memo type Invoice for the specified Invoice with reverse parties, item for amount specified, etc.
+
+            With linkToOriginal the credit is a finance credit linked to its original (creditForInvoiceId): the original
+            must be issued and the user hold its side's edit permission (RECEIVABLE_EDIT or PAYABLE_EDIT) in the
+            organization; the credits of an original stay within its total; the credit is a draft on the original's side (a
+            customer credit is a receivable draft). With allocateToLines the amount is split over the original's lines, each
+            on the account its line posted to, instead of one item. With an operationKey the same request answers the first
+            result.</description>
         <in-parameters>
             <parameter name="originalInvoiceId" required="true"/>
             <parameter name="invoiceDate" type="Timestamp"/>
@@ -2178,11 +2189,46 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="itemTypeEnumId"/>
             <parameter name="overrideGlAccountId"/>
             <parameter name="activeOrgId"/>
+
+            <parameter name="linkToOriginal" type="Boolean" default="false"/>
+            <parameter name="allocateToLines" type="Boolean" default="false"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="operationKey"/>
         </in-parameters>
         <out-parameters>
             <parameter name="invoiceId"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
+            <set field="allocation" from="null"/>
+            <if condition="linkToOriginal">
+                <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+                <set field="scope" from="ec.resource.script(workflow).execute('scope',
+                    {invoiceId:originalInvoiceId, organizationPartyId:organizationPartyId, need:'write'})"/>
+                <set field="unissuedStatuses"
+                        from="['InvoiceInProcess', 'InvoiceIncoming', 'InvoiceReceived', 'InvoiceCancelled']"/>
+                <if condition="unissuedStatuses.includes(scope.invoice.statusId)">
+                    <return error="true" message="CREDIT_SOURCE_INVALID: Finalize the source invoice before making a credit"/>
+                </if>
+                <set field="amount" from="ec.l10n.roundCurrency(toDecimal(amount ?? 0), scope.invoice.currencyUomId)"/>
+                <if condition="amount.compare(0) &lt;= 0">
+                    <return error="true" message="CREDIT_AMOUNT_INVALID: Enter a positive credit amount"/></if>
+                <if condition="operationKey">
+                    <set field="replay" from="ec.resource.script(workflow).execute('replay', {operationKey:operationKey,
+                        operationType:'InvoiceCredit', organizationPartyId:scope.organizationPartyId,
+                        request:{invoiceId:originalInvoiceId, amount:String(amount), description:description || null}})"/>
+                    <if condition="replay.previous">
+                        <set field="invoiceId" from="replay.previous.creditMemoInvoiceId"/>
+                        <set field="alreadyApplied" from="true"/>
+                        <return/>
+                    </if>
+                </if>
+                <if condition="allocateToLines">
+                    <set field="allocation" from="ec.resource.script(workflow).execute('creditLines',
+                        {invoiceId:originalInvoiceId, organizationPartyId:scope.organizationPartyId, receivable:scope.receivable,
+                            partyId:scope.partyId, amount:amount, description:description})"/></if>
+                <set field="invoiceDate" from="invoiceDate ?? ec.user.nowTimestamp"/>
+            </if>
             <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="originalInvoice">
                 <field-map field-name="invoiceId" from="originalInvoiceId"/></entity-find-one>
 
@@ -2192,9 +2238,37 @@ along with this software (see the LICENSE.md file). If not, see
                         invoiceDate:invoiceDate, currencyUomId:originalInvoice.currencyUomId, otherPartyOrderId:originalInvoice.otherPartyOrderId,
                         productStoreId:originalInvoice.productStoreId, systemMessageRemoteId:originalInvoice.systemMessageRemoteId}"/>
 
-            <service-call name="create#mantle.account.invoice.InvoiceItem"
-                    in-map="{invoiceId:invoiceId, itemTypeEnumId:itemTypeEnumId, amount:amount, quantity:quantity,
-                        description:description, overrideGlAccountId:overrideGlAccountId}"/>
+            <if condition="linkToOriginal">
+                <!-- the credit is on its original's side: a customer credit (from the customer) is a receivable draft -->
+                <service-call name="update#mantle.account.invoice.Invoice" disable-authz="true"
+                        in-map="{invoiceId:invoiceId, creditForInvoiceId:originalInvoiceId, draftedByUserId:ec.user.userId,
+                            accountingDate:ec.l10n.format(invoiceDate, 'yyyy-MM-dd'),
+                            description:description || ('Credit for ' + originalInvoiceId),
+                            financeOrganizationPartyId:scope.organizationPartyId,
+                            financeDirection:(scope.receivable ? 'receivable' : 'payable'),
+                            statusId:(scope.receivable ? 'InvoiceInProcess' : 'InvoiceIncoming')}"/>
+            </if>
+            <if condition="allocation"><then>
+                <iterate list="allocation.creditLineList" entry="creditLine">
+                    <service-call name="mantle.account.InvoiceServices.create#InvoiceItem" disable-authz="true"
+                            in-map="Object.assign({invoiceId:invoiceId}, creditLine)"/>
+                </iterate>
+            </then><else>
+                <service-call name="create#mantle.account.invoice.InvoiceItem"
+                        in-map="{invoiceId:invoiceId, itemTypeEnumId:itemTypeEnumId, amount:amount, quantity:quantity,
+                            description:description, overrideGlAccountId:overrideGlAccountId}"/>
+            </else></if>
+            <if condition="linkToOriginal">
+                <script>ec.resource.script(workflow).execute('check', {check:'creditCap', invoiceId:invoiceId})</script>
+                <if condition="operationKey">
+                    <script>ec.resource.script(workflow).execute('record', {operationKey:operationKey,
+                        operationType:'InvoiceCredit', organizationPartyId:scope.organizationPartyId,
+                        requestHash:replay.requestHash,
+                        resultEntityName:'mantle.account.invoice.Invoice', resultId:invoiceId,
+                        result:{invoiceId:originalInvoiceId, creditMemoInvoiceId:invoiceId}})</script>
+                </if>
+            </if>
+            <set field="alreadyApplied" from="false"/>
         </actions>
     </service>
 
@@ -3150,7 +3224,8 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions>
             <if condition="contentFile != null &amp;&amp; contentFile.size &gt; 0">
-                <script>ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceAttachments.js').assertMutableContent(context)</script>
+                <set field="attachments" value="component://mr-mantle/service/mantle/account/InvoiceAttachments.js"/>
+                <script>ec.resource.script(attachments).execute('assertMutable', {invoiceContentId:invoiceContentId})</script>
                 <entity-find-one entity-name="mantle.account.invoice.InvoiceContent" value-field="invoiceContent"/>
                 <service-call name="mantle.account.InvoiceServices.save#InvoiceContentFile" out-map="context"
                         in-map="Object.assign({}, context, {invoiceId:invoiceContent.invoiceId, saveContentLocation:false})"/>
@@ -3167,7 +3242,8 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="contentLocation"/></out-parameters>
         <actions>
-            <script>ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceAttachments.js').assertMutableContent(context)</script>
+            <set field="attachments" value="component://mr-mantle/service/mantle/account/InvoiceAttachments.js"/>
+            <script>ec.resource.script(attachments).execute('assertMutable', {invoiceContentId:invoiceContentId})</script>
             <set field="filename" from="contentFile.getName()"/>
             <if condition="ResourceReference.isTextFilename(filename)"><then>
                 <set field="contentRoot" from="ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'"/>
@@ -3187,144 +3263,221 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
-    <!-- Native finance workflows; legacy primitives above retain their standalone defaults. -->
-    <service verb="define" noun="InvoiceWorkflowParameters" type="interface">
+
+    <!-- ================================================================================= -->
+    <!-- ========== Finance invoice controls: receivables and payables guarded =========== -->
+    <!-- ================================================================================= -->
+    <!-- Over the services above: the side's permission (RECEIVABLE_EDIT or PAYABLE_EDIT, the VIEW ones to read,
+        INVOICE_APPROVE), the organization the user works in, the period and locks of the invoice date. The checks are in
+        InvoiceWorkflow.js; the services above keep their own behavior for other callers. -->
+
+    <service verb="change" noun="InvoiceState" allow-remote="false">
+        <description>The guarded invoice status change over Mantle's status flow: finalize or approve (lines, a total that is
+            not negative, a linked credit within its original, the single currency and approval preferences, and the posting
+            done), resume or cancel (not applied, not posted, a reason), receive, and sent (after send#Invoice). It refuses a
+            stale revision (lastUpdatedStamp, or the sourceVersion reviewed), a closed period or an accounting lock on the
+            invoice date, and a user without the side's edit permission (INVOICE_APPROVE to approve). The same operationKey
+            and request answers the first result.</description>
         <in-parameters>
+            <parameter name="invoiceId" required="true"/>
             <parameter name="organizationPartyId"/>
-            <parameter name="invoiceId"/>
-            <parameter name="action"/>
+            <parameter name="action">
+                <description>finalize, approve, resume, cancel, receive or sent; else from statusId.</description></parameter>
             <parameter name="statusId"/>
             <parameter name="lastUpdatedStamp" type="Timestamp"/>
             <parameter name="sourceVersion"/>
             <parameter name="operationKey"/>
             <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="statusId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="changed" from="ec.resource.script(workflow).execute('changeState', context)"/>
+            <set field="organizationPartyId" from="changed.organizationPartyId"/>
+            <set field="statusId" from="changed.statusId"/>
+            <set field="lastUpdatedStamp" from="changed.lastUpdatedStamp"/>
+            <set field="sourceVersion" from="changed.sourceVersion"/>
+            <set field="reasonCode" from="changed.reasonCode"/>
+            <set field="alreadyApplied" from="!!changed.alreadyApplied"/>
+        </actions>
+    </service>
+    <service verb="store" noun="InvoiceDraft" allow-remote="false">
+        <description>Change the header of a draft invoice through update#Invoice: dates, term, reference, description and
+            message; a new date or term sets the due date again. Refuses a stale lastUpdatedStamp, a posted invoice, an unknown
+            term, and a closed period or lock on the new date. Needs the side's edit permission.</description>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp" required="true"/>
             <parameter name="invoiceDate" type="Timestamp"/>
             <parameter name="dueDate" type="Timestamp"/>
             <parameter name="settlementTermId"/>
             <parameter name="referenceNumber"/>
             <parameter name="description"/>
             <parameter name="invoiceMessage"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="sourceVersion"/>
+        </out-parameters>
+        <actions>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="scope" from="ec.resource.script(workflow).execute('scope', {invoiceId:invoiceId,
+                organizationPartyId:organizationPartyId, need:'draft', checkRevision:true, lastUpdatedStamp:lastUpdatedStamp,
+                periodDate:invoiceDate})"/>
+            <if condition="settlementTermId">
+                <entity-find-one entity-name="mantle.account.invoice.SettlementTerm" value-field="settlementTerm"
+                        disable-authz="true"/>
+                <if condition="settlementTerm == null">
+                    <return error="true" message="TERM_INVALID: Choose an existing payment term"/></if>
+            </if>
+            <!-- only the fields given change; an empty one is cleared -->
+            <set field="headerFields" from="Object.fromEntries(['invoiceDate', 'dueDate', 'settlementTermId', 'referenceNumber',
+                'description', 'invoiceMessage'].filter((field) => field in context)
+                .map((field) => [field, context[field] === '' ? null : context[field]]))"/>
+            <service-call name="mantle.account.InvoiceServices.update#Invoice" disable-authz="true"
+                    in-map="Object.assign(headerFields, {invoiceId:invoiceId})"/>
+            <if condition="invoiceDate || 'settlementTermId' in context">
+                <service-call name="mantle.account.InvoiceServices.checkSet#InvoiceDueDate" disable-authz="true"
+                        in-map="{invoiceId:invoiceId, overrideExisting:true}"/></if>
+            <set field="saved" from="ec.resource.script(workflow).execute('scope', {invoiceId:invoiceId,
+                organizationPartyId:scope.organizationPartyId, need:'write', version:true})"/>
+            <set field="lastUpdatedStamp" from="saved.invoice.lastUpdatedStamp"/>
+            <set field="sourceVersion" from="saved.sourceVersion"/>
+        </actions>
+    </service>
+    <service verb="store" noun="InvoiceDraftItem" allow-remote="false">
+        <description>Add a line to a draft invoice through create#InvoiceItem, or change one (invoiceItemSeqId with its
+            lastUpdatedStamp) through update#InvoiceItem: an ItemType type, an existing product, a positive quantity, the
+            amount rounded to the invoice currency; a customer credit's line posts to the item's outgoing sales account. The
+            invoice's approval is cleared, and a linked credit stays within its original. Refuses a posted invoice, a closed
+            period or lock, and a stale line. Needs the side's edit permission.</description>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"/>
+            <parameter name="organizationPartyId"/>
             <parameter name="invoiceItemSeqId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
             <parameter name="itemTypeEnumId"/>
             <parameter name="productId"/>
             <parameter name="quantity" type="BigDecimal"/>
             <parameter name="amount" type="BigDecimal"/>
+            <parameter name="description"/>
             <parameter name="itemDate" type="Timestamp"/>
-            <parameter name="creditAmount" type="BigDecimal"/>
-            <parameter name="toInvoiceId"/>
         </in-parameters>
-    </service>
-    <service verb="define" noun="InvoiceDeliveryParameters" type="interface">
-        <in-parameters>
-            <parameter name="organizationPartyId"/>
-            <parameter name="invoiceId"/>
-            <parameter name="lastUpdatedStamp" type="Timestamp"/>
-            <parameter name="sourceVersion"/>
-            <parameter name="operationKey"/>
-            <parameter name="emailAccountId"/>
-            <parameter name="toAddresses"/>
-            <parameter name="note"/>
-            <parameter name="template"/>
-            <parameter name="printHtml" allow-html="any"/>
-            <parameter name="summaryText"/>
-            <parameter name="subject"/>
-            <parameter name="emailTemplateId"/>
-            <parameter name="resend" type="Boolean"/>
-            <parameter name="deliveryId"/>
-            <parameter name="recipient"/>
-            <parameter name="errorMessage"/>
-            <parameter name="asPdf" type="Boolean"/>
-            <parameter name="invoiceIdList" type="List"/>
-            <parameter name="sourceVersions" type="Map"/>
-            <parameter name="attachmentContentIdList" type="List"/>
-            <parameter name="attachmentVersions" type="Map"/>
-            <parameter name="attachmentSelectionsByInvoice" type="Map"/>
-            <parameter name="result" type="Map"/>
-            <parameter name="action"/>
-        </in-parameters>
-    </service>
-    <service verb="define" noun="ReceivableFindParameters" type="interface">
-        <in-parameters>
-            <parameter name="organizationPartyId"/>
-            <parameter name="invoiceId"/>
-            <parameter name="recordId"/>
-            <parameter name="queue"/>
-            <parameter name="customerPartyId"/>
-            <parameter name="statusId"/>
-            <parameter name="invoiceTypeEnumId"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="dueFromDate" type="Timestamp"/>
-            <parameter name="dueThruDate" type="Timestamp"/>
-            <parameter name="currencyUomId"/>
-            <parameter name="text"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
-        </in-parameters>
-    </service>
-    <service verb="change" noun="InvoiceState" allow-remote="false">
-        <description>Change invoice state with native side permission, organization, approval, currency, period and posting checks.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
-        <out-parameters>
-            <parameter name="invoiceId"/>
-            <parameter name="organizationPartyId"/>
-            <parameter name="statusId"/>
-            <parameter name="lastUpdatedStamp" type="Timestamp"/>
-            <parameter name="sourceVersion"/>
-            <parameter name="reasonCode"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('changeState', context))</script>
-        </actions>
-    </service>
-    <service verb="store" noun="InvoiceDraft" allow-remote="false">
-        <description>Edit permitted draft header fields with a current revision; refuse posted history.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
-        <out-parameters>
-            <parameter name="invoiceId"/>
-            <parameter name="organizationPartyId"/>
-            <parameter name="statusId"/>
-            <parameter name="lastUpdatedStamp" type="Timestamp"/>
-            <parameter name="sourceVersion"/>
-            <parameter name="reasonCode"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('storeDraft', context))</script>
-        </actions>
-    </service>
-    <service verb="store" noun="InvoiceDraftItem" allow-remote="false">
-        <description>Create or edit a draft invoice line, rounding to currency and checking ownership and revision.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
         <out-parameters>
             <parameter name="invoiceId"/>
             <parameter name="invoiceItemSeqId"/>
             <parameter name="lastUpdatedStamp" type="Timestamp"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('storeItem', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="scope" from="ec.resource.script(workflow).execute('scope',
+                {invoiceId:invoiceId, organizationPartyId:organizationPartyId, need:'draft'})"/>
+            <if condition="invoiceItemSeqId">
+                <entity-find-one entity-name="mantle.account.invoice.InvoiceItem" value-field="original" for-update="true"
+                        disable-authz="true"/>
+                <if condition="original == null">
+                    <return error="true" message="LINE_UNAVAILABLE: Invoice line is not available"/></if>
+                <if condition="lastUpdatedStamp == null || Number(original.lastUpdatedStamp) != Number(lastUpdatedStamp)">
+                    <return error="true" message="STALE_REVISION: Invoice changed; reload before saving"/></if>
+            </if>
+            <set field="itemTypeEnumId" from="itemTypeEnumId || original?.itemTypeEnumId"/>
+            <entity-find-one entity-name="moqui.basic.Enumeration" value-field="itemType" cache="true" disable-authz="true">
+                <field-map field-name="enumId" from="itemTypeEnumId"/></entity-find-one>
+            <if condition="itemType?.enumTypeId != 'ItemType'">
+                <return error="true" message="LINE_TYPE_INVALID: Choose an invoice item type"/></if>
+            <set field="productId" from="('productId' in context ? productId : original?.productId) || null"/>
+            <if condition="productId">
+                <entity-find-one entity-name="mantle.product.Product" value-field="product" disable-authz="true"/>
+                <if condition="product == null">
+                    <return error="true" message="PRODUCT_UNAVAILABLE: Product is not available"/></if>
+            </if>
+            <set field="quantity" from="toDecimal(quantity ?? original?.quantity ?? 1)"/>
+            <if condition="quantity.compare(0) &lt;= 0">
+                <return error="true" message="QUANTITY_INVALID: Enter a positive quantity"/></if>
+            <set field="amount" from="ec.l10n.roundCurrency(toDecimal(amount ?? original?.amount ?? 0),
+                scope.invoice.currencyUomId)"/>
+            <set field="overrideGlAccountId" from="original?.overrideGlAccountId || null"/>
+            <set field="isCustomerCredit"
+                    from="scope.receivable &amp;&amp; scope.invoice.invoiceTypeEnumId == 'InvoiceCreditMemo'"/>
+            <if condition="isCustomerCredit &amp;&amp; !overrideGlAccountId">
+                <service-call name="mantle.ledger.InvoiceAutoPostServices.get#InvoiceItemGlAccount" out-map="accountOut"
+                        disable-authz="true" in-map="{organizationPartyId:scope.organizationPartyId, otherPartyId:scope.partyId,
+                            itemTypeEnumId:itemTypeEnumId, productId:productId, direction:'O'}"/>
+                <set field="overrideGlAccountId" from="accountOut.glAccountId"/>
+                <if condition="!overrideGlAccountId">
+                    <return error="true" message="CREDIT_ACCOUNT_MISSING: Choose an item with an outgoing sales account"/></if>
+            </if>
+            <set field="itemFields" from="{invoiceId:invoiceId, itemTypeEnumId:itemTypeEnumId, productId:productId,
+                quantity:quantity, amount:amount, overrideGlAccountId:overrideGlAccountId,
+                description:('description' in context ? description : original?.description) || null,
+                itemDate:('itemDate' in context ? itemDate : original?.itemDate) || null}"/>
+            <if condition="original"><then>
+                <service-call name="mantle.account.InvoiceServices.update#InvoiceItem" disable-authz="true"
+                        in-map="Object.assign(itemFields, {invoiceItemSeqId:invoiceItemSeqId})"/>
+            </then><else>
+                <service-call name="mantle.account.InvoiceServices.create#InvoiceItem" in-map="itemFields" out-map="created"
+                        disable-authz="true"/>
+                <set field="invoiceItemSeqId" from="created.invoiceItemSeqId"/>
+            </else></if>
+            <service-call name="update#mantle.account.invoice.Invoice" in-map="{invoiceId:invoiceId, approvedSourceVersion:null}"
+                    disable-authz="true"/>
+            <script>ec.resource.script(workflow).execute('check', {check:'creditCap', invoiceId:invoiceId})</script>
+            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="saved" disable-authz="true"/>
+            <set field="lastUpdatedStamp" from="saved.lastUpdatedStamp"/>
         </actions>
     </service>
     <service verb="delete" noun="InvoiceDraftItem" allow-remote="false">
-        <description>Delete a current draft line through Mantle so source time and billing links are released.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <description>Remove a draft invoice line through delete#InvoiceItem, which frees its time and order billing. The
+            invoice's approval is cleared. Refuses a posted invoice, a closed period or lock, and a stale line
+            (lastUpdatedStamp). Needs the side's edit permission.</description>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="invoiceItemSeqId" required="true"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="invoiceId"/>
-            <parameter name="organizationPartyId"/>
-            <parameter name="statusId"/>
             <parameter name="lastUpdatedStamp" type="Timestamp"/>
-            <parameter name="sourceVersion"/>
-            <parameter name="reasonCode"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('deleteItem', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="scope" from="ec.resource.script(workflow).execute('scope',
+                {invoiceId:invoiceId, organizationPartyId:organizationPartyId, need:'draft'})"/>
+            <entity-find-one entity-name="mantle.account.invoice.InvoiceItem" value-field="item" for-update="true"
+                    disable-authz="true"/>
+            <if condition="item == null"><return error="true" message="LINE_UNAVAILABLE: Invoice line is not available"/></if>
+            <if condition="lastUpdatedStamp == null || Number(item.lastUpdatedStamp) != Number(lastUpdatedStamp)">
+                <return error="true" message="STALE_REVISION: Invoice changed; reload before saving"/></if>
+            <service-call name="mantle.account.InvoiceServices.delete#InvoiceItem" disable-authz="true"
+                    in-map="{invoiceId:invoiceId, invoiceItemSeqId:invoiceItemSeqId}"/>
+            <service-call name="update#mantle.account.invoice.Invoice" in-map="{invoiceId:invoiceId, approvedSourceVersion:null}"
+                    disable-authz="true"/>
+            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="saved" disable-authz="true"/>
+            <set field="lastUpdatedStamp" from="saved.lastUpdatedStamp"/>
         </actions>
     </service>
     <service verb="get" noun="InvoiceFinanceDetail" allow-remote="false">
-        <description>Read a scoped finance invoice and permitted child records; return explicit finance actions.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <description>An invoice for a finance reader (ACCOUNTING_VIEW, or the side's VIEW permission) in the organization the
+            user works in: the header with names, the stored totals, what the user may do (capabilities: edit, approve,
+            finalize, send, credit, apply a credit, cancel, resume, reverse), the lines, the applications, the order and
+            shipment sources, the ledger transactions (for ledger readers only), the files (with what may be attached when
+            sending), the emails sent (deliveryRows), the change history, the billing addresses it is sent to by default and
+            the linked credits that may be applied to it.</description>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"/>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="invoice" type="Map"/>
             <parameter name="totals" type="Map"/>
@@ -3341,42 +3494,157 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="attachmentDiscoveryIncomplete" type="Boolean"/>
             <parameter name="deliveryRows" type="List"/>
             <parameter name="auditRows" type="List"/>
+            <parameter name="sendTo"/>
+            <parameter name="creditRows" type="List"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('detail', context))</script>
-        </actions>
-    </service>
-    <service verb="create" noun="LinkedCreditMemo" allow-remote="false">
-        <description>Create a linked credit draft within the original invoice amount, once per operation.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
-        <out-parameters>
-            <parameter name="invoiceId"/>
-            <parameter name="creditMemoInvoiceId"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('credit', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="scope" from="ec.resource.script(workflow).execute('scope',
+                {invoiceId:invoiceId, organizationPartyId:organizationPartyId, version:true, capabilities:true})"/>
+            <set field="invoice" from="Object.assign({}, scope.invoice, {organizationPartyId:scope.organizationPartyId,
+                sourceVersion:scope.sourceVersion})"/>
+            <set field="totals" from="scope.totals"/>
+            <set field="capabilities" from="scope.capabilities"/>
+
+            <entity-find entity-name="mantle.account.invoice.InvoiceItem" list="itemList" limit="1000" disable-authz="true">
+                <econdition field-name="invoiceId"/><order-by field-name="invoiceItemSeqId"/></entity-find>
+            <entity-find entity-name="moqui.basic.Enumeration" list="itemTypeList" cache="true" disable-authz="true">
+                <econdition field-name="enumTypeId" value="ItemType"/></entity-find>
+            <set field="itemTypeNames" from="Object.fromEntries(Array.from(itemTypeList)
+                .map((type) => [type.enumId, type.description]))"/>
+            <set field="lines" from="Array.from(itemList).map((item) => Object.assign(item.getMap(), {
+                itemTypeDescription:itemTypeNames[item.itemTypeEnumId] || item.itemTypeEnumId,
+                lineTotal:ec.l10n.roundCurrency(toDecimal(item.quantity ?? 1).multiply(item.amount ?? 0), invoice.currencyUomId),
+                overrideGlAccountId:capabilities.canReadLedger ? item.overrideGlAccountId : null}))"/>
+
+            <entity-find entity-name="mantle.account.payment.PaymentApplication" list="paymentRows" limit="500"
+                    disable-authz="true">
+                <econditions combine="or">
+                    <econdition field-name="invoiceId"/>
+                    <econdition field-name="toInvoiceId" from="invoiceId"/>
+                </econditions>
+                <order-by field-name="appliedDate"/><order-by field-name="paymentApplicationId"/>
+            </entity-find>
+            <entity-find entity-name="mantle.order.OrderItemBilling" list="orderSourceList" limit="500" disable-authz="true">
+                <econdition field-name="invoiceId"/></entity-find>
+            <entity-find entity-name="mantle.shipment.ShipmentItemSource" list="shipmentRows" limit="500" disable-authz="true">
+                <econdition field-name="invoiceId"/></entity-find>
+            <set field="sourceRows" from="Array.from(orderSourceList).concat(Array.from(shipmentRows))"/>
+            <set field="ledgerRows" from="[]"/>
+            <if condition="capabilities.canReadLedger">
+                <entity-find entity-name="mantle.ledger.transaction.AcctgTrans" list="ledgerRows" limit="500"
+                        disable-authz="true">
+                    <econdition field-name="invoiceId"/>
+                    <econdition field-name="organizationPartyId" from="scope.organizationPartyId"/>
+                    <order-by field-name="transactionDate"/><order-by field-name="acctgTransId"/>
+                </entity-find>
+            </if>
+            <entity-find entity-name="moqui.entity.EntityAuditLog" list="auditRows" limit="200" disable-authz="true">
+                <econdition field-name="changedEntityName" value="mantle.account.invoice.Invoice"/>
+                <econdition field-name="pkPrimaryValue" from="invoiceId"/>
+                <order-by field-name="-changedDate"/>
+            </entity-find>
+
+            <set field="attachments" value="component://mr-mantle/service/mantle/account/InvoiceAttachments.js"/>
+            <set field="files" from="ec.resource.script(attachments).execute('annotate',
+                {invoiceId:invoiceId, canSend:capabilities.canSend})"/>
+            <set field="contentRows" from="files.contentRows"/>
+            <set field="attachmentDiscoveryIncomplete" from="files.incomplete"/>
+
+            <entity-find entity-name="mantle.account.invoice.InvoiceEmailMessage" list="invoiceEmailList" limit="100"
+                    disable-authz="true"><econdition field-name="invoiceId"/></entity-find>
+            <set field="deliveryRows" from="[]"/>
+            <if condition="invoiceEmailList.length">
+                <entity-find entity-name="moqui.basic.email.EmailMessage" list="deliveryRows" disable-authz="true">
+                    <econdition field-name="emailMessageId" operator="in"
+                            from="Array.from(invoiceEmailList).map((row) => row.emailMessageId)"/>
+                    <select-field field-name="emailMessageId"/><select-field field-name="statusId"/>
+                    <select-field field-name="toAddresses"/><select-field field-name="subject"/>
+                    <select-field field-name="sentDate"/><select-field field-name="emailTemplateId"/>
+                    <order-by field-name="-sentDate"/><order-by field-name="-emailMessageId"/>
+                </entity-find>
+            </if>
+
+            <service-call name="mantle.party.ContactServices.get#PartyContactInfoList" out-map="billingContacts"
+                    in-map="{partyId:scope.partyId, emailContactMechPurposeId:'EmailBilling', alsoIncludePrimaryPurpose:false}"
+                    disable-authz="true"/>
+            <set field="sendTo" from="Array.from(new Set(Array.from(billingContacts.emailAddressList ?? [])
+                .map((row) => row.emailAddress).filter((address) => address))).join(', ')"/>
+
+            <entity-find entity-name="mantle.account.invoice.Invoice" list="creditRows" limit="50" disable-authz="true">
+                <econdition field-name="creditForInvoiceId" from="invoiceId"/>
+                <econdition field-name="statusId" operator="in" value="InvoiceFinalized,InvoiceSent,InvoiceAcked"/>
+                <econdition field-name="unpaidTotal" operator="greater" from="toDecimal(0)"/>
+                <order-by field-name="invoiceDate"/><order-by field-name="invoiceId"/>
+            </entity-find>
+            <set field="budgetRows" from="[]"/>
+            <set field="budgetAvailable" from="false"/>
+            <set field="budgetUnavailableReason" value="Invoice budget links are not available in the current budget model"/>
         </actions>
     </service>
     <service verb="reverse" noun="DraftInvoice" allow-remote="false">
-        <description>Reverse only an unapplied draft, with current revision, organization and period checks.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <description>Turn a negative customer invoice draft into a customer credit: each line keeps the outgoing sales account
+            it would post to, then reverse#Invoice swaps the parties and negates the amounts, and the credit stays a
+            receivable draft. Refuses another kind of invoice, an applied, posted or linked one, a stale lastUpdatedStamp,
+            and a closed period or lock. Needs RECEIVABLE_EDIT.</description>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp" required="true"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="invoiceId"/>
-            <parameter name="organizationPartyId"/>
-            <parameter name="statusId"/>
             <parameter name="lastUpdatedStamp" type="Timestamp"/>
-            <parameter name="sourceVersion"/>
-            <parameter name="reasonCode"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('reverseDraft', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="scope" from="ec.resource.script(workflow).execute('scope', {invoiceId:invoiceId,
+                organizationPartyId:organizationPartyId, need:'draft', checkRevision:true, lastUpdatedStamp:lastUpdatedStamp})"/>
+            <if condition="toDecimal(scope.invoice.appliedPaymentsTotal ?? 0).compare(0) != 0">
+                <return error="true" message="INVOICE_APPLIED: An applied invoice cannot be reversed"/></if>
+            <if condition="!scope.receivable || scope.invoice.statusId != 'InvoiceInProcess' ||
+                    scope.invoice.creditForInvoiceId || toDecimal(scope.invoice.invoiceTotal ?? 0).compare(0) &gt;= 0">
+                <return error="true"
+                        message="NEGATIVE_DRAFT_REQUIRED: Only a negative customer invoice draft is reversed into a credit"/>
+            </if>
+            <entity-find entity-name="mantle.account.invoice.InvoiceItem" list="itemList" disable-authz="true">
+                <econdition field-name="invoiceId"/></entity-find>
+            <iterate list="itemList" entry="item">
+                <set field="accountId" from="item.overrideGlAccountId"/>
+                <if condition="!accountId">
+                    <service-call name="mantle.ledger.InvoiceAutoPostServices.get#InvoiceItemGlAccount" out-map="accountOut"
+                            out-map-add-to-existing="false" disable-authz="true"
+                            in-map="{organizationPartyId:scope.organizationPartyId, otherPartyId:scope.partyId,
+                                itemTypeEnumId:item.itemTypeEnumId, productId:item.productId, direction:'O'}"/>
+                    <set field="accountId" from="accountOut.glAccountId"/>
+                </if>
+                <if condition="!accountId">
+                    <return error="true" message="CREDIT_ACCOUNT_MISSING: The invoice line needs an outgoing sales account"/></if>
+                <service-call name="mantle.account.InvoiceServices.update#InvoiceItem" disable-authz="true"
+                        in-map="{invoiceId:invoiceId, invoiceItemSeqId:item.invoiceItemSeqId, overrideGlAccountId:accountId}"/>
+            </iterate>
+            <service-call name="mantle.account.InvoiceServices.reverse#Invoice" in-map="{invoiceId:invoiceId}"
+                    disable-authz="true"/>
+            <service-call name="update#mantle.account.invoice.Invoice" disable-authz="true"
+                    in-map="{invoiceId:invoiceId, invoiceTypeEnumId:'InvoiceCreditMemo', statusId:'InvoiceInProcess',
+                        financeOrganizationPartyId:scope.organizationPartyId, financeDirection:'receivable'}"/>
+            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="saved" disable-authz="true"/>
+            <set field="lastUpdatedStamp" from="saved.lastUpdatedStamp"/>
         </actions>
     </service>
     <service verb="apply" noun="InvoiceCredit" allow-remote="false">
-        <description>Apply a linked credit atomically under locks, with native scope, currency, status and balance checks.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <description>Apply a linked credit to the invoice it credits through apply#InvoiceToInvoice: the same parties and
+            currency, both issued, the amount (both remaining balances' smaller one by default) within both balances, and the
+            period of the later document's date open. Needs the side's edit permission; the same operationKey and request
+            answers the first result.</description>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"><description>The credit.</description></parameter>
+            <parameter name="toInvoiceId" required="true"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="operationKey" required="true"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="invoiceId"/>
             <parameter name="toInvoiceId"/>
@@ -3385,22 +3653,40 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('applyCredit', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="applied" from="ec.resource.script(workflow).execute('applyCredit', context)"/>
+            <set field="paymentApplicationId" from="applied.paymentApplicationId"/>
+            <set field="amountApplied" from="applied.amountApplied"/>
+            <set field="alreadyApplied" from="!!applied.alreadyApplied"/>
         </actions>
     </service>
-    <service verb="find" noun="Receivables" allow-remote="false">
-        <description>Find authorized customer invoices and customer credits using database filters and pagination.</description>
-        <implements service="mantle.account.InvoiceServices.define#ReceivableFindParameters"/>
-        <out-parameters>
-            <parameter name="rows" type="List"/>
-            <parameter name="records" type="List"/>
-            <parameter name="counts" type="Map"/>
-            <parameter name="recordCount" type="Long"/>
+    <service verb="define" noun="ReceivableFindParameters" type="interface">
+        <description>The filters of the receivables queue, shared by find#Receivables and get#ReceivableSummary.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="invoiceId"/>
+            <parameter name="recordId"/>
+            <parameter name="queue"><description>draft, unpaid, overdue, credits or all (the default).</description></parameter>
+            <parameter name="customerPartyId"/>
+            <parameter name="statusId"/>
+            <parameter name="invoiceTypeEnumId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="dueFromDate" type="Timestamp"/>
+            <parameter name="dueThruDate" type="Timestamp"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="text"/>
             <parameter name="pageIndex" type="Integer"/>
             <parameter name="pageSize" type="Integer"/>
-            <parameter name="pageMaxIndex" type="Integer"/>
-            <parameter name="pageRangeLow" type="Integer"/>
-            <parameter name="pageRangeHigh" type="Integer"/>
+        </in-parameters>
+    </service>
+    <service verb="find" noun="Receivables" allow-remote="false">
+        <description>A page of an organization's receivables (customer invoices, linked customer credits and customer
+            credits) for a finance reader, filtered in the query, with the stored totals and party and status names; private
+            counterparties of other users are left out.</description>
+        <implements service="mantle.account.InvoiceServices.define#ReceivableFindParameters"/>
+        <out-parameters>
+            <parameter name="records" type="List"/>
             <parameter name="recordsCount" type="Long"/>
             <parameter name="recordsPageIndex" type="Integer"/>
             <parameter name="recordsPageSize" type="Integer"/>
@@ -3409,31 +3695,47 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="recordsPageRangeHigh" type="Integer"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('receivables', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="found" from="ec.resource.script(workflow).execute('receivables', context)"/>
+            <set field="records" from="found.records"/>
+            <set field="recordsCount" from="found.recordsCount"/>
+            <set field="recordsPageIndex" from="found.recordsPageIndex"/>
+            <set field="recordsPageSize" from="found.recordsPageSize"/>
+            <set field="recordsPageMaxIndex" from="found.recordsPageMaxIndex"/>
+            <set field="recordsPageRangeLow" from="found.recordsPageRangeLow"/>
+            <set field="recordsPageRangeHigh" from="found.recordsPageRangeHigh"/>
         </actions>
     </service>
     <service verb="get" noun="ReceivableSummary" allow-remote="false">
-        <description>Summarize the complete authorized filtered receivables by customer, status and currency; report an unavailable oversized aggregate.</description>
+        <description>The receivables find#Receivables selects, all of them, totaled by customer, currency and status
+            (summaryRows) and as calendar rows; over 10000 invoices it says the report is too large instead.</description>
         <implements service="mantle.account.InvoiceServices.define#ReceivableFindParameters"/>
         <out-parameters>
             <parameter name="summaryRows" type="List"/>
             <parameter name="calendarRows" type="List"/>
             <parameter name="complete" type="Boolean"/>
-            <parameter name="incomplete" type="Boolean"/>
             <parameter name="errors" type="List"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('summary', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="summary" from="ec.resource.script(workflow).execute('summary', context)"/>
+            <set field="summaryRows" from="summary.summaryRows"/>
+            <set field="calendarRows" from="summary.calendarRows"/>
+            <set field="complete" from="summary.complete"/>
+            <set field="errors" from="summary.errors"/>
         </actions>
     </service>
     <service verb="create" noun="Receivable" allow-remote="false">
-        <description>Create an organization-scoped customer invoice or customer credit draft without issuing or posting it.</description>
+        <description>A draft customer invoice (create#Invoice from the organization) or customer credit (from the customer,
+            kept a receivable draft), in the currency given or the organization's base currency. It is not issued or posted.
+            Refuses a customer another user keeps private, another invoice type and an unknown currency. Needs
+            RECEIVABLE_EDIT in the organization.</description>
         <in-parameters>
-            <parameter name="organizationPartyId"/>
-            <parameter name="customerPartyId"/>
-            <parameter name="invoiceTypeEnumId"/>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="customerPartyId" required="true"/>
+            <parameter name="invoiceTypeEnumId" default-value="InvoiceSales"/>
             <parameter name="currencyUomId"/>
-            <parameter name="invoiceDate" type="Timestamp"/>
+            <parameter name="invoiceDate" type="Timestamp" default="ec.user.nowTimestamp"/>
             <parameter name="dueDate" type="Timestamp"/>
             <parameter name="settlementTermId"/>
             <parameter name="referenceNumber"/>
@@ -3444,12 +3746,54 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="lastUpdatedStamp" type="Timestamp"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('createReceivable', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <script>ec.resource.script(workflow).execute('organization',
+                {organizationPartyId:organizationPartyId, permission:'RECEIVABLE_EDIT', lock:true})</script>
+            <entity-find-one entity-name="mantle.party.Party" value-field="customer" disable-authz="true">
+                <field-map field-name="partyId" from="customerPartyId"/></entity-find-one>
+            <if condition="customer == null ||
+                    (customer.privateOwnerUserId &amp;&amp; customer.privateOwnerUserId != ec.user.userId)">
+                <return error="true" message="CUSTOMER_UNAVAILABLE: Choose an available customer"/></if>
+            <if condition="!['InvoiceSales', 'InvoiceCreditMemo'].includes(invoiceTypeEnumId)">
+                <return error="true" message="INVOICE_TYPE_INVALID: Choose an invoice or customer credit"/></if>
+            <if condition="!currencyUomId">
+                <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference" out-map="preferenceOut"
+                        in-map="{organizationPartyId:organizationPartyId}" disable-authz="true"/>
+                <set field="currencyUomId" from="preferenceOut.partyAcctgPreference?.baseCurrencyUomId"/>
+            </if>
+            <entity-find-one entity-name="moqui.basic.Uom" value-field="currency" cache="true" disable-authz="true">
+                <field-map field-name="uomId" from="currencyUomId"/></entity-find-one>
+            <if condition="currency?.uomTypeEnumId != 'UT_CURRENCY_MEASURE'">
+                <return error="true" message="CURRENCY_INVALID: Choose a currency"/></if>
+            <set field="isCredit" from="invoiceTypeEnumId == 'InvoiceCreditMemo'"/>
+            <service-call name="mantle.account.InvoiceServices.create#Invoice" out-map="created" disable-authz="true"
+                    in-map="{fromPartyId:(isCredit ? customerPartyId : organizationPartyId),
+                        toPartyId:(isCredit ? organizationPartyId : customerPartyId), invoiceTypeEnumId:invoiceTypeEnumId,
+                        currencyUomId:currencyUomId, invoiceDate:invoiceDate, dueDate:dueDate, settlementTermId:settlementTermId,
+                        referenceNumber:referenceNumber, description:description}"/>
+            <set field="invoiceId" from="created.invoiceId"/>
+            <set field="draftFields" from="{invoiceId:invoiceId, draftedByUserId:ec.user.userId,
+                accountingDate:ec.l10n.format(invoiceDate, 'yyyy-MM-dd'), financeOrganizationPartyId:organizationPartyId,
+                financeDirection:'receivable'}"/>
+            <!-- a customer credit is created Incoming (from the customer); it is a receivable draft, like a linked credit -->
+            <if condition="isCredit"><set field="draftFields.statusId" value="InvoiceInProcess"/></if>
+            <service-call name="update#mantle.account.invoice.Invoice" in-map="draftFields" disable-authz="true"/>
+            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="saved" disable-authz="true"/>
+            <set field="lastUpdatedStamp" from="saved.lastUpdatedStamp"/>
         </actions>
     </service>
+
+    <!-- ========== Invoice print, sending and batches ========== -->
     <service verb="get" noun="InvoiceOutput" allow-remote="false">
-        <description>Render the authoritative standard invoice or credit print, optionally storing its PDF; never execute caller-supplied locations.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <description>The invoice or credit memo as issued, rendered by a print template over get#InvoicePrintInfo: the
+            template a store or party setting names (TemplateInvoicePrint) when it is an html.fancy template, else Mantle's
+            template/account/Invoice.print.html.fancy. With asPdf the PDF is stored and its location returned. Needs a read
+            of the invoice.</description>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="asPdf" type="Boolean" default="false"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="printHtml"/>
             <parameter name="summaryText"/>
@@ -3459,12 +3803,53 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="contentLocation"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('output', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="scope" from="ec.resource.script(workflow).execute('scope',
+                {invoiceId:invoiceId, organizationPartyId:organizationPartyId, version:true})"/>
+            <service-call name="mantle.account.InvoiceServices.get#InvoicePrintInfo" in-map="{invoiceId:invoiceId}"
+                    out-map="printInfo" disable-authz="true"/>
+            <set field="defaultTemplate" value="component://mr-mantle/template/account/Invoice.print.html.fancy"/>
+            <set field="templateLocation" from="String(printInfo.templateLocation || '').endsWith('.html.fancy') ?
+                printInfo.templateLocation : defaultTemplate"/>
+            <!-- the organization issues a receivable, a customer credit too; the vendor issues a payable -->
+            <set field="issuerPartyId" from="scope.receivable ? scope.organizationPartyId : scope.invoice.fromPartyId"/>
+            <set field="issuerIsFrom" from="issuerPartyId == scope.invoice.fromPartyId"/>
+            <set field="fromName" from="issuerIsFrom ? scope.invoice.fromName : scope.invoice.toName"/>
+            <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference" out-map="preferenceOut"
+                    in-map="{organizationPartyId:scope.organizationPartyId}" disable-authz="true"/>
+            <set field="printData" from="Object.assign({}, printInfo, {invoiceId:invoiceId, issuerName:fromName,
+                recipientName:(issuerIsFrom ? scope.invoice.toName : scope.invoice.fromName),
+                issuerContactInfo:(issuerIsFrom ? printInfo.fromContactInfo : printInfo.toContactInfo),
+                recipientContactInfo:(issuerIsFrom ? printInfo.toContactInfo : printInfo.fromContactInfo),
+                isCredit:scope.invoice.invoiceTypeEnumId == 'InvoiceCreditMemo', invoiceDateText:scope.invoice.invoiceDateText,
+                dueDateText:scope.invoice.dueDateText, documentFooter:preferenceOut.partyAcctgPreference?.documentFooter})"/>
+            <set field="printHtml" from="ec.resource.template(templateLocation, printData)"/>
+            <set field="currencyUomId" from="scope.invoice.currencyUomId"/>
+            <set field="lineTexts" from="Array.from(printInfo.invoiceItemList ?? [])
+                .concat(Array.from(printInfo.adjustmentItemList ?? []))
+                .map((item) => (item.description || item.itemTypeEnumId) + ' · ' + String(item.quantity ?? 1) + ' × ' +
+                    ec.l10n.formatCurrency(item.amount ?? 0, currencyUomId))"/>
+            <set field="summaryText" from="[(printData.isCredit ? 'Credit memo ' : 'Invoice ') + invoiceId + ' from ' + fromName]
+                .concat(lineTexts, ['Total ' + ec.l10n.formatCurrency(printInfo.invoiceTotal ?? 0, currencyUomId)]).join('\n')"/>
+            <set field="sourceVersion" from="scope.sourceVersion"/>
+            <set field="contentHash" from="ec.user.singleUseCodeHash(printHtml)"/>
+            <if condition="asPdf">
+                <set field="contentLocation" from="'dbresource://mantle/content/invoice-output/' + invoiceId + '/' +
+                    contentHash.slice(0, 32) + '.pdf'"/>
+                <script>ec.resource.getLocationReference(contentLocation)
+                    .putBytes(ec.resource.xslFoTransform(printHtml, null, null, 'application/pdf'))</script>
+            </if>
         </actions>
     </service>
     <service verb="get" noun="InvoiceDeliveryAttachments" allow-remote="false">
-        <description>List bounded local invoice files a sender may explicitly select, with opaque reviewed byte versions.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <description>The files of a customer invoice a sender (RECEIVABLE_EDIT) may attach when sending it, each with the
+            version send#Invoice checks; issued files and files outside the invoice's folder or over the size limits are
+            not offered.</description>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="attachmentContentIdList" type="List"><description>Only these files.</description></parameter>
+        </in-parameters>
         <out-parameters>
             <parameter name="attachmentRows" type="List"/>
             <parameter name="maxAttachmentCount" type="Integer"/>
@@ -3472,13 +3857,38 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="maxTotalAttachmentBytes" type="Long"/>
             <parameter name="incomplete" type="Boolean"/>
         </out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceAttachments.js').options(context))</script></actions>
+        <actions>
+            <set field="attachments" value="component://mr-mantle/service/mantle/account/InvoiceAttachments.js"/>
+            <set field="found" from="ec.resource.script(attachments).execute('options', context)"/>
+            <set field="attachmentRows" from="found.attachmentRows"/>
+            <set field="maxAttachmentCount" from="found.maxAttachmentCount"/>
+            <set field="maxAttachmentBytes" from="found.maxAttachmentBytes"/>
+            <set field="maxTotalAttachmentBytes" from="found.maxTotalAttachmentBytes"/>
+            <set field="incomplete" from="found.incomplete"/>
+        </actions>
     </service>
-    <service verb="send" noun="Invoice" allow-remote="false" transaction="ignore">
-        <description>Finalize as permitted, freeze the issued PDF, and deliver each recipient independently with durable retry results.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+    <service verb="send" noun="Invoice" allow-remote="false">
+        <description>Send a customer invoice by email, as send#InvoiceStoreEmail does for a store's: a draft is finalized
+            first (change#InvoiceState); its print (get#InvoiceOutput) is frozen as an immutable PDF InvoiceContent, with
+            copies of the supporting files the sender reviewed (by their versions); each recipient (toAddresses, else the
+            customer's billing addresses) gets it through send#EmailTemplate (emailTemplateId, MANTLE_INVOICE_EMAIL by
+            default), recorded in InvoiceEmailMessage; a finalized invoice sent to anyone becomes Sent. A bad address is named
+            in recipientResults and the others are sent. The same operationKey and request answers the first result. Refuses
+            a stale lastUpdatedStamp or sourceVersion, a payable, and a user without RECEIVABLE_EDIT.</description>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="operationKey" required="true"/>
+            <parameter name="toAddresses"><description>Comma, semicolon or line separated.</description></parameter>
+            <parameter name="note"/>
+            <parameter name="subject"/>
+            <parameter name="emailTemplateId" default-value="MANTLE_INVOICE_EMAIL"/>
+            <parameter name="attachmentContentIdList" type="List"/>
+            <parameter name="attachmentVersions" type="Map"/>
+        </in-parameters>
         <out-parameters>
-            <parameter name="deliveryId"/>
             <parameter name="invoiceId"/>
             <parameter name="invoiceContentId"/>
             <parameter name="sourceVersion"/>
@@ -3487,83 +3897,166 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="attachmentRows" type="List"/>
             <parameter name="successCount" type="Integer"/>
             <parameter name="failureCount" type="Integer"/>
-            <parameter name="pendingCount" type="Integer"/>
             <parameter name="statusId"/>
             <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('send', context))</script>
-        </actions>
-    </service>
-    <service verb="prepare" noun="InvoiceDelivery" allow-remote="false">
-        <description>Prepare one authorized issued invoice version and its exact PDF before any mail is sent.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
-        <out-parameters>
-            <parameter name="deliveryId"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('prepare', context))</script>
-        </actions>
-    </service>
-    <service verb="deliver" noun="InvoiceRecipient" allow-remote="false">
-        <description>Deliver one prepared recipient through a real authorized mail draft, preserving an existing outcome.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
-        <out-parameters>
-            <parameter name="recipient"/>
-            <parameter name="emailMessageId"/>
-            <parameter name="status"/>
-            <parameter name="reasonCode"/>
-            <parameter name="errorMessage"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('recipient', context))</script>
-        </actions>
-    </service>
-    <service verb="record" noun="InvoiceDeliveryFailure" allow-remote="false">
-        <description>Record one independent prepared delivery failure without altering another recipient.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
-        <out-parameters>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="scope" from="ec.resource.script(workflow).execute('scope', {invoiceId:invoiceId,
+                organizationPartyId:organizationPartyId, need:'write', version:true})"/>
+            <if condition="!scope.receivable">
+                <return error="true" message="INVOICE_DIRECTION_INVALID: Only a customer invoice is sent here"/></if>
+            <set field="draftStatuses" from="['InvoiceInProcess', 'InvoiceIncoming', 'InvoiceReceived']"/>
+            <if condition="!draftStatuses.concat(['InvoiceApproved', 'InvoiceFinalized', 'InvoiceSent', 'InvoiceAcked'])
+                    .includes(scope.invoice.statusId)">
+                <return error="true" message="INVOICE_SEND_STATE_INVALID: This invoice cannot be sent now"/></if>
 
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('failure', context))</script>
-        </actions>
-    </service>
-    <service verb="finish" noun="InvoiceDelivery" allow-remote="false">
-        <description>Summarize committed recipient outcomes and mark a successfully queued invoice sent.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
-        <out-parameters>
-            <parameter name="deliveryId"/>
-            <parameter name="invoiceId"/>
-            <parameter name="invoiceContentId"/>
-            <parameter name="sourceVersion"/>
-            <parameter name="contentHash"/>
-            <parameter name="recipientResults" type="List"/>
-            <parameter name="attachmentRows" type="List"/>
-            <parameter name="successCount" type="Integer"/>
-            <parameter name="failureCount" type="Integer"/>
-            <parameter name="pendingCount" type="Integer"/>
-            <parameter name="statusId"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('finish', context))</script>
-        </actions>
-    </service>
-    <service verb="check" noun="InvoiceStoreEmail" allow-remote="false">
-        <description>Suppress legacy store notices for the exact source version already handled by durable invoice delivery.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
-        <out-parameters>
-            <parameter name="sendAllowed" type="Boolean"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('checkAutoEmail', context))</script>
+            <if condition="toAddresses"><then>
+                <set field="recipientList" from="String(toAddresses).split(/[,;\n]+/)
+                    .map((address) => address.trim().toLowerCase()).filter((address) => address)"/>
+            </then><else>
+                <service-call name="mantle.party.ContactServices.get#PartyContactInfoList" out-map="billingContacts"
+                        in-map="{partyId:scope.partyId, emailContactMechPurposeId:'EmailBilling',
+                            alsoIncludePrimaryPurpose:false}" disable-authz="true"/>
+                <set field="recipientList" from="Array.from(billingContacts.emailAddressList ?? [])
+                    .map((row) => String(row.emailAddress || '').toLowerCase()).filter((address) => address)"/>
+            </else></if>
+            <set field="recipientList" from="Array.from(new Set(recipientList))"/>
+            <if condition="!recipientList.length">
+                <return error="true" message="RECIPIENT_REQUIRED: Choose at least one invoice recipient"/></if>
+            <if condition="recipientList.length &gt; 100">
+                <return error="true" message="RECIPIENT_LIMIT: Send to at most 100 recipients at once"/></if>
+
+            <set field="request" from="{invoiceId:invoiceId, recipients:recipientList, note:note || null, subject:subject || null,
+                emailTemplateId:emailTemplateId,
+                attachmentContentIdList:Array.from(attachmentContentIdList ?? []).map(String).sort(),
+                attachmentVersions:attachmentVersions ?? {}}"/>
+            <set field="replay" from="ec.resource.script(workflow).execute('replay', {operationKey:operationKey,
+                operationType:'InvoiceSend', organizationPartyId:scope.organizationPartyId, request:request})"/>
+            <if condition="replay.previous">
+                <set field="invoiceContentId" from="replay.previous.invoiceContentId"/>
+                <set field="sourceVersion" from="replay.previous.sourceVersion"/>
+                <set field="contentHash" from="replay.previous.contentHash"/>
+                <set field="recipientResults" from="replay.previous.recipientResults"/>
+                <set field="attachmentRows" from="replay.previous.attachmentRows"/>
+                <set field="successCount" from="replay.previous.successCount"/>
+                <set field="failureCount" from="replay.previous.failureCount"/>
+                <set field="statusId" from="replay.previous.statusId"/>
+                <set field="alreadyApplied" from="true"/>
+                <return/>
+            </if>
+            <if condition="lastUpdatedStamp != null"><then>
+                <if condition="Number(scope.invoice.lastUpdatedStamp) != Number(lastUpdatedStamp)">
+                    <return error="true" message="STALE_REVISION: Invoice changed; reload before sending"/></if>
+            </then><else-if condition="!sourceVersion">
+                <return error="true" message="STALE_REVISION: Review the current invoice before sending"/>
+            </else-if></if>
+            <if condition="sourceVersion &amp;&amp; sourceVersion != scope.sourceVersion">
+                <return error="true" message="STALE_PREVIEW: Invoice changed; review it before sending"/></if>
+            <set field="sourceVersion" from="scope.sourceVersion"/>
+
+            <if condition="draftStatuses.includes(scope.invoice.statusId)">
+                <service-call name="mantle.account.InvoiceServices.change#InvoiceState" disable-authz="true"
+                        in-map="{invoiceId:invoiceId, organizationPartyId:scope.organizationPartyId, action:'finalize',
+                            sourceVersion:sourceVersion, changeReason:'Finalize invoice for delivery'}"/>
+            </if>
+
+            <!-- the issued PDF: one for each version of the print, kept as an immutable file of the invoice -->
+            <service-call name="mantle.account.InvoiceServices.get#InvoiceOutput" out-map="output" disable-authz="true"
+                    in-map="{invoiceId:invoiceId, organizationPartyId:scope.organizationPartyId}"/>
+            <set field="contentHash" from="output.contentHash"/>
+            <set field="issueKey" from="contentHash.replace(/[^A-Za-z0-9]/g, '').slice(0, 24)"/>
+            <set field="pdfFileName" from="'Invoice-' + invoiceId + '.pdf'"/>
+            <set field="pdfLocation" from="'dbresource://mantle/content/invoice-issued/' + invoiceId + '/' + issueKey + '/' +
+                pdfFileName"/>
+            <set field="pdfBytes" from="ec.resource.xslFoTransform(output.printHtml, null, null, 'application/pdf')"/>
+            <entity-find entity-name="mantle.account.invoice.InvoiceContent" list="issuedList" limit="1" disable-authz="true">
+                <econdition field-name="contentLocation" from="pdfLocation"/></entity-find>
+            <if condition="issuedList.length"><then>
+                <set field="invoiceContentId" from="issuedList[0].invoiceContentId"/>
+            </then><else>
+                <script>ec.resource.getLocationReference(pdfLocation).putBytes(pdfBytes)</script>
+                <service-call name="create#mantle.account.invoice.InvoiceContent" out-map="issuedContent" disable-authz="true"
+                        in-map="{invoiceId:invoiceId, contentLocation:pdfLocation, contentTypeEnumId:'IctInvoiceDocument',
+                            description:'Issued invoice ' + invoiceId, isImmutable:'Y'}"/>
+                <set field="invoiceContentId" from="issuedContent.invoiceContentId"/>
+            </else></if>
+            <set field="attachments" value="component://mr-mantle/service/mantle/account/InvoiceAttachments.js"/>
+            <set field="frozen" from="ec.resource.script(attachments).execute('freeze', {invoiceId:invoiceId, issueKey:issueKey,
+                attachmentContentIdList:attachmentContentIdList, attachmentVersions:attachmentVersions})"/>
+            <set field="attachmentRows" from="frozen.attachmentRows"/>
+            <!-- the bytes, as the files written in this transaction are not seen by the sends in their own -->
+            <set field="attachmentList" from="[{fileName:pdfFileName, contentType:'application/pdf', contentBytes:pdfBytes}]
+                .concat(frozen.attachmentList)"/>
+
+            <service-call name="mantle.party.ContactServices.get#PartyContactInfo" out-map="issuerContact" disable-authz="true"
+                    in-map="{partyId:scope.organizationPartyId, emailContactMechPurposeId:'EmailBilling'}"/>
+            <set field="emailParameters" from="{invoiceId:invoiceId, subject:subject || ('Invoice ' + invoiceId + ' from ' +
+                output.fromName), fromAddress:issuerContact.emailAddress, fromName:output.fromName}"/>
+            <set field="body" from="ec.resource.template('component://mr-mantle/template/account/InvoiceEmail.html.fancy',
+                {note:note, printHtml:output.printHtml})"/>
+            <set field="bodyText" from="[note || '', output.summaryText].filter((text) => text).join('\n\n')"/>
+            <set field="recipientResults" from="[]"/>
+            <iterate list="recipientList" entry="recipient">
+                <set field="validAddress" from="/^[^\s&lt;&gt;@,;]+@[^\s&lt;&gt;@,;]+\.[^\s&lt;&gt;@,;]+$/.test(recipient)"/>
+                <if condition="!validAddress">
+                    <script>recipientResults.push({recipient:recipient, status:'failed', reasonCode:'RECIPIENT_INVALID',
+                        errorMessage:'Invalid recipient address'})</script>
+                    <continue/>
+                </if>
+                <!-- each address its own message, in its own transaction: one that fails is named and the others go out -->
+                <service-call name="org.moqui.impl.EmailServices.send#EmailTemplate" out-map="sendOut"
+                        out-map-add-to-existing="false" transaction="force-new" ignore-error="true"
+                        in-map="{emailTemplateId:emailTemplateId, toAddresses:recipient, bodyParameters:emailParameters,
+                            body:body, bodyText:bodyText, attachments:attachmentList}"/>
+                <set field="emailMessage" from="null"/>
+                <if condition="sendOut?.emailMessageId">
+                    <service-call name="create#mantle.account.invoice.InvoiceEmailMessage" disable-authz="true"
+                            in-map="{invoiceId:invoiceId, emailMessageId:sendOut.emailMessageId}"/>
+                    <entity-find-one entity-name="moqui.basic.email.EmailMessage" value-field="emailMessage" disable-authz="true">
+                        <field-map field-name="emailMessageId" from="sendOut.emailMessageId"/></entity-find-one>
+                </if>
+                <set field="sendStatus" from="emailMessage?.statusId == 'ES_SENT' ? 'sent' :
+                    ['ES_READY', 'ES_SCHEDULED'].includes(emailMessage?.statusId) ? 'queued' : 'failed'"/>
+                <script>recipientResults.push({recipient:recipient, emailMessageId:emailMessage?.emailMessageId ?? null,
+                    status:sendStatus, reasonCode:(sendStatus == 'failed' ? 'DELIVERY_FAILED' : sendStatus.toUpperCase()),
+                    errorMessage:(sendStatus == 'failed' ? 'The email could not be sent' : null)})</script>
+            </iterate>
+            <set field="successCount" from="recipientResults.filter((row) => row.status != 'failed').length"/>
+            <set field="failureCount" from="recipientResults.length - successCount"/>
+            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="sent" disable-authz="true"/>
+            <set field="statusId" from="sent.statusId"/>
+            <if condition="successCount &amp;&amp; statusId == 'InvoiceFinalized'">
+                <service-call name="update#mantle.account.invoice.Invoice" in-map="{invoiceId:invoiceId, statusId:'InvoiceSent'}"
+                        disable-authz="true"/>
+                <set field="statusId" value="InvoiceSent"/>
+            </if>
+            <set field="alreadyApplied" from="false"/>
+            <script>ec.resource.script(workflow).execute('record', {operationKey:operationKey, operationType:'InvoiceSend',
+                organizationPartyId:scope.organizationPartyId, requestHash:replay.requestHash,
+                resultEntityName:'mantle.account.invoice.InvoiceContent', resultId:invoiceContentId,
+                result:{invoiceId, invoiceContentId, sourceVersion, contentHash, recipientResults, attachmentRows, successCount,
+                    failureCount, statusId}})</script>
         </actions>
     </service>
     <service verb="process" noun="InvoiceBatch" allow-remote="false" transaction="ignore">
-        <description>Process selected reviewed invoices independently and return a named result for every invoice.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <description>Send, finalize or print (a PDF of) each selected customer invoice on its own, each in its own transaction:
+            one that fails is named with its reason and the others are done. Each invoice but for print needs the
+            lastUpdatedStamp reviewed (sourceVersions by invoice ID). The result is kept under operationKey and answered
+            again for the same request (get#InvoiceBatchResult reads it). Needs RECEIVABLE_EDIT.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="invoiceIdList" type="List" required="true"/>
+            <parameter name="action" default-value="send"><description>send, finalize or print.</description></parameter>
+            <parameter name="operationKey" required="true"/>
+            <parameter name="sourceVersions" type="Map">
+                <description>The lastUpdatedStamp reviewed, by invoice ID.</description></parameter>
+            <parameter name="toAddresses"/>
+            <parameter name="note"/>
+            <parameter name="emailTemplateId"/>
+            <parameter name="attachmentSelectionsByInvoice" type="Map"><description>By invoice ID:
+                attachmentContentIdList and attachmentVersions.</description></parameter>
+        </in-parameters>
         <out-parameters>
             <parameter name="results" type="List"/>
             <parameter name="successCount" type="Integer"/>
@@ -3571,35 +4064,70 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('batch', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="batch" from="ec.resource.script(workflow).execute('batch', context)"/>
+            <set field="results" from="batch.results"/>
+            <set field="successCount" from="batch.successCount"/>
+            <set field="failureCount" from="batch.failureCount"/>
+            <set field="alreadyApplied" from="!!batch.alreadyApplied"/>
         </actions>
     </service>
-    <service verb="find" noun="ApprovedTimeBilling" allow-remote="false">
-        <description>Find approved billable project time for finance in its own organization, without requiring a Projects launcher.</description>
+    <service verb="get" noun="InvoiceBatchResult" allow-remote="false">
+        <description>The result process#InvoiceBatch kept for the user's batch with operationKey: each invoice's outcome,
+            and for print its PDF's location. Nothing for a batch of another user or organization. Needs
+            RECEIVABLE_EDIT.</description>
         <in-parameters>
-            <parameter name="organizationPartyId"/>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="successCount" type="Integer"/>
+            <parameter name="failureCount" type="Integer"/>
+            <parameter name="found" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <script>ec.resource.script(workflow).execute('organization',
+                {organizationPartyId:organizationPartyId, permission:'RECEIVABLE_EDIT'})</script>
+            <entity-find-one entity-name="mantle.ledger.transaction.PostingOperation" value-field="operation"
+                    disable-authz="true"/>
+            <set field="found" from="operation?.operationType == 'InvoiceBatch' &amp;&amp;
+                operation.userId == ec.user.userId &amp;&amp; operation.organizationPartyId == organizationPartyId &amp;&amp;
+                !!operation.resultJson"/>
+            <set field="batchResult" from="found ? JSON.parse(operation.resultJson) : {}"/>
+            <set field="results" from="batchResult.results ?? []"/>
+            <set field="successCount" from="batchResult.successCount ?? 0"/>
+            <set field="failureCount" from="batchResult.failureCount ?? 0"/>
+        </actions>
+    </service>
+
+    <!-- ========== Billing approved time ========== -->
+    <service verb="define" noun="ApprovedTimeParameters" type="interface">
+        <description>The approved time to bill, shared by find#ApprovedTimeBilling and
+            create#InvoiceFromApprovedTime.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
             <parameter name="workEffortId"/>
             <parameter name="workerPartyId"/>
-            <parameter name="customerPartyId"/>
             <parameter name="throughDate" type="Timestamp"/>
-            <parameter name="invoiceId"/>
-            <parameter name="entryGrouping"/>
-            <parameter name="operationKey"/>
-            <parameter name="direction"/>
-            <parameter name="settlementTermId"/>
+            <parameter name="direction">
+                <description>receivable (the default: the client's invoice) or payable (the worker's bill).</description>
+            </parameter>
+        </in-parameters>
+    </service>
+    <service verb="find" noun="ApprovedTimeBilling" allow-remote="false">
+        <description>The organization's approved, billable and unbilled project time and worker expenses by project and
+            worker, with its amount at the billing rate and why a row cannot be invoiced (a missing rate, an expense in
+            another currency); a customer another user keeps private is left out. Needs a finance read of the side.</description>
+        <implements service="mantle.account.InvoiceServices.define#ApprovedTimeParameters"/>
+        <in-parameters>
+            <parameter name="customerPartyId"/>
             <parameter name="pageIndex" type="Integer"/>
             <parameter name="pageSize" type="Integer"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="rows" type="List"/>
             <parameter name="records" type="List"/>
-            <parameter name="counts" type="Map"/>
-            <parameter name="recordCount" type="Long"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
-            <parameter name="pageMaxIndex" type="Integer"/>
-            <parameter name="pageRangeLow" type="Integer"/>
-            <parameter name="pageRangeHigh" type="Integer"/>
             <parameter name="recordsCount" type="Long"/>
             <parameter name="recordsPageIndex" type="Integer"/>
             <parameter name="recordsPageSize" type="Integer"/>
@@ -3608,24 +4136,29 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="recordsPageRangeHigh" type="Integer"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/ApprovedTimeBilling.js').execute('list', context))</script>
+            <set field="billing" value="component://mr-mantle/service/mantle/account/ApprovedTimeBilling.js"/>
+            <set field="found" from="ec.resource.script(billing).execute('list', context)"/>
+            <set field="records" from="found.records"/>
+            <set field="recordsCount" from="found.recordsCount"/>
+            <set field="recordsPageIndex" from="found.recordsPageIndex"/>
+            <set field="recordsPageSize" from="found.recordsPageSize"/>
+            <set field="recordsPageMaxIndex" from="found.recordsPageMaxIndex"/>
+            <set field="recordsPageRangeLow" from="found.recordsPageRangeLow"/>
+            <set field="recordsPageRangeHigh" from="found.recordsPageRangeHigh"/>
         </actions>
     </service>
     <service verb="create" noun="InvoiceFromApprovedTime" allow-remote="false">
-        <description>Bill approved source time once under source locks, retaining Mantle time approval and billing controls.</description>
+        <description>Bill a project's approved time and expenses once, through create#ProjectInvoiceItems, onto a new draft or
+            a draft (invoiceId) for the same parties in the organization's currency: the timesheets, entries and expenses
+            are locked and checked again, and an entry without a rate refuses. The same operationKey and request answers the
+            first result. Needs RECEIVABLE_EDIT (PAYABLE_EDIT for a worker's bill).</description>
+        <implements service="mantle.account.InvoiceServices.define#ApprovedTimeParameters"/>
         <in-parameters>
-            <parameter name="organizationPartyId"/>
-            <parameter name="workEffortId"/>
-            <parameter name="workerPartyId"/>
-            <parameter name="customerPartyId"/>
-            <parameter name="throughDate" type="Timestamp"/>
+            <parameter name="workEffortId" required="true"/>
             <parameter name="invoiceId"/>
-            <parameter name="entryGrouping"/>
-            <parameter name="operationKey"/>
-            <parameter name="direction"/>
+            <parameter name="entryGrouping" default-value="entry"/>
             <parameter name="settlementTermId"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
+            <parameter name="operationKey" required="true"/>
         </in-parameters>
         <out-parameters>
             <parameter name="invoiceId"/>
@@ -3633,23 +4166,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/ApprovedTimeBilling.js').execute('create', context))</script>
+            <set field="billing" value="component://mr-mantle/service/mantle/account/ApprovedTimeBilling.js"/>
+            <set field="created" from="ec.resource.script(billing).execute('create', context)"/>
+            <set field="invoiceId" from="created.invoiceId"/>
+            <set field="invoiceItemCreatedCount" from="created.invoiceItemCreatedCount"/>
+            <set field="alreadyApplied" from="!!created.alreadyApplied"/>
         </actions>
-    </service>
-    <service verb="prepare" noun="InvoiceBatch" allow-remote="false">
-        <description>Persist an authorized reviewed invoice batch boundary and its durable aggregate result.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
-        <out-parameters>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="result" type="Map"/>
-        </out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('batchPrepare', context))</script></actions>
-    </service>
-    <service verb="finish" noun="InvoiceBatch" allow-remote="false">
-        <description>Persist an authorized reviewed invoice batch boundary and its durable aggregate result.</description>
-        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
-        <out-parameters>
-        </out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('batchFinish', context))</script></actions>
     </service>
 </services>

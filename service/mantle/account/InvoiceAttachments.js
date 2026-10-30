@@ -1,11 +1,12 @@
-// Selected invoice files are reviewed by opaque content versions, then copied into the durable delivery archive.
+// An invoice's supporting files sent with it: the choices a sender reviews by an opaque content version, the frozen copies
+// sent (immutable InvoiceContent rows, as the issued PDF is), and the guard that keeps issued files as they were sent.
 const lib = ec.resource.script("component://mr-mantle/service/mantle/account/InvoiceWorkflowLib.js")
-const {find, one, denied} = lib
+const {find, one, call, denied} = lib
 const C = "mantle.account.invoice.InvoiceContent"
-const D = "mantle.account.invoice.InvoiceDelivery"
 const maxAttachmentCount = 10,
     maxAttachmentBytes = 10485760,
     maxTotalAttachmentBytes = 20971520
+const issuedFolder = "dbresource://mantle/content/invoice-issued/"
 // Match DbResource's db_parts: both prefixes and empty slash-separated segments name the same resource.
 function canonicalDbLocation(value) {
     const location = String(value || "")
@@ -15,24 +16,20 @@ function canonicalDbLocation(value) {
         : location.slice("dbresource:".length)
     return "dbresource://" + rest.split("/").filter(Boolean).join("/")
 }
-function selection(p, strict = true) {
-    if (strict && p.attachmentContentIdList != null && typeof p.attachmentContentIdList === "string")
+function isIssued(row) {
+    return !!row && (row.isImmutable === "Y" || canonicalDbLocation(row.contentLocation).startsWith(issuedFolder))
+}
+function selection(p) {
+    if (p.attachmentContentIdList != null && typeof p.attachmentContentIdList === "string")
         denied("ATTACHMENT_SELECTION_INVALID", "Choose invoice attachment identifiers")
-    const ids = [
-        ...new Set(
-            (typeof p.attachmentContentIdList === "string"
-                ? [p.attachmentContentIdList]
-                : Array.from(p.attachmentContentIdList || [])
-            ).map(String)
-        )
-    ].sort()
-    if (strict && ids.length > maxAttachmentCount) denied("ATTACHMENT_COUNT_LIMIT", "Select at most ten supporting attachments")
-    if (strict && ids.some(id => !/^[A-Za-z0-9_-]{1,40}$/.test(id)))
-        denied("ATTACHMENT_UNAVAILABLE", "An attachment is not available")
+    const ids = [...new Set(Array.from(p.attachmentContentIdList || []).map(String))].sort()
+    if (ids.length > maxAttachmentCount) denied("ATTACHMENT_COUNT_LIMIT", "Select at most ten supporting attachments")
+    if (ids.some(id => !/^[A-Za-z0-9_-]{1,40}$/.test(id))) denied("ATTACHMENT_UNAVAILABLE", "An attachment is not available")
     const versions = Object.fromEntries(ids.map(id => [id, String(p.attachmentVersions?.[id] || "")]))
-    if (strict && ids.some(id => !versions[id])) denied("STALE_ATTACHMENT", "Review each selected attachment before sending")
+    if (ids.some(id => !versions[id])) denied("STALE_ATTACHMENT", "Review each selected attachment before sending")
     return {ids, versions}
 }
+// A supporting file is one saved in the invoice's own content folder, under the content roots, never an issued file.
 function source(row) {
     const location = canonicalDbLocation(row.contentLocation)
     const roots = [
@@ -48,6 +45,7 @@ function source(row) {
     ]
     if (!/^[A-Za-z0-9_-]{1,40}$/.test(row.invoiceId) || !/^[A-Za-z0-9_-]{1,40}$/.test(row.invoiceContentId))
         denied("ATTACHMENT_LOCATION_INVALID", "The attachment is not a supported local invoice file")
+    if (isIssued(row)) denied("ATTACHMENT_ARCHIVED_INVOICE", "An issued invoice file cannot be a supporting attachment")
     const prefix = roots.find(root =>
         location.startsWith(root + "/invoice/" + row.invoiceId + "/content_" + row.invoiceContentId + "/")
     )
@@ -62,8 +60,6 @@ function source(row) {
         relative.split("/").length !== 4
     )
         denied("ATTACHMENT_LOCATION_INVALID", "The attachment is not a supported local invoice file")
-    if (one("mantle.account.invoice.InvoiceDelivery", {invoiceContentId: row.invoiceContentId}))
-        denied("ATTACHMENT_ARCHIVED_INVOICE", "A previous issued invoice cannot be a supporting attachment")
     const ref = ec.resource.getLocationReference(location)
     if (!ref.getExists() || !ref.isFile()) denied("ATTACHMENT_UNAVAILABLE", "The selected attachment file is missing")
     const size = Number(ref.getSize())
@@ -99,15 +95,21 @@ function read(row, metadata, byteBudget) {
         stream.close()
     }
 }
-function project(scope, contentRows = null) {
-    const records =
-        contentRows ||
-        Array.from(find(C, {invoiceId: scope.record.invoiceId}).orderBy("-contentDate,invoiceContentId").limit(101).list())
+// Each file a sender may attach, with its version; the others annotated with the reason they cannot be.
+function project(invoiceId, records) {
     const attachmentRows = [],
         annotations = {}
     let remaining = maxTotalAttachmentBytes,
         incomplete = records.length > 100
     for (const row of records.slice(0, 100)) {
+        if (isIssued(row)) {
+            annotations[row.invoiceContentId] = {
+                attachable: false,
+                issued: true,
+                attachmentReasonCode: "ATTACHMENT_ARCHIVED_INVOICE"
+            }
+            continue
+        }
         try {
             const metadata = source(row)
             if (metadata.contentSize > remaining) {
@@ -133,46 +135,46 @@ function project(scope, contentRows = null) {
         } catch (error) {
             const reasonCode = String(error.message).split(":")[0]
             annotations[row.invoiceContentId] = {attachable: false, attachmentReasonCode: reasonCode}
-            const message = "Invoice attachment " + row.invoiceContentId + " is unavailable for delivery: " + error.message
-            if (
-                [
-                    "ATTACHMENT_LOCATION_INVALID",
-                    "ATTACHMENT_ARCHIVED_INVOICE",
-                    "ATTACHMENT_UNAVAILABLE",
-                    "ATTACHMENT_SIZE_LIMIT",
-                    "ATTACHMENT_TOTAL_SIZE_LIMIT",
-                    "STALE_ATTACHMENT"
-                ].includes(reasonCode)
-            )
-                ec.logger.warn(message)
-            else ec.logger.error(message)
+            ec.logger.warn("Invoice " + invoiceId + " file " + row.invoiceContentId + " cannot be attached: " + error.message)
         }
     }
     return {attachmentRows, annotations, incomplete, maxAttachmentCount, maxAttachmentBytes, maxTotalAttachmentBytes}
 }
+function contentRecords(invoiceId, ids = null) {
+    let query = find(C, {invoiceId}).orderBy("-contentDate,invoiceContentId").limit(101)
+    if (ids) query = query.condition("invoiceContentId", "in", ids)
+    return Array.from(query.list())
+}
+// get#InvoiceDeliveryAttachments: the files of a receivable a sender (RECEIVABLE_EDIT) may attach.
 function options(p) {
     const scope = lib.writeInvoice(p, false)
     if (!scope.receivable) denied("INVOICE_DIRECTION_INVALID", "Only customer invoice attachments are sent here")
-    if (p.attachmentContentIdList?.length) {
-        const ids = Array.from(p.attachmentContentIdList).map(String)
-        if (ids.length > 100) denied("ATTACHMENT_COUNT_LIMIT", "Review at most one hundred attachment identifiers")
-        return project(
-            scope,
-            Array.from(
-                find(C, {invoiceId: scope.record.invoiceId})
-                    .condition("invoiceContentId", "in", ids)
-                    .orderBy("-contentDate,invoiceContentId")
-                    .limit(101)
-                    .list()
+    const ids = p.attachmentContentIdList?.length ? Array.from(p.attachmentContentIdList).map(String) : null
+    if (ids && ids.length > 100) denied("ATTACHMENT_COUNT_LIMIT", "Review at most one hundred attachment identifiers")
+    return project(scope.record.invoiceId, contentRecords(scope.record.invoiceId, ids))
+}
+// The annotations of an invoice's files for its detail: attachable with a version, or issued.
+function annotate(p) {
+    const records = contentRecords(p.invoiceId)
+    const projected = p.canSend ? project(p.invoiceId, records) : {annotations: {}, incomplete: false}
+    const contentRows = records
+        .slice(0, 100)
+        .map(row =>
+            Object.assign(
+                lib.display(row),
+                {attachable: false, issued: isIssued(row)},
+                projected.annotations[row.invoiceContentId] || {}
             )
         )
-    }
-    return project(scope)
+    return {contentRows, incomplete: projected.incomplete}
 }
-function freeze(scope, selected, deliveryId) {
-    if (!selected.ids.length) return []
+// Copy the selected files, at the versions the sender reviewed, under the issued folder of this sending, each recorded as an
+// immutable InvoiceContent; a copy already made for the same version is used again.
+function freeze(p) {
+    const selected = selection(p)
+    if (!selected.ids.length) return {attachmentList: [], attachmentRows: []}
     const records = Array.from(
-        find(C, {invoiceId: scope.record.invoiceId})
+        find(C, {invoiceId: p.invoiceId})
             .condition("invoiceContentId", "in", selected.ids)
             .orderBy("invoiceContentId")
             .forUpdate(true)
@@ -180,7 +182,8 @@ function freeze(scope, selected, deliveryId) {
     )
     if (records.length !== selected.ids.length)
         denied("ATTACHMENT_UNAVAILABLE", "A selected attachment does not belong to this invoice")
-    const manifest = []
+    const attachmentList = [],
+        attachmentRows = []
     let remaining = maxTotalAttachmentBytes
     for (const row of records) {
         const metadata = source(row),
@@ -188,76 +191,70 @@ function freeze(scope, selected, deliveryId) {
         if (reviewed.attachmentVersion !== selected.versions[row.invoiceContentId])
             denied("STALE_ATTACHMENT", "An attachment changed; review it before sending")
         remaining -= metadata.contentSize
-        const attachmentLocation =
-            "dbresource://mantle/content/invoice-issued/" +
-            scope.record.invoiceId +
+        const location =
+            issuedFolder +
+            p.invoiceId +
             "/" +
-            deliveryId +
+            p.issueKey +
             "/attachments/" +
-            row.invoiceContentId +
+            reviewed.contentHash.slice(0, 24) +
             "/" +
             metadata.fileName
-        ec.resource.getLocationReference(attachmentLocation).putBytes(reviewed.bytes)
-        manifest.push({
-            invoiceContentId: row.invoiceContentId,
+        let copy = one(C, {contentLocation: location})
+        if (!copy) {
+            ec.resource.getLocationReference(location).putBytes(reviewed.bytes)
+            copy = call("create#" + C, {
+                invoiceId: p.invoiceId,
+                contentLocation: location,
+                contentTypeEnumId: row.contentTypeEnumId,
+                description: "Sent copy of " + metadata.fileName,
+                isImmutable: "Y"
+            })
+        }
+        attachmentList.push({fileName: metadata.fileName, contentType: metadata.contentType, contentBytes: reviewed.bytes})
+        attachmentRows.push({
+            invoiceContentId: copy.invoiceContentId,
+            sourceInvoiceContentId: row.invoiceContentId,
             fileName: metadata.fileName,
             contentType: metadata.contentType,
             contentSize: metadata.contentSize,
-            attachmentVersion: reviewed.attachmentVersion,
             contentHash: reviewed.contentHash,
-            attachmentLocation
+            attachmentVersion: reviewed.attachmentVersion
         })
     }
-    return manifest
+    return {attachmentList, attachmentRows}
 }
-function issuedReference(row) {
-    if (!row) return null
-    if (row.invoiceContentId) {
-        const delivery = one(D, {invoiceContentId: row.invoiceContentId})
-        if (delivery) return delivery
-    }
-    if (row.contentLocation) {
-        const location = canonicalDbLocation(row.contentLocation)
-        const delivery = one(D, {contentLocation: location})
-        if (delivery) return delivery
-        const privatePath = /^dbresource:\/\/mantle\/content\/invoice-issued\/([^/]+)\/([^/]+)\//.exec(location)
-        if (privatePath) return one(D, {invoiceId: privatePath[1], deliveryId: privatePath[2]})
-    }
-    return null
+// update#InvoiceContent and save#InvoiceContentFile: an issued file is never replaced or removed.
+function assertMutable(p) {
+    if (isIssued(find(C, {invoiceContentId: p.invoiceContentId}).forUpdate(true).one()))
+        denied("ISSUED_INVOICE_IMMUTABLE", "An issued invoice file cannot be replaced or removed")
+    return {}
 }
-function assertMutableContent(p) {
-    const row = find(C, {invoiceContentId: p.invoiceContentId}).forUpdate(true).one()
-    if (issuedReference(row)) denied("ISSUED_INVOICE_IMMUTABLE", "An issued invoice file cannot be replaced or removed")
-}
+// The IssuedInvoiceContentImmutable EECA: an issued file is never deleted, and neither its identity nor its location
+// changes; no other file may take an issued location. Writes of any other content pass.
 function guardContent(p) {
-    const updates = lib.map(p.entityValue || p)
-    const original = p.originalValue ? lib.map(p.originalValue) : one(C, {invoiceContentId: updates.invoiceContentId})
-    const candidate = Object.assign({}, lib.map(original), updates)
-    if (!issuedReference(original) && !issuedReference(candidate)) return
-    if (["create", "delete"].includes(p.eecaOperation))
-        denied("ISSUED_INVOICE_IMMUTABLE", "Issued invoice evidence cannot be removed or linked as a mutable file")
+    const original = p.originalValue ? lib.map(p.originalValue) : null
+    const candidate = Object.assign({}, original || {}, lib.map(p.entityValue || {}))
+    if (!isIssued(original) && !isIssued(candidate)) return {}
+    if (p.eecaOperation === "delete") denied("ISSUED_INVOICE_IMMUTABLE", "An issued invoice file cannot be removed")
+    if (p.eecaOperation === "create") {
+        if (candidate.isImmutable !== "Y" || one(C, {contentLocation: candidate.contentLocation}))
+            denied("ISSUED_INVOICE_IMMUTABLE", "A file cannot take the location of an issued invoice file")
+        return {}
+    }
     for (const field of ["invoiceContentId", "invoiceId", "contentLocation", "contentDate", "userId", "isImmutable"]) {
         const before = original?.[field],
             after = candidate[field]
         if (field === "contentDate" ? lib.ms(before) !== lib.ms(after) : String(before ?? "") !== String(after ?? ""))
             denied("ISSUED_INVOICE_IMMUTABLE", "An issued invoice file's identity cannot be changed")
     }
+    return {}
 }
-function manifestInfo(delivery) {
-    try {
-        return (JSON.parse(delivery.sourceJson || "{}").attachmentManifest || []).map(row =>
-            lib.policy.pick(row, [
-                "invoiceContentId",
-                "fileName",
-                "contentType",
-                "contentSize",
-                "contentHash",
-                "attachmentVersion"
-            ])
-        )
-    } catch (error) {
-        ec.logger.error("Invoice delivery " + delivery.deliveryId + " attachment manifest: " + error.message)
-        return []
+
+const operations = {options, annotate, freeze, assertMutable, guardContent}
+;({
+    execute: (op, parameters) => {
+        if (!operations[op]) denied("OPERATION_UNKNOWN", "Unknown invoice attachment operation " + op)
+        return operations[op](parameters)
     }
-}
-;({selection, project, options, freeze, manifestInfo, assertMutableContent, guardContent})
+})

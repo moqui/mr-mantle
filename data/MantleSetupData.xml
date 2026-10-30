@@ -376,6 +376,13 @@ along with this software (see the LICENSE.md file). If not, see
             fromAddress="${fromAddress}" fromName="${fromName}" ccAddresses="" bccAddresses="" subject="${subject}" sendPartial="Y"/>
     <moqui.basic.email.EmailTemplate emailTemplateId="MANTLE_PROJECT_ESTIMATE" description="Project Estimate for the Client's Approval" emailServerId="SYSTEM"
             fromAddress="${fromAddress}" fromName="${fromName}" ccAddresses="" bccAddresses="" subject="${subject}" sendPartial="Y"/>
+    <!-- Email of a customer invoice (mantle.account.InvoiceServices.send#Invoice) and statement (CollectionServices
+        send#Statements): from the organization's billing address, with the PDF attached; the services pass subject,
+        fromAddress and fromName in bodyParameters, and the body. -->
+    <moqui.basic.email.EmailTemplate emailTemplateId="MANTLE_INVOICE_EMAIL" description="Customer Invoice" emailServerId="SYSTEM"
+            fromAddress="${fromAddress}" fromName="${fromName}" ccAddresses="" bccAddresses="" subject="${subject}"/>
+    <moqui.basic.email.EmailTemplate emailTemplateId="MANTLE_STATEMENT_EMAIL" description="Customer Statement" emailServerId="SYSTEM"
+            fromAddress="${fromAddress}" fromName="${fromName}" ccAddresses="" bccAddresses="" subject="${subject}"/>
 
     <!-- ========== Registered Services ========== -->
 

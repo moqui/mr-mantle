@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-This software is in the public domain under CC0 1.0 Universal plus a 
+This software is in the public domain under CC0 1.0 Universal plus a
 Grant of Patent License.
 
 To the extent possible under law, the author(s) have dedicated all
@@ -12,22 +12,71 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="define" noun="CustomerScope" type="interface">
-        <description>Authenticated organization and customer scope with a revision for edits.</description>
+        <description>An organization and one of its customers.</description>
         <in-parameters>
-            <parameter name="organizationPartyId"/>
-            <parameter name="customerPartyId"/>
-            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="customerPartyId" required="true"/>
         </in-parameters>
     </service>
+    <service verb="check" noun="CustomerScope" allow-remote="false">
+        <description>The customer of an organization the user works in: the permission given, a customer no other user keeps
+            private, and an invoice, order or current relationship between the two. Refuses otherwise.</description>
+        <implements service="mantle.account.CustomerFinanceServices.define#CustomerScope"/>
+        <in-parameters><parameter name="permission"/></in-parameters>
+        <out-parameters><parameter name="customer" type="Map"/></out-parameters>
+        <actions>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <script>ec.resource.script(workflow).execute('organization',
+                {organizationPartyId:organizationPartyId, permission:permission})</script>
+            <entity-find-one entity-name="mantle.party.PartyDetail" value-field="party" disable-authz="true">
+                <field-map field-name="partyId" from="customerPartyId"/></entity-find-one>
+            <if condition="party == null || (party.privateOwnerUserId &amp;&amp; party.privateOwnerUserId != ec.user.userId)">
+                <return error="true" message="CUSTOMER_UNAVAILABLE: Customer is not available"/></if>
+            <entity-find-count entity-name="mantle.account.invoice.Invoice" count-field="invoiceCount" disable-authz="true">
+                <econditions combine="or">
+                    <econditions><econdition field-name="fromPartyId" from="organizationPartyId"/>
+                        <econdition field-name="toPartyId" from="customerPartyId"/></econditions>
+                    <econditions><econdition field-name="fromPartyId" from="customerPartyId"/>
+                        <econdition field-name="toPartyId" from="organizationPartyId"/></econditions>
+                </econditions>
+            </entity-find-count>
+            <entity-find-count entity-name="mantle.order.OrderPart" count-field="orderCount" disable-authz="true">
+                <econdition field-name="vendorPartyId" from="organizationPartyId"/>
+                <econdition field-name="customerPartyId"/>
+            </entity-find-count>
+            <entity-find-count entity-name="mantle.party.PartyRelationship" count-field="relationshipCount" disable-authz="true">
+                <date-filter/>
+                <econditions combine="or">
+                    <econditions><econdition field-name="fromPartyId" from="organizationPartyId"/>
+                        <econdition field-name="toPartyId" from="customerPartyId"/></econditions>
+                    <econditions><econdition field-name="fromPartyId" from="customerPartyId"/>
+                        <econdition field-name="toPartyId" from="organizationPartyId"/></econditions>
+                </econditions>
+            </entity-find-count>
+            <if condition="!invoiceCount &amp;&amp; !orderCount &amp;&amp; !relationshipCount">
+                <return error="true"
+                        message="CUSTOMER_SCOPE_INVALID: Customer has no business relationship with this organization"/></if>
+            <set field="customer" from="{partyId:party.partyId, partyTypeEnumId:party.partyTypeEnumId,
+                organizationName:party.organizationName, firstName:party.firstName, middleName:party.middleName,
+                lastName:party.lastName}"/>
+        </actions>
+    </service>
     <service verb="get" noun="CustomerFinance" allow-remote="false">
-        <description>Read only authorized customer finance rows and masked method details for the organization.</description>
+        <description>A customer's finance with an organization for a finance reader (ACCOUNTING_VIEW, ACCOUNTING_ADMIN or
+            RECEIVABLE_VIEW): contacts (get#PartyContactInfoList), the billing addresses invoices go to (sendTo), orders,
+            receivables (find#Receivables), payments, agreements and, by currency, the open balance with its aging by due
+            date (get#ReceivableStatementInfo), the amount billed this year and the last payment. Payment methods (masked)
+            only for treasury (BANK_RECONCILE and PAYMENT_EDIT), identifications for RECEIVABLE_EDIT, tax registrations for
+            TAX_STATEMENT_EDIT.</description>
         <implements service="mantle.account.CustomerFinanceServices.define#CustomerScope"/>
         <out-parameters>
             <parameter name="customer" type="Map"/>
             <parameter name="capabilities" type="Map"/>
             <parameter name="contacts" type="List"/>
+            <parameter name="sendTo"/>
             <parameter name="orders" type="List"/>
             <parameter name="invoices" type="List"/>
             <parameter name="payments" type="List"/>
@@ -39,14 +88,166 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="incomplete" type="Boolean"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/CustomerFinance.js').execute('get', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <set field="held" from="ec.resource.script(workflow).execute('permissions', {permissions:['ACCOUNTING_VIEW',
+                'ACCOUNTING_ADMIN', 'RECEIVABLE_VIEW', 'RECEIVABLE_EDIT', 'BANK_RECONCILE', 'PAYMENT_EDIT',
+                'TAX_STATEMENT_EDIT']})"/>
+            <if condition="!held.ACCOUNTING_VIEW &amp;&amp; !held.ACCOUNTING_ADMIN &amp;&amp; !held.RECEIVABLE_VIEW">
+                <return error="true" message="PERMISSION_DENIED: RECEIVABLE_VIEW authority is required"/></if>
+            <service-call name="mantle.account.CustomerFinanceServices.check#CustomerScope" out-map="scope" disable-authz="true"
+                    in-map="{organizationPartyId:organizationPartyId, customerPartyId:customerPartyId}"/>
+            <set field="customer" from="scope.customer"/>
+            <set field="capabilities" from="{canEditIdentifications:held.RECEIVABLE_EDIT,
+                canReadPaymentMethods:held.BANK_RECONCILE &amp;&amp; held.PAYMENT_EDIT,
+                canEditPaymentMethods:held.BANK_RECONCILE &amp;&amp; held.PAYMENT_EDIT,
+                canReadTaxRegistrations:held.TAX_STATEMENT_EDIT, canEditTaxRegistrations:held.TAX_STATEMENT_EDIT}"/>
+
+            <service-call name="mantle.party.ContactServices.get#PartyContactInfoList" out-map="contactInfo" disable-authz="true"
+                    in-map="{partyId:customerPartyId, getAll:true}"/>
+            <set field="contacts" from="Array.from(contactInfo.postalAddressList ?? []).map((info) => ({
+                    contactMechId:info.postalContactMechId, contactMechPurposeId:info.postalContactMechPurposeId,
+                    contactMechTypeEnumId:'CmtPostalAddress', purposeDescription:info.postalContactMechPurpose?.description,
+                    address1:info.postalAddress?.address1, address2:info.postalAddress?.address2,
+                    unitNumber:info.postalAddress?.unitNumber, city:info.postalAddress?.city,
+                    stateProvinceGeoId:info.postalAddress?.stateProvinceGeoId,
+                    stateProvinceGeoName:info.postalAddressStateGeo?.geoName,
+                    countryGeoId:info.postalAddress?.countryGeoId, countryGeoName:info.postalAddressCountryGeo?.geoName,
+                    postalCode:info.postalAddress?.postalCode, postalCodeExt:info.postalAddress?.postalCodeExt}))
+                .concat(Array.from(contactInfo.telecomNumberList ?? []).map((info) => ({
+                    contactMechId:info.telecomContactMechId, contactMechPurposeId:info.telecomContactMechPurposeId,
+                    contactMechTypeEnumId:'CmtTelecomNumber', purposeDescription:info.telecomContactMechPurpose?.description,
+                    countryCode:info.telecomNumber?.countryCode, areaCode:info.telecomNumber?.areaCode,
+                    contactNumber:info.telecomNumber?.contactNumber, extension:info.telecomPartyContactMech?.extension})))
+                .concat(Array.from(contactInfo.emailAddressList ?? []).map((info) => ({
+                    contactMechId:info.emailContactMechId, contactMechPurposeId:info.emailContactMechPurposeId,
+                    contactMechTypeEnumId:'CmtEmailAddress', purposeDescription:info.emailContactMechPurpose?.description,
+                    infoString:info.emailAddress})))"/>
+            <set field="sendTo" from="Array.from(new Set(contacts.filter((row) => row.contactMechPurposeId == 'EmailBilling')
+                .map((row) => row.infoString).filter((address) => address))).join(', ')"/>
+
+            <entity-find entity-name="mantle.order.OrderHeaderAndPart" list="orderList" limit="200" disable-authz="true">
+                <econdition field-name="vendorPartyId" from="organizationPartyId"/>
+                <econdition field-name="customerPartyId"/>
+                <order-by field-name="-orderDate"/><order-by field-name="orderId"/><order-by field-name="orderPartSeqId"/>
+            </entity-find>
+            <set field="orders" from="Array.from(orderList).map((row) => ({orderId:row.orderId, orderPartSeqId:row.orderPartSeqId,
+                orderName:row.orderName, orderDate:row.orderDate, statusId:row.statusId, partStatusId:row.partStatusId,
+                partTotal:row.partTotal, grandTotal:row.grandTotal, currencyUomId:row.currencyUomId}))"/>
+
+            <service-call name="mantle.account.InvoiceServices.find#Receivables" out-map="receivables" disable-authz="true"
+                    in-map="{organizationPartyId:organizationPartyId, customerPartyId:customerPartyId, pageSize:100}"/>
+            <set field="invoices" from="receivables.records"/>
+            <entity-find entity-name="mantle.account.payment.Payment" list="paymentList" limit="101" disable-authz="true">
+                <econdition field-name="fromPartyId" from="customerPartyId"/>
+                <econdition field-name="toPartyId" from="organizationPartyId"/>
+                <order-by field-name="-effectiveDate"/><order-by field-name="paymentId"/>
+            </entity-find>
+            <set field="payments" from="Array.from(paymentList).slice(0, 100).map((row) => ({paymentId:row.paymentId,
+                statusId:row.statusId, effectiveDate:row.effectiveDate, amount:row.amount, amountUomId:row.amountUomId,
+                paymentRefNum:row.paymentRefNum, unappliedTotal:row.unappliedTotal}))"/>
+            <set field="incomplete" from="receivables.recordsCount &gt; 100 || paymentList.length &gt; 100"/>
+
+            <entity-find entity-name="mantle.party.agreement.AgreementParty" list="customerAgreementList" limit="500"
+                    disable-authz="true"><econdition field-name="partyId" from="customerPartyId"/></entity-find>
+            <set field="agreements" from="[]"/>
+            <if condition="customerAgreementList.length">
+                <entity-find entity-name="mantle.party.agreement.AgreementParty" list="sharedAgreementList" disable-authz="true">
+                    <econdition field-name="partyId" from="organizationPartyId"/>
+                    <econdition field-name="agreementId" operator="in"
+                            from="Array.from(customerAgreementList).map((row) => row.agreementId)"/>
+                </entity-find>
+                <if condition="sharedAgreementList.length">
+                    <entity-find entity-name="mantle.party.agreement.Agreement" list="agreements" limit="200"
+                            disable-authz="true">
+                        <econdition field-name="agreementId" operator="in"
+                                from="Array.from(sharedAgreementList).map((row) => row.agreementId)"/>
+                        <order-by field-name="-fromDate"/>
+                    </entity-find>
+                </if>
+            </if>
+
+            <!-- by currency: the open balance and its aging by due date, the amount billed this year, the last payment -->
+            <entity-find entity-name="mantle.account.invoice.Invoice" list="invoiceCurrencyList" distinct="true"
+                    disable-authz="true">
+                <econdition field-name="fromPartyId" from="organizationPartyId"/>
+                <econdition field-name="toPartyId" from="customerPartyId"/>
+                <econdition field-name="statusId" operator="not-in"
+                        value="InvoiceInProcess,InvoiceIncoming,InvoiceReceived,InvoiceCancelled"/>
+                <select-field field-name="currencyUomId"/>
+            </entity-find>
+            <entity-find entity-name="mantle.account.payment.Payment" list="paymentCurrencyList" distinct="true"
+                    disable-authz="true">
+                <econdition field-name="fromPartyId" from="customerPartyId"/>
+                <econdition field-name="toPartyId" from="organizationPartyId"/>
+                <econdition field-name="statusId" operator="in" value="PmntDelivered,PmntConfirmed"/>
+                <select-field field-name="amountUomId"/>
+            </entity-find>
+            <set field="currencyIds" from="Array.from(new Set(Array.from(invoiceCurrencyList).map((row) => row.currencyUomId)
+                .concat(Array.from(paymentCurrencyList).map((row) => row.amountUomId)).filter((id) => id))).sort()"/>
+            <set field="yearStart" from="ec.l10n.parseTimestamp(ec.l10n.format(ec.user.nowTimestamp, 'yyyy') +
+                '-01-01 00:00:00.000', 'yyyy-MM-dd HH:mm:ss.SSS')"/>
+            <set field="summaryRows" from="[]"/>
+            <iterate list="currencyIds" entry="currencyUomId">
+                <service-call name="mantle.account.InvoiceServices.get#ReceivableStatementInfo" out-map="statementInfo"
+                        out-map-add-to-existing="false" disable-authz="true"
+                        in-map="{toPartyId:customerPartyId, fromPartyId:organizationPartyId, currencyUomId:currencyUomId}"/>
+                <set field="receivable" from="Array.from(statementInfo.receivableInfoList ?? [])
+                    .find((row) => row.fromPartyId == organizationPartyId) ?? {}"/>
+                <set field="dueAging" from="Array.from(receivable.agingSummaryList ?? [])[0] ?? {}"/>
+                <entity-find entity-name="mantle.account.invoice.Invoice" list="billedList" disable-authz="true">
+                    <econdition field-name="fromPartyId" from="organizationPartyId"/>
+                    <econdition field-name="toPartyId" from="customerPartyId"/>
+                    <econdition field-name="currencyUomId"/>
+                    <econdition field-name="invoiceDate" operator="greater-equals" from="yearStart"/>
+                    <econdition field-name="statusId" operator="not-in"
+                            value="InvoiceInProcess,InvoiceIncoming,InvoiceReceived,InvoiceCancelled"/>
+                    <select-field field-name="invoiceTotal"/>
+                </entity-find>
+                <entity-find entity-name="mantle.account.payment.Payment" list="lastPaymentList" limit="1" disable-authz="true">
+                    <econdition field-name="fromPartyId" from="customerPartyId"/>
+                    <econdition field-name="toPartyId" from="organizationPartyId"/>
+                    <econdition field-name="amountUomId" from="currencyUomId"/>
+                    <econdition field-name="statusId" operator="in" value="PmntDelivered,PmntConfirmed"/>
+                    <econdition field-name="effectiveDate" operator="less-equals" from="ec.user.nowTimestamp"/>
+                    <order-by field-name="-effectiveDate"/><order-by field-name="-paymentId"/>
+                </entity-find>
+                <set field="lastPayment" from="lastPaymentList[0] ?? null"/>
+                <set field="zero" from="toDecimal(0)"/>
+                <script>summaryRows.push({currencyUomId:currencyUomId, openReceivable:toDecimal(receivable.unpaidTotal ?? 0),
+                    unappliedTotal:toDecimal(receivable.unappliedTotal ?? 0), balanceDue:toDecimal(receivable.balanceDue ?? 0),
+                    overdue:toDecimal(dueAging.total ?? 0).subtract(dueAging.current ?? 0), current:dueAging.current ?? zero,
+                    days1To30:dueAging.period0 ?? zero, days31To60:dueAging.period1 ?? zero, days61To90:dueAging.period2 ?? zero,
+                    over90:toDecimal(dueAging.period3 ?? 0).add(dueAging.periodRemaining ?? 0),
+                    billedThisYear:Array.from(billedList).reduce((sum, row) => sum.add(row.invoiceTotal ?? 0), toDecimal(0)),
+                    lastPaymentAmount:lastPayment?.amount ?? null, lastPaymentDate:lastPayment?.effectiveDate ?? null})</script>
+            </iterate>
+
+            <set field="paymentMethods" from="[]"/>
+            <set field="identifications" from="[]"/>
+            <set field="taxRegistrations" from="[]"/>
+            <if condition="capabilities.canReadPaymentMethods">
+                <set field="finance" value="component://mr-mantle/service/mantle/account/CustomerFinance.js"/>
+                <set field="paymentMethods" from="ec.resource.script(finance).execute('paymentMethods',
+                    {customerPartyId:customerPartyId}).paymentMethods"/>
+            </if>
+            <if condition="capabilities.canEditIdentifications">
+                <entity-find entity-name="mantle.party.PartyIdentification" list="identifications" limit="100"
+                        disable-authz="true">
+                    <econdition field-name="partyId" from="customerPartyId"/></entity-find>
+            </if>
+            <if condition="capabilities.canReadTaxRegistrations">
+                <entity-find entity-name="mantle.other.tax.TaxAuthorityParty" list="taxRegistrations" limit="100"
+                        disable-authz="true"><econdition field-name="partyId" from="customerPartyId"/></entity-find>
+            </if>
         </actions>
     </service>
     <service verb="store" noun="CustomerIdentification" allow-remote="false">
-        <description>Store an authorized customer identification with a current revision and audit logging.</description>
+        <description>Add or change a customer's identification of a PartyIdType; a change needs the lastUpdatedStamp read.
+            Only the fields given are written. Needs RECEIVABLE_EDIT in the organization.</description>
         <implements service="mantle.account.CustomerFinanceServices.define#CustomerScope"/>
         <in-parameters>
-            <parameter name="partyIdTypeEnumId"/>
+            <parameter name="partyIdTypeEnumId" required="true"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
             <parameter name="idValue"/>
             <parameter name="issuedBy"/>
             <parameter name="issuedByPartyId"/>
@@ -57,19 +258,41 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="partyIdTypeEnumId"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/CustomerFinance.js').execute('identification', context))</script>
+            <service-call name="mantle.account.CustomerFinanceServices.check#CustomerScope" disable-authz="true"
+                    in-map="{organizationPartyId:organizationPartyId, customerPartyId:customerPartyId,
+                        permission:'RECEIVABLE_EDIT'}"/>
+            <entity-find-one entity-name="moqui.basic.Enumeration" value-field="idType" cache="true" disable-authz="true">
+                <field-map field-name="enumId" from="partyIdTypeEnumId"/></entity-find-one>
+            <if condition="idType?.enumTypeId != 'PartyIdType'">
+                <return error="true" message="IDENTIFICATION_TYPE_INVALID: Choose an identification type"/></if>
+            <entity-find-one entity-name="mantle.party.PartyIdentification" value-field="existing" for-update="true"
+                    disable-authz="true">
+                <field-map field-name="partyId" from="customerPartyId"/>
+                <field-map field-name="partyIdTypeEnumId"/>
+            </entity-find-one>
+            <if condition="existing != null &amp;&amp;
+                    (lastUpdatedStamp == null || Number(existing.lastUpdatedStamp) != Number(lastUpdatedStamp))">
+                <return error="true" message="STALE_REVISION: The identification changed; reload before saving"/></if>
+            <set field="identificationFields" from="Object.assign({partyId:customerPartyId, partyIdTypeEnumId:partyIdTypeEnumId},
+                Object.fromEntries(['idValue', 'issuedBy', 'issuedByPartyId', 'expireDate'].filter((field) => field in context)
+                    .map((field) => [field, context[field] || null])))"/>
+            <service-call name="${existing != null ? 'update' : 'create'}#mantle.party.PartyIdentification"
+                    in-map="identificationFields" disable-authz="true"/>
         </actions>
     </service>
     <service verb="store" noun="CustomerTaxRegistration" allow-remote="false">
-        <description>Store a finance-gated customer tax registration with effective dates and a current revision.</description>
+        <description>Add or change a customer's dated tax registration with a tax authority; a change needs the
+            lastUpdatedStamp read, and an end follows the start. Only the fields given are written. Needs
+            TAX_STATEMENT_EDIT in the organization.</description>
         <implements service="mantle.account.CustomerFinanceServices.define#CustomerScope"/>
         <in-parameters>
-            <parameter name="taxAuthorityId"/>
+            <parameter name="taxAuthorityId" required="true"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="fromDate" type="Timestamp" default="ec.user.nowTimestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
             <parameter name="partyTaxId"/>
             <parameter name="isExempt"/>
             <parameter name="isNexus"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
         </in-parameters>
         <out-parameters>
             <parameter name="customerPartyId"/>
@@ -77,14 +300,39 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fromDate" type="Timestamp"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/CustomerFinance.js').execute('tax', context))</script>
+            <service-call name="mantle.account.CustomerFinanceServices.check#CustomerScope" disable-authz="true"
+                    in-map="{organizationPartyId:organizationPartyId, customerPartyId:customerPartyId,
+                        permission:'TAX_STATEMENT_EDIT'}"/>
+            <entity-find-one entity-name="mantle.other.tax.TaxAuthority" value-field="taxAuthority" disable-authz="true"/>
+            <if condition="taxAuthority == null">
+                <return error="true" message="TAX_AUTHORITY_INVALID: Choose a tax authority"/></if>
+            <if condition="thruDate != null &amp;&amp; Number(thruDate) &lt;= Number(fromDate)">
+                <return error="true" message="DATE_RANGE_INVALID: The end date must follow the start"/></if>
+            <entity-find-one entity-name="mantle.other.tax.TaxAuthorityParty" value-field="existing" for-update="true"
+                    disable-authz="true">
+                <field-map field-name="partyId" from="customerPartyId"/>
+                <field-map field-name="taxAuthorityId"/>
+                <field-map field-name="fromDate"/>
+            </entity-find-one>
+            <if condition="existing != null &amp;&amp;
+                    (lastUpdatedStamp == null || Number(existing.lastUpdatedStamp) != Number(lastUpdatedStamp))">
+                <return error="true" message="STALE_REVISION: The registration changed; reload before saving"/></if>
+            <set field="registrationFields" from="Object.assign({partyId:customerPartyId, taxAuthorityId:taxAuthorityId,
+                fromDate:fromDate}, Object.fromEntries(['partyTaxId', 'isExempt', 'isNexus', 'thruDate']
+                    .filter((field) => field in context).map((field) => [field, context[field] || null])))"/>
+            <service-call name="${existing != null ? 'update' : 'create'}#mantle.other.tax.TaxAuthorityParty"
+                    in-map="registrationFields" disable-authz="true"/>
         </actions>
     </service>
     <service verb="store" noun="CustomerBankAccount" allow-remote="false">
-        <description>Create or change an owned customer bank account with treasury authority and a current revision; never return unmasked values.</description>
+        <description>Add a bank account to a customer, or change one it owns (paymentMethodId with the lastUpdatedStamp
+            read), through create#BankAccount or update#BankAccount; a description defaults to the bank and the last four
+            digits, never the whole number, and no number is returned. Needs PAYMENT_EDIT and BANK_RECONCILE in the
+            organization.</description>
         <implements service="mantle.account.CustomerFinanceServices.define#CustomerScope"/>
         <in-parameters>
             <parameter name="paymentMethodId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
             <parameter name="bankName"/>
             <parameter name="accountNumber"/>
             <parameter name="routingNumber"/>
@@ -98,7 +346,30 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="paymentMethodId"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/CustomerFinance.js').execute('bank', context))</script>
+            <service-call name="mantle.account.CustomerFinanceServices.check#CustomerScope" disable-authz="true"
+                    in-map="{organizationPartyId:organizationPartyId, customerPartyId:customerPartyId,
+                        permission:'PAYMENT_EDIT'}"/>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <if condition="!ec.resource.script(workflow).execute('permissions', {permissions:['BANK_RECONCILE']}).BANK_RECONCILE">
+                <return error="true" message="PERMISSION_DENIED: BANK_RECONCILE authority is required"/></if>
+            <if condition="paymentMethodId">
+                <entity-find-one entity-name="mantle.account.method.PaymentMethod" value-field="existing" for-update="true"
+                        disable-authz="true"/>
+                <if condition="existing?.ownerPartyId != customerPartyId">
+                    <return error="true"
+                            message="PAYMENT_METHOD_UNAVAILABLE: The bank account does not belong to this customer"/></if>
+                <if condition="lastUpdatedStamp == null || Number(existing.lastUpdatedStamp) != Number(lastUpdatedStamp)">
+                    <return error="true" message="STALE_REVISION: The bank account changed; reload before saving"/></if>
+            </if>
+            <set field="bankFields" from="Object.assign({ownerPartyId:customerPartyId, paymentMethodId:paymentMethodId},
+                Object.fromEntries(['bankName', 'accountNumber', 'routingNumber', 'typeEnumId', 'description', 'fromDate',
+                    'thruDate'].filter((field) => field in context).map((field) => [field, context[field] || null])))"/>
+            <if condition="!bankFields.description">
+                <set field="bankFields.description" from="(bankName || 'Bank account') +
+                    (accountNumber ? ' •••• ' + String(accountNumber).slice(-4) : '')"/></if>
+            <service-call name="mantle.account.PaymentMethodServices.${paymentMethodId ? 'update' : 'create'}#BankAccount"
+                    in-map="bankFields" out-map="saved" disable-authz="true"/>
+            <set field="paymentMethodId" from="saved.paymentMethodId || paymentMethodId"/>
         </actions>
     </service>
 </services>

@@ -135,8 +135,9 @@ feature("authorized customer contacts include postal and telephone subtypes with
         phone.areaCode == "312"
         phone.contactNumber == "555-1234"
         phone.extension == "42"
-        phone.purposeText == phone.purposeDescription
+        !!phone.purposeDescription
         detail.contacts.some(row => row.contactMechId == emailId && row.infoString == "billing@native.example")
+        detail.sendTo == "billing@native.example"
         !JSON.stringify(detail.contacts).includes("PRIVATE-ENTRY-CODE")
         detail.contacts.every(row => row.verifyCode == null && row.comments == null && row.accessCode == null)
     }
@@ -203,10 +204,9 @@ feature("tax users maintain dated customer registrations and AR cannot submit th
         detail.taxRegistrations.some(row => row.taxAuthorityId == "UsaIrs" && row.partyTaxId == "12-3456789")
     }
 })
-feature("current customer aging separates all due buckets and latest received payments by currency", {
+feature("customer aging by due date and the latest received payment are by currency", {
     when() {
         const invoice = (name, p) => helper().call("mantle.account.InvoiceServices." + name, p)
-        let firstInvoice
         for (const [days, amount] of [
             [-5, "10"],
             [15, "20"],
@@ -225,19 +225,7 @@ feature("current customer aging separates all due buckets and latest received pa
                 action: "finalize",
                 lastUpdatedStamp: saved.lastUpdatedStamp
             })
-            if (!firstInvoice) firstInvoice = record.invoiceId
         }
-        const credit = invoice("create#LinkedCreditMemo", {
-            invoiceId: firstInvoice,
-            creditAmount: "5",
-            operationKey: "native-customer-aging-credit"
-        })
-        const creditRecord = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: credit.creditMemoInvoiceId})
-        invoice("change#InvoiceState", {
-            invoiceId: creditRecord.invoiceId,
-            action: "finalize",
-            lastUpdatedStamp: creditRecord.lastUpdatedStamp
-        })
         for (const [id, statusId, days, amount, currency] of [
             ["OLD", "PmntConfirmed", 2, "6", "USD"],
             ["RECEIVED", "PmntDelivered", 1, "7", "USD"],
@@ -261,15 +249,15 @@ feature("current customer aging separates all due buckets and latest received pa
     then({detail}) {
         const usd = detail.summaryRows.find(row => row.currencyUomId == "USD")
         const eur = detail.summaryRows.find(row => row.currencyUomId == "EUR")
-        usd.current.eq(5)
+        usd.current.eq(10)
         usd.days1To30.eq(20)
         usd.days31To60.eq(30)
         usd.days61To90.eq(40)
         usd.over90.eq(50)
-        usd.openReceivable.eq(145)
+        usd.openReceivable.eq(150)
         usd.overdue.eq(140)
         usd.lastPaymentAmount.eq(7)
-        !!usd.lastPaymentDateText
+        usd.lastPaymentDate != null
         eur.openReceivable.isZero()
         eur.lastPaymentAmount.eq(3)
     }

@@ -101,7 +101,7 @@ feature("active organization selection narrows an otherwise authorized child for
                     ["get#ReceivableSummary", {organizationPartyId: child.org}]
                 ].map(([name, parameters]) => helper().rejected("mantle.account.InvoiceServices." + name, parameters))
                 const parent = native("find#Receivables", {organizationPartyId: f.org})
-                outcomes.push({allowed: allowed.invoice.invoiceId, denied, parent: parent.recordCount})
+                outcomes.push({allowed: allowed.invoice.invoiceId, denied, parent: parent.recordsCount})
             } finally {
                 ec.user.setPreference("ACTIVE_ORGANIZATION", savedPreference)
             }
@@ -238,8 +238,14 @@ feature("an AR-only user creates finalizes and applies a linked credit with orig
         )
         try {
             login(f.users.ar)
-            const credit = native("create#LinkedCreditMemo", {invoiceId, creditAmount: "25", operationKey: "native-ar-credit"})
-            creditId = credit.creditMemoInvoiceId
+            const credit = native("create#InvoiceCreditMemo", {
+                originalInvoiceId: invoiceId,
+                amount: "25",
+                linkToOriginal: true,
+                allocateToLines: true,
+                operationKey: "native-ar-credit"
+            })
+            creditId = credit.invoiceId
             const status = native("change#InvoiceState", {
                 invoiceId: creditId,
                 organizationPartyId: f.org,
@@ -316,9 +322,9 @@ feature("receivable credits stay in AR and unauthorized private counterparties s
         return {hidden, totals, credits}
     },
     then({hidden, totals, credits}) {
-        hidden.recordCount == 0
+        hidden.recordsCount == 0
         totals.summaryRows.length == 0
-        credits.rows.some(row => row.invoiceId == creditId)
+        credits.records.some(row => row.invoiceId == creditId)
     }
 })
 feature("fresh state changes require an authoritative revision and approval policy blocks AR finalization", {
@@ -394,10 +400,16 @@ feature("negative customer drafts become positive credits using outgoing revenue
             action: "finalize",
             lastUpdatedStamp: normalized.lastUpdatedStamp
         })
-        const linked = native("create#LinkedCreditMemo", {invoiceId, creditAmount: "5", operationKey: "native-cap-credit"})
-        const line = helper().lib.rows("mantle.account.invoice.InvoiceItem", {invoiceId: linked.creditMemoInvoiceId})[0]
+        const linked = native("create#InvoiceCreditMemo", {
+            originalInvoiceId: invoiceId,
+            amount: "5",
+            linkToOriginal: true,
+            allocateToLines: true,
+            operationKey: "native-cap-credit"
+        })
+        const line = helper().lib.rows("mantle.account.invoice.InvoiceItem", {invoiceId: linked.invoiceId})[0]
         const cap = helper().rejected("mantle.account.InvoiceServices.store#InvoiceDraftItem", {
-            invoiceId: linked.creditMemoInvoiceId,
+            invoiceId: linked.invoiceId,
             invoiceItemSeqId: line.invoiceItemSeqId,
             lastUpdatedStamp: line.lastUpdatedStamp,
             amount: "200"
@@ -458,8 +470,8 @@ feature("finance bills only approved project time without a Projects permission 
         return {ready, made, retry}
     },
     then({ready, made, retry}) {
-        ready.rows.length == 1
-        ready.rows[0].approvedHours.eq(1)
+        ready.records.length == 1
+        ready.records[0].approvedHours.eq(1)
         made.invoiceItemCreatedCount == 1
         retry.invoiceId == made.invoiceId
         retry.alreadyApplied == true
@@ -492,8 +504,8 @@ feature("worker billing uses vendor-unbilled time and vendor rates after the cli
     },
     then({refused, ready, made, invoice, entry}) {
         refused.includes("PERMISSION_DENIED")
-        ready.rows.length == 1
-        ready.rows[0].approvedAmount.eq(40)
+        ready.records.length == 1
+        ready.records[0].approvedAmount.eq(40)
         made.invoiceItemCreatedCount == 1
         invoice.fromPartyId == f.users.ar
         invoice.toPartyId == f.org
@@ -545,12 +557,14 @@ feature("fully applied invoices with a retained sent status stay outside unpaid 
             action: "finalize",
             lastUpdatedStamp: invoice.lastUpdatedStamp
         })
-        const credit = native("create#LinkedCreditMemo", {
-            invoiceId: invoice.invoiceId,
-            creditAmount: "11",
+        const credit = native("create#InvoiceCreditMemo", {
+            originalInvoiceId: invoice.invoiceId,
+            amount: "11",
+            linkToOriginal: true,
+            allocateToLines: true,
             operationKey: "native-paid-credit"
         })
-        const creditRecord = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: credit.creditMemoInvoiceId})
+        const creditRecord = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: credit.invoiceId})
         native("change#InvoiceState", {
             invoiceId: creditRecord.invoiceId,
             action: "finalize",
@@ -573,10 +587,10 @@ feature("fully applied invoices with a retained sent status stay outside unpaid 
         return {all, unpaid, overdue}
     },
     then({all, unpaid, overdue}) {
-        all.recordCount == 1
-        all.rows[0].unpaidTotal.eq(0)
-        unpaid.recordCount == 0
-        overdue.recordCount == 0
+        all.recordsCount == 1
+        all.records[0].unpaidTotal.eq(0)
+        unpaid.recordsCount == 0
+        overdue.recordsCount == 0
     }
 })
 feature("missing posting mappings roll back finalization instead of leaving an issued error-journal invoice", {
@@ -794,12 +808,14 @@ feature("an open-period credit settles a closed-period original without rewritin
             })[0]
             const originalJson = JSON.stringify(helper().lib.map(original))
             helper().call("update#mantle.party.time.TimePeriod", {timePeriodId: october.timePeriodId, isClosed: "Y"})
-            const credit = native("create#LinkedCreditMemo", {
-                invoiceId: source.invoiceId,
-                creditAmount: "14",
+            const credit = native("create#InvoiceCreditMemo", {
+                originalInvoiceId: source.invoiceId,
+                amount: "14",
+                linkToOriginal: true,
+                allocateToLines: true,
                 operationKey: "native-closed-source-credit"
             })
-            const creditRow = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: credit.creditMemoInvoiceId})
+            const creditRow = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: credit.invoiceId})
             native("change#InvoiceState", {
                 invoiceId: creditRow.invoiceId,
                 action: "finalize",

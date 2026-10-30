@@ -1,7 +1,40 @@
+// Customer invoice print, send#Invoice (the frozen PDF, the supporting files sent with it, one message per address),
+// process#InvoiceBatch, the store notice beside it, and customer statements.
 const helper = () => ec.resource.script("component://mr-mantle/test/AccountingReceivablesFixtures.js")
 const native = (name, p) => helper().call("mantle.account.InvoiceServices." + name, p)
 const capture = ec.factory.getTool("MailCapture")
-let f, first, sendParameters, invoiceId
+let f, first, sendParameters, invoiceId, issued, selectedContent, extraContent
+function file(invoiceId, id, name, bytes) {
+    const location = "dbresource://mantle/content/invoice/" + invoiceId + "/content_" + id + "/" + name
+    ec.resource.getLocationReference(location).putBytes(bytes)
+    helper().call("create#mantle.account.invoice.InvoiceContent", {
+        invoiceContentId: id,
+        invoiceId,
+        contentLocation: location,
+        contentTypeEnumId: "IctNote",
+        description: name
+    })
+    return {id, location}
+}
+function sendRequest(invoice, key, ids = [], versions = {}) {
+    return {
+        invoiceId: invoice.invoiceId,
+        organizationPartyId: f.org,
+        operationKey: key,
+        sourceVersion: helper().lib.fingerprint(invoice),
+        emailTemplateId: f.emailTemplateId,
+        toAddresses: "attachments@example.com",
+        attachmentContentIdList: ids,
+        attachmentVersions: versions
+    }
+}
+function choices(invoiceId, ids = null) {
+    return native("get#InvoiceDeliveryAttachments", {invoiceId, organizationPartyId: f.org, attachmentContentIdList: ids})
+}
+const issuedRows = invoiceId =>
+    helper()
+        .lib.rows("mantle.account.invoice.InvoiceContent", {invoiceId})
+        .filter(row => row.isImmutable == "Y")
 spec({
     stepwise: true,
     setupSpec() {
@@ -20,7 +53,26 @@ spec({
         capture.reset()
     }
 })
-feature("an invoice without a store freezes its PDF and sends valid recipients past a bad address", {
+feature("the print is Mantle's template over get#InvoicePrintInfo, with the lines and total", {
+    when() {
+        login(f.users.ar)
+        const invoice = helper().draft(f, "42")
+        const printed = native("get#InvoiceOutput", {invoiceId: invoice.invoiceId, organizationPartyId: f.org})
+        login(f.users.ap)
+        const denied = helper().rejected("mantle.account.InvoiceServices.get#InvoiceOutput", {invoiceId: invoice.invoiceId})
+        return {printed, denied, invoiceId: invoice.invoiceId}
+    },
+    then({printed, denied, invoiceId}) {
+        printed.printHtml.includes("<h1>Invoice " + invoiceId + "</h1>")
+        printed.printHtml.includes("Approved consulting")
+        printed.printHtml.includes("$42.00")
+        printed.printHtml.includes("NATIVE_SEND finance organization")
+        printed.summaryText.includes("Total $42.00")
+        !!printed.sourceVersion
+        denied.includes("PERMISSION_DENIED")
+    }
+})
+feature("send#Invoice finalizes, freezes its PDF and sends each valid address past a bad one", {
     when() {
         login(f.users.ar)
         const invoice = helper().draft(f)
@@ -30,118 +82,104 @@ feature("an invoice without a store freezes its PDF and sends valid recipients p
             invoiceId,
             organizationPartyId: f.org,
             operationKey: "native-send-first",
-            emailAccountId: f.emailAccountId,
+            emailTemplateId: f.emailTemplateId,
             toAddresses: "customer@example.com,bad-address",
+            note: "Thank you",
             lastUpdatedStamp: invoice.lastUpdatedStamp
         }
         first = native("send#Invoice", sendParameters)
         const stored = helper().lib.one("mantle.account.invoice.InvoiceContent", {invoiceContentId: first.invoiceContentId})
-        const file = ec.resource.getLocationReference(stored.contentLocation)
-        return {first, count: capture.count(), exists: file.getExists(), size: file.getSize()}
+        const pdf = ec.resource.getLocationReference(stored.contentLocation)
+        const emails = helper().lib.rows("mantle.account.invoice.InvoiceEmailMessage", {invoiceId})
+        return {first, stored, size: pdf.getSize(), message: capture.last(), count: capture.count(), emails}
     },
-    then({first, count, exists, size}) {
+    then({first, stored, size, message, count, emails}) {
         first.successCount == 1
         first.failureCount == 1
         first.statusId == "InvoiceSent"
-        first.recipientResults.some(row => row.reasonCode == "RECIPIENT_INVALID")
+        first.recipientResults.some(row => row.recipient == "bad-address" && row.reasonCode == "RECIPIENT_INVALID")
         count == 1
-        exists == true
+        message.toList.join() == "customer@example.com"
+        message.fromAddress == "accounts@native.example"
+        message.subject.includes(invoiceId)
+        message.body.includes("Thank you")
+        message.attachmentNames.join() == "Invoice-" + invoiceId + ".pdf"
+        stored.isImmutable == "Y"
+        stored.contentLocation.startsWith("dbresource://mantle/content/invoice-issued/" + invoiceId + "/")
         size > 100
+        emails.length == 1
+        emails[0].emailMessageId == first.recipientResults.find(row => row.status != "failed").emailMessageId
     }
 })
-feature("same-key send replay retains exact issued outcome and never sends twice", {
+feature("the same key and request answer the first result without sending, another request with it is refused", {
     when() {
         login(f.users.ar)
         const before = capture.count()
         const repeated = native("send#Invoice", sendParameters)
-        const check = native("check#InvoiceStoreEmail", {invoiceId})
+        const conflict = helper().rejected(
+            "mantle.account.InvoiceServices.send#Invoice",
+            Object.assign({}, sendParameters, {toAddresses: "other@example.com"})
+        )
         const detail = native("get#InvoiceFinanceDetail", {invoiceId})
-        return {before, after: capture.count(), repeated, check, detail}
+        return {before, after: capture.count(), repeated, conflict, detail}
     },
-    then({before, after, repeated, check, detail}) {
+    then({before, after, repeated, conflict, detail}) {
         repeated.alreadyApplied == true
         repeated.statusId == first.statusId
-        repeated.deliveryId == first.deliveryId
         repeated.invoiceContentId == first.invoiceContentId
+        repeated.recipientResults.length == 2
         before == after
-        check.sendAllowed == false
-        detail.deliveryRows.some(row =>
-            row.recipients.some(item => item.recipient == "customer@example.com" && item.emailMessageId)
-        )
-        detail.deliveryRows.every(row => row.sourceJson == null && row.recipients.every(item => item.body == null))
+        conflict.includes("OPERATION_KEY_CONFLICT")
+        detail.deliveryRows.some(row => row.toAddresses == "customer@example.com" && row.emailMessageId)
+        detail.contentRows.some(row => row.invoiceContentId == first.invoiceContentId && row.issued && !row.attachable)
     }
 })
-feature("a new operation refuses a stale reviewed invoice version before delivery", {
+feature("a stale or unreviewed version is refused before anything is issued or sent", {
     when() {
         login(f.users.ar)
-        const invoice = helper().draft(f)
-        native("store#InvoiceDraft", {
-            invoiceId: invoice.invoiceId,
-            lastUpdatedStamp: invoice.lastUpdatedStamp,
-            description: "Changed after review"
-        })
-        const refused = helper().rejected("mantle.account.InvoiceServices.send#Invoice", {
-            invoiceId: invoice.invoiceId,
-            emailAccountId: f.emailAccountId,
-            toAddresses: "customer@example.com",
-            operationKey: "native-send-stale",
-            lastUpdatedStamp: 0
-        })
-        const missing = helper().rejected("mantle.account.InvoiceServices.send#Invoice", {
-            invoiceId: invoice.invoiceId,
-            emailAccountId: f.emailAccountId,
-            toAddresses: "customer@example.com",
-            operationKey: "native-send-missing"
-        })
-        return {refused, missing}
-    },
-    then({refused, missing}) {
-        refused.includes("STALE_REVISION")
-        missing.includes("STALE_REVISION")
-    }
-})
-feature("another operation cannot claim a prepared recipient or mark it sent before the canonical delivery", {
-    when() {
-        login(f.users.ar)
-        const invoice = helper().draft(f)
-        const base = {
-            invoiceId: invoice.invoiceId,
-            organizationPartyId: f.org,
-            emailAccountId: f.emailAccountId,
-            toAddresses: "claim@example.com",
-            sourceVersion: helper().lib.fingerprint(invoice)
+        const results = []
+        for (const change of ["header", "line", "stamp", "missing"]) {
+            const invoice = helper().draft(f, "20")
+            const parameters = sendRequest(invoice, "native-stale-" + change)
+            if (change === "header")
+                native("store#InvoiceDraft", {
+                    invoiceId: invoice.invoiceId,
+                    lastUpdatedStamp: invoice.lastUpdatedStamp,
+                    referenceNumber: "Changed after review"
+                })
+            else if (change === "line") {
+                const line = helper().lib.rows("mantle.account.invoice.InvoiceItem", {invoiceId: invoice.invoiceId})[0]
+                native("store#InvoiceDraftItem", {
+                    invoiceId: invoice.invoiceId,
+                    invoiceItemSeqId: line.invoiceItemSeqId,
+                    lastUpdatedStamp: line.lastUpdatedStamp,
+                    amount: "21"
+                })
+            } else {
+                delete parameters.sourceVersion
+                if (change === "stamp") parameters.lastUpdatedStamp = 0
+            }
+            const before = capture.count()
+            const refused = helper().rejected("mantle.account.InvoiceServices.send#Invoice", parameters)
+            const state = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: invoice.invoiceId}).statusId
+            results.push({refused, sent: capture.count() - before, state, issued: issuedRows(invoice.invoiceId).length})
         }
-        const firstPrepared = native("prepare#InvoiceDelivery", Object.assign({}, base, {operationKey: "native-claim-first"}))
-        const secondPrepared = native("prepare#InvoiceDelivery", Object.assign({}, base, {operationKey: "native-claim-second"}))
-        const before = capture.count()
-        const waiting = native("finish#InvoiceDelivery", {deliveryId: secondPrepared.deliveryId})
-        native("deliver#InvoiceRecipient", {deliveryId: firstPrepared.deliveryId, recipient: "claim@example.com"})
-        native("finish#InvoiceDelivery", {deliveryId: firstPrepared.deliveryId})
-        const resolved = native("finish#InvoiceDelivery", {deliveryId: secondPrepared.deliveryId})
-        return {waiting, resolved, sent: capture.count() - before}
+        return {results}
     },
-    then({waiting, resolved, sent}) {
-        waiting.pendingCount == 1
-        waiting.successCount == 0
-        waiting.statusId == "InvoiceFinalized"
-        resolved.pendingCount == 0
-        resolved.successCount == 1
-        sent == 1
+    then({results}) {
+        results[0].refused.includes("STALE_PREVIEW")
+        results[1].refused.includes("STALE_PREVIEW")
+        results[2].refused.includes("STALE_REVISION")
+        results[3].refused.includes("STALE_REVISION")
+        results.every(row => row.sent == 0 && row.state == "InvoiceInProcess" && row.issued == 0)
     }
 })
-feature("accepted Outbox instructions remain queued and preserve one message on retry", {
+feature("an address the mail server does not take stays queued and a retry keeps the one message", {
     when() {
         capture.disable()
         login(f.users.ar)
         const invoice = helper().draft(f)
-        const parameters = {
-            invoiceId: invoice.invoiceId,
-            organizationPartyId: f.org,
-            emailAccountId: f.emailAccountId,
-            toAddresses: "outbox@example.com",
-            operationKey: "native-queued",
-            lastUpdatedStamp: invoice.lastUpdatedStamp
-        }
+        const parameters = Object.assign(sendRequest(invoice, "native-queued"), {toAddresses: "outbox@example.com"})
         const queued = native("send#Invoice", parameters)
         const replay = native("send#Invoice", parameters)
         capture.enable()
@@ -154,7 +192,166 @@ feature("accepted Outbox instructions remain queued and preserve one message on 
         replay.recipientResults[0].emailMessageId == queued.recipientResults[0].emailMessageId
     }
 })
-feature("reviewed batch results persist and name stale and independent successful documents", {
+feature("supporting file choices carry versions for a sender only", {
+    when() {
+        const invoice = helper().draft(f, "12")
+        file(invoice.invoiceId, "NATIVE_SEND_CHOICE", "Scope.txt", new Uint8Array([83, 99, 111, 112, 101]))
+        login(f.users.ar)
+        const options = choices(invoice.invoiceId)
+        const detail = native("get#InvoiceFinanceDetail", {invoiceId: invoice.invoiceId})
+        login(f.users.read)
+        const denied = helper().rejected("mantle.account.InvoiceServices.get#InvoiceDeliveryAttachments", {
+            invoiceId: invoice.invoiceId
+        })
+        const read = native("get#InvoiceFinanceDetail", {invoiceId: invoice.invoiceId})
+        return {options, detail, denied, read}
+    },
+    then({options, detail, denied, read}) {
+        options.attachmentRows.length == 1
+        options.attachmentRows[0].fileName == "Scope.txt"
+        !!options.attachmentRows[0].attachmentVersion
+        options.maxAttachmentCount == 10
+        options.maxTotalAttachmentBytes == 20971520
+        options.attachmentRows.every(row => row.contentLocation == null)
+        detail.contentRows.some(row => row.attachable && row.attachmentVersion)
+        denied.includes("PERMISSION_DENIED")
+        read.contentRows.every(row => !row.attachmentVersion)
+    }
+})
+feature("the files sent are the bytes reviewed, frozen as immutable copies the source changes do not reach", {
+    when() {
+        login(f.users.ar)
+        const invoice = helper().draft(f, "14")
+        selectedContent = file(invoice.invoiceId, "NATIVE_SEND_FROZEN", "Evidence.bin", new Uint8Array([0, 255, 128, 10]))
+        extraContent = file(invoice.invoiceId, "NATIVE_SEND_EXTRA", "Unselected.txt", new Uint8Array([78, 111]))
+        const chosen = choices(invoice.invoiceId).attachmentRows.find(row => row.invoiceContentId == selectedContent.id)
+        const parameters = sendRequest(invoice, "native-send-frozen", [chosen.invoiceContentId], {
+            [chosen.invoiceContentId]: chosen.attachmentVersion
+        })
+        parameters.toAddresses = "first@example.com,second@example.com"
+        capture.clear()
+        issued = native("send#Invoice", parameters)
+        const names = capture.getMessages().map(message => message.attachmentNames.join())
+        ec.resource.getLocationReference(selectedContent.location).putBytes(new Uint8Array([67, 104, 97, 110, 103, 101]))
+        const copy = helper().lib.one("mantle.account.invoice.InvoiceContent", {
+            invoiceContentId: issued.attachmentRows[0].invoiceContentId
+        })
+        const stream = ec.resource.getLocationReference(copy.contentLocation).getInputStream()
+        let bytes
+        try {
+            bytes = StringUtilities.base64Encode(stream.readAllBytes())
+        } finally {
+            stream.close()
+        }
+        return {names, copy, bytes, invoiceId: invoice.invoiceId}
+    },
+    then({names, copy, bytes, invoiceId}) {
+        issued.successCount == 2
+        names.length == 2
+        names.every(text => text == "Invoice-" + invoiceId + ".pdf,Evidence.bin")
+        issued.attachmentRows.length == 1
+        issued.attachmentRows[0].sourceInvoiceContentId == selectedContent.id
+        copy.isImmutable == "Y"
+        copy.contentLocation.startsWith("dbresource://mantle/content/invoice-issued/" + invoiceId + "/")
+        bytes == StringUtilities.base64Encode(new Uint8Array([0, 255, 128, 10]))
+    }
+})
+feature("a foreign, stale, missing or remote file and the count and size limits refuse before issue", {
+    when() {
+        login(f.users.ar)
+        const invoice = helper().draft(f, "16")
+        const other = helper().draft(f, "17")
+        const foreign = file(other.invoiceId, "NATIVE_SEND_FOREIGN", "Other.txt", new Uint8Array([79]))
+        const local = file(invoice.invoiceId, "NATIVE_SEND_LOCAL", "Local.txt", new Uint8Array([76]))
+        const version = choices(invoice.invoiceId, [local.id]).attachmentRows[0].attachmentVersion
+        const refuse = (key, ids, versions) =>
+            helper().rejected("mantle.account.InvoiceServices.send#Invoice", sendRequest(invoice, key, ids, versions))
+        const failures = [refuse("native-attach-foreign", [foreign.id], {[foreign.id]: "reviewed"})]
+        ec.resource.getLocationReference(local.location).putBytes(new Uint8Array([76, 50]))
+        failures.push(refuse("native-attach-stale", [local.id], {[local.id]: version}))
+        ec.resource.getLocationReference(local.location).delete()
+        failures.push(refuse("native-attach-missing", [local.id], {[local.id]: version}))
+        helper().call("create#mantle.account.invoice.InvoiceContent", {
+            invoiceContentId: "NATIVE_SEND_URL",
+            invoiceId: invoice.invoiceId,
+            contentLocation: "https://example.com/private.pdf"
+        })
+        failures.push(refuse("native-attach-url", ["NATIVE_SEND_URL"], {NATIVE_SEND_URL: "reviewed"}))
+        const ids = Array.from({length: 11}, (_, i) => "NATIVE_SEND_COUNT_" + i)
+        failures.push(refuse("native-attach-count", ids, Object.fromEntries(ids.map(id => [id, "reviewed"]))))
+        const large = file(invoice.invoiceId, "NATIVE_SEND_LARGE", "Large.bin", new Uint8Array(10485761))
+        failures.push(refuse("native-attach-size", [large.id], {[large.id]: "reviewed"}))
+        return {failures, stored: helper().lib.one(helper().lib.invoiceEntity, {invoiceId: invoice.invoiceId})}
+    },
+    then({failures, stored}) {
+        failures[0].includes("ATTACHMENT_UNAVAILABLE")
+        failures[1].includes("STALE_ATTACHMENT")
+        failures[2].includes("ATTACHMENT_UNAVAILABLE")
+        failures[3].includes("ATTACHMENT_LOCATION_INVALID")
+        failures[4].includes("ATTACHMENT_COUNT_LIMIT")
+        failures[5].includes("ATTACHMENT_SIZE_LIMIT")
+        stored.statusId == "InvoiceInProcess"
+        issuedRows(stored.invoiceId).length == 0
+    }
+})
+feature("an issued file cannot be removed, changed, replaced or aliased, while a supporting file stays editable", {
+    when() {
+        login(f.users.ar)
+        const content = helper().lib.one("mantle.account.invoice.InvoiceContent", {invoiceContentId: issued.invoiceContentId})
+        const sentCopy = helper().lib.one("mantle.account.invoice.InvoiceContent", {
+            invoiceContentId: issued.attachmentRows[0].invoiceContentId
+        })
+        const before = ec.resource.digest(content.contentLocation, "sha256")
+        const key = {invoiceContentId: content.invoiceContentId}
+        const failures = [
+            helper().rejected("delete#mantle.account.invoice.InvoiceContent", key),
+            helper().rejected("delete#mantle.account.invoice.InvoiceContent", {invoiceContentId: sentCopy.invoiceContentId}),
+            helper().rejected(
+                "update#mantle.account.invoice.InvoiceContent",
+                Object.assign({}, key, {contentLocation: "dbresource://mantle/content/replaced.pdf"})
+            ),
+            helper().rejected("update#mantle.account.invoice.InvoiceContent", Object.assign({}, key, {isImmutable: "N"})),
+            helper().rejected(
+                "mantle.account.InvoiceServices.update#InvoiceContent",
+                Object.assign({}, key, {contentFile: uploadedFile("Overwrite.txt", "Changed issued file")})
+            )
+        ]
+        for (const [id, location] of [
+            ["NATIVE_ALIAS_PDF", content.contentLocation],
+            ["NATIVE_ALIAS_COPY", sentCopy.contentLocation.replace("mantle/content/", "mantle//content//")],
+            ["NATIVE_ALIAS_PREFIX", "dbresource:" + content.contentLocation.slice("dbresource://".length)]
+        ])
+            failures.push(
+                helper().rejected("create#mantle.account.invoice.InvoiceContent", {
+                    invoiceContentId: id,
+                    invoiceId: content.invoiceId,
+                    contentLocation: location,
+                    isImmutable: "N"
+                })
+            )
+        native("update#InvoiceContent", Object.assign({}, key, {description: "Issued PDF as sent"}))
+        native("update#InvoiceContent", {
+            invoiceContentId: extraContent.id,
+            contentFile: uploadedFile("Editable.txt", "Updated supporting file")
+        })
+        const live = helper().lib.one("mantle.account.invoice.InvoiceContent", {invoiceContentId: extraContent.id})
+        const after = helper().lib.one("mantle.account.invoice.InvoiceContent", key)
+        return {
+            failures,
+            same: before == ec.resource.digest(after.contentLocation, "sha256"),
+            after,
+            updated: ec.resource.getLocationReference(live.contentLocation).getText()
+        }
+    },
+    then({failures, same, after, updated}) {
+        failures.length == 8
+        failures.every(message => message.includes("ISSUED_INVOICE_IMMUTABLE"))
+        same == true
+        after.description == "Issued PDF as sent"
+        updated == "Updated supporting file"
+    }
+})
+feature("a batch does each invoice on its own, names the stale one and keeps its result", {
     when() {
         login(f.users.ar)
         const good = helper().draft(f),
@@ -168,105 +365,29 @@ feature("reviewed batch results persist and name stale and independent successfu
         }
         const result = native("process#InvoiceBatch", parameters)
         const replay = native("process#InvoiceBatch", parameters)
-        const op = helper().lib.one("mantle.ledger.transaction.PostingOperation", {operationKey: parameters.operationKey})
-        return {result, replay, op}
+        const kept = native("get#InvoiceBatchResult", {organizationPartyId: f.org, operationKey: parameters.operationKey})
+        const printed = native("process#InvoiceBatch", {
+            organizationPartyId: f.org,
+            invoiceIdList: [good.invoiceId],
+            action: "print",
+            operationKey: "native-invoice-print"
+        })
+        login(f.users.edit)
+        const other = native("get#InvoiceBatchResult", {organizationPartyId: f.org, operationKey: parameters.operationKey})
+        return {result, replay, kept, printed, other}
     },
-    then({result, replay, op}) {
+    then({result, replay, kept, printed, other}) {
         result.successCount == 1
         result.failureCount == 1
-        result.results.some(row => !row.success && row.errorMessage.includes("STALE_REVISION"))
+        result.results.some(row => !row.success && row.reasonCode == "STALE_REVISION")
         replay.alreadyApplied == true
-        op.status == "complete"
-        JSON.parse(op.resultJson).results.length == 2
+        kept.found == true
+        kept.results.length == 2
+        printed.results[0].result.contentLocation.endsWith(".pdf")
+        other.found == false
     }
 })
-feature("currency-separated statement snapshots retain reviewed amounts and reject unauthorized reads", {
-    when() {
-        login(f.users.ar)
-        const snapshot = helper().call("mantle.account.CollectionServices.preview#Statements", {
-            organizationPartyId: f.org,
-            customerPartyIdList: [f.customer],
-            asOfDate: ec.user.nowTimestamp
-        })
-        const restored = helper().call("mantle.account.CollectionServices.get#StatementPreview", {
-            snapshotId: snapshot.snapshotId
-        })
-        login(f.users.read)
-        const denied = helper().rejected("mantle.account.CollectionServices.get#StatementPreview", {
-            snapshotId: snapshot.snapshotId
-        })
-        return {snapshot, restored, denied}
-    },
-    then({snapshot, restored, denied}) {
-        snapshot.statementRows.length > 0
-        snapshot.statementRows.every(row => row.currencyUomId == "USD")
-        restored.inputFingerprint == snapshot.inputFingerprint
-        restored.previewHtml == snapshot.previewHtml
-        denied.includes("PERMISSION_DENIED")
-    }
-})
-feature("a reviewed multi-currency statement sends each currency independently and replays the exact recipient results", {
-    when() {
-        const legacyFixture = helper().fixtures("NATIVE_STMT")
-        helper().call("update#mantle.ledger.config.PartyAcctgPreference", {
-            organizationPartyId: legacyFixture.org,
-            postingGuardEnabled: "N",
-            singleCurrencyDocumentsOnly: "N"
-        })
-        const local = helper().draft(legacyFixture, "31", "USD")
-        native("change#InvoiceState", {invoiceId: local.invoiceId, action: "finalize", lastUpdatedStamp: local.lastUpdatedStamp})
-        const foreign = helper().draft(legacyFixture, "24", "EUR")
-        native("change#InvoiceState", {
-            invoiceId: foreign.invoiceId,
-            action: "finalize",
-            lastUpdatedStamp: foreign.lastUpdatedStamp
-        })
-        helper().call("create#moqui.basic.email.EmailAccountUser", {
-            emailAccountId: f.emailAccountId,
-            userId: legacyFixture.users.ar,
-            fromDate: 0,
-            permissionEnumId: "EapSend"
-        })
-        login(legacyFixture.users.ar)
-        const snapshot = helper().call("mantle.account.CollectionServices.preview#Statements", {
-            organizationPartyId: legacyFixture.org,
-            customerPartyIdList: [legacyFixture.customer],
-            asOfDate: ec.user.nowTimestamp
-        })
-        const parameters = {
-            snapshotId: snapshot.snapshotId,
-            inputFingerprint: snapshot.inputFingerprint,
-            operationKey: "native-statement-send",
-            toAddresses: "statement@example.com,bad-address"
-        }
-        const before = capture.count()
-        const reserved = helper().call("mantle.account.CollectionServices.prepare#StatementSend", parameters)
-        const conflict = helper().rejected(
-            "mantle.account.CollectionServices.send#Statements",
-            Object.assign({}, parameters, {toAddresses: "other@example.com"})
-        )
-        const beforeSend = capture.count()
-        const sent = helper().call("mantle.account.CollectionServices.send#Statements", parameters)
-        const repeated = helper().call("mantle.account.CollectionServices.send#Statements", parameters)
-        return {snapshot, sent, repeated, reserved, conflict, beforeSend, before, sentCount: capture.count() - before}
-    },
-    then({snapshot, sent, repeated, reserved, conflict, beforeSend, before, sentCount}) {
-        snapshot.statementRows.length == 2
-        snapshot.statementRows.some(row => row.currencyUomId == "EUR" && row.closingBalance.eq(24))
-        sent.successCount == 2
-        sent.failureCount == 2
-        sent.results
-            .filter(row => row.status == "failed")
-            .every(row => row.currencyUomId && row.errorMessage && row.reasonCode == "RECIPIENT_INVALID")
-        repeated.alreadyApplied == true
-        repeated.results.length == sent.results.length
-        sentCount == 2
-        reserved.complete == false
-        conflict.includes("OPERATION_KEY_CONFLICT")
-        beforeSend == before
-    }
-})
-feature("a configured transactional store notice sends normally and is suppressed for the durable manual delivery version", {
+feature("a store's finalized notice is sent, and not for an invoice send#Invoice issued", {
     when() {
         helper().call("create#mantle.product.store.ProductStore", {
             productStoreId: "NATIVE_SEND_STORE",
@@ -291,134 +412,80 @@ feature("a configured transactional store notice sends normally and is suppresse
             emailAddress: "store@example.com",
             contactMechPurposeId: "EmailBilling"
         })
-        const legacy = helper().draft(f, "11")
-        helper().call("update#mantle.account.invoice.Invoice", {invoiceId: legacy.invoiceId, productStoreId: "NATIVE_SEND_STORE"})
+        const notice = helper().draft(f, "11")
         assert(ec.factory.waitWorkerPoolEmpty(50), "Invoice mail worker pool did not drain")
         capture.clear()
         native("change#InvoiceState", {
-            invoiceId: legacy.invoiceId,
+            invoiceId: notice.invoiceId,
             action: "finalize",
-            lastUpdatedStamp: helper().lib.one(helper().lib.invoiceEntity, {invoiceId: legacy.invoiceId}).lastUpdatedStamp
+            lastUpdatedStamp: helper().lib.one(helper().lib.invoiceEntity, {invoiceId: notice.invoiceId}).lastUpdatedStamp
         })
         assert(ec.factory.waitWorkerPoolEmpty(50), "Invoice mail worker pool did not drain")
-        const legacyCount = capture.count()
+        const noticeCount = capture.count()
         const manual = helper().draft(f, "13")
-        helper().call("update#mantle.account.invoice.Invoice", {invoiceId: manual.invoiceId, productStoreId: "NATIVE_SEND_STORE"})
-        assert(ec.factory.waitWorkerPoolEmpty(50), "Invoice mail worker pool did not drain")
         capture.clear()
-        native("send#Invoice", {
-            invoiceId: manual.invoiceId,
-            emailAccountId: f.emailAccountId,
-            toAddresses: "store@example.com",
-            operationKey: "native-store-manual",
-            lastUpdatedStamp: helper().lib.one(helper().lib.invoiceEntity, {invoiceId: manual.invoiceId}).lastUpdatedStamp
-        })
+        const sent = native("send#Invoice", Object.assign(sendRequest(manual, "native-store-manual"), {toAddresses: null}))
         assert(ec.factory.waitWorkerPoolEmpty(50), "Invoice mail worker pool did not drain")
-        return {legacyCount, manualCount: capture.count()}
+        return {noticeCount, manualCount: capture.count(), sent}
     },
-    then({legacyCount, manualCount}) {
-        legacyCount == 1
+    then({noticeCount, manualCount, sent}) {
+        noticeCount == 1
         manualCount == 1
+        sent.recipientResults[0].recipient == "store@example.com"
     }
 })
-feature("a reviewed financial source version survives the asynchronous store notice's status-only stamp advance", {
+feature("statements are by customer and currency, for a receivables editor", {
     when() {
-        login(f.users.ar)
-        const invoice = helper().draft(f, "19")
-        const finalized = native("change#InvoiceState", {
-            invoiceId: invoice.invoiceId,
-            action: "finalize",
-            lastUpdatedStamp: invoice.lastUpdatedStamp
+        const statementFixture = helper().fixtures("NATIVE_STMT")
+        helper().call("update#mantle.ledger.config.PartyAcctgPreference", {
+            organizationPartyId: statementFixture.org,
+            postingGuardEnabled: "N",
+            singleCurrencyDocumentsOnly: "N"
         })
-        assert(ec.factory.waitWorkerPoolEmpty(50), "Invoice mail worker pool did not drain")
-        const afterNotice = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: invoice.invoiceId})
-        const before = capture.count()
-        const parameters = {
-            invoiceId: invoice.invoiceId,
-            organizationPartyId: f.org,
-            sourceVersion: finalized.sourceVersion,
-            emailAccountId: f.emailAccountId,
-            toAddresses: "reviewed@example.com"
-        }
-        const strictStamp = helper().rejected(
-            "mantle.account.InvoiceServices.send#Invoice",
-            Object.assign({}, parameters, {
-                lastUpdatedStamp: finalized.lastUpdatedStamp,
-                operationKey: "native-status-only-stamp"
-            })
-        )
-        const beforeDeliveryCount = helper().lib.rows("mantle.account.invoice.InvoiceDelivery", {
-            invoiceId: invoice.invoiceId
-        }).length
-        const sent = native("send#Invoice", Object.assign({}, parameters, {operationKey: "native-status-only-source"}))
-        return {
-            finalized,
-            afterNotice,
-            strictStamp,
-            beforeDeliveryCount,
-            sent,
-            sentCount: capture.count() - before,
-            unchangedSource: helper().lib.fingerprint(afterNotice)
-        }
-    },
-    then({finalized, afterNotice, strictStamp, beforeDeliveryCount, sent, sentCount, unchangedSource}) {
-        finalized.statusId == "InvoiceFinalized"
-        afterNotice.statusId == "InvoiceSent"
-        helper().lib.ms(afterNotice.lastUpdatedStamp) != helper().lib.ms(finalized.lastUpdatedStamp)
-        unchangedSource == finalized.sourceVersion
-        strictStamp.includes("STALE_REVISION")
-        beforeDeliveryCount == 0
-        sent.statusId == "InvoiceSent"
-        sent.sourceVersion == finalized.sourceVersion
-        sent.successCount == 1
-        sentCount == 1
-    }
-})
-feature("source-version-only delivery refuses reviewed financial header and line changes without durable output or mail", {
-    when() {
-        login(f.users.ar)
-        const results = []
-        for (const change of ["header", "line"]) {
-            const invoice = helper().draft(f, "20")
-            const sourceVersion = helper().lib.fingerprint(invoice)
-            if (change === "header")
-                native("store#InvoiceDraft", {
-                    invoiceId: invoice.invoiceId,
-                    lastUpdatedStamp: invoice.lastUpdatedStamp,
-                    referenceNumber: "Changed after delivery review"
-                })
-            else {
-                const line = helper().lib.rows("mantle.account.invoice.InvoiceItem", {invoiceId: invoice.invoiceId})[0]
-                native("store#InvoiceDraftItem", {
-                    invoiceId: invoice.invoiceId,
-                    invoiceItemSeqId: line.invoiceItemSeqId,
-                    lastUpdatedStamp: line.lastUpdatedStamp,
-                    amount: "21"
-                })
-            }
-            const before = capture.count()
-            const refused = helper().rejected("mantle.account.InvoiceServices.send#Invoice", {
+        for (const [amount, currency] of [
+            ["31", "USD"],
+            ["24", "EUR"]
+        ]) {
+            const invoice = helper().draft(statementFixture, amount, currency)
+            native("change#InvoiceState", {
                 invoiceId: invoice.invoiceId,
-                organizationPartyId: f.org,
-                sourceVersion,
-                emailAccountId: f.emailAccountId,
-                toAddresses: "stale@example.com",
-                operationKey: "native-source-stale-" + change
-            })
-            results.push({
-                change,
-                refused,
-                sentCount: capture.count() - before,
-                state: helper().lib.one(helper().lib.invoiceEntity, {invoiceId: invoice.invoiceId}).statusId,
-                deliveries: helper().lib.rows("mantle.account.invoice.InvoiceDelivery", {invoiceId: invoice.invoiceId}).length,
-                outputs: helper().lib.rows("mantle.account.invoice.InvoiceContent", {invoiceId: invoice.invoiceId}).length
+                action: "finalize",
+                lastUpdatedStamp: invoice.lastUpdatedStamp
             })
         }
-        return {results}
+        const selection = {organizationPartyId: statementFixture.org, customerPartyIdList: [statementFixture.customer]}
+        login(statementFixture.users.ar)
+        const statements = helper().call("mantle.account.CollectionServices.get#Statements", selection)
+        const parameters = Object.assign({}, selection, {
+            operationKey: "native-statement-send",
+            emailTemplateId: statementFixture.emailTemplateId,
+            toAddresses: "statement@example.com,bad-address"
+        })
+        const before = capture.count()
+        const sent = helper().call("mantle.account.CollectionServices.send#Statements", parameters)
+        const repeated = helper().call("mantle.account.CollectionServices.send#Statements", parameters)
+        const conflict = helper().rejected(
+            "mantle.account.CollectionServices.send#Statements",
+            Object.assign({}, parameters, {toAddresses: "other@example.com"})
+        )
+        const sentCount = capture.count() - before
+        login(statementFixture.users.read)
+        const denied = helper().rejected("mantle.account.CollectionServices.get#Statements", selection)
+        return {statements, sent, repeated, conflict, sentCount, denied}
     },
-    then({results}) {
-        results.length == 2
-        results.every(row => row.refused.includes("STALE_PREVIEW"))
-        results.every(row => row.sentCount == 0 && row.state == "InvoiceInProcess" && row.deliveries == 0 && row.outputs == 0)
+    then({statements, sent, repeated, conflict, sentCount, denied}) {
+        statements.statementRows.length == 2
+        statements.statementRows.some(row => row.currencyUomId == "EUR" && row.closingBalance.eq(24))
+        statements.statementRows.every(row => row.printHtml.includes("NATIVE_STMT customer") && row.agingSummaryList.length == 2)
+        sent.successCount == 2
+        sent.failureCount == 2
+        sent.results
+            .filter(row => row.status == "failed")
+            .every(row => row.currencyUomId && row.reasonCode == "RECIPIENT_INVALID")
+        repeated.alreadyApplied == true
+        repeated.results.length == sent.results.length
+        conflict.includes("OPERATION_KEY_CONFLICT")
+        sentCount == 2
+        denied.includes("PERMISSION_DENIED")
     }
 })

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-This software is in the public domain under CC0 1.0 Universal plus a 
+This software is in the public domain under CC0 1.0 Universal plus a
 Grant of Patent License.
 
 To the extent possible under law, the author(s) have dedicated all
@@ -12,106 +12,207 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="define" noun="StatementParameters" type="interface">
-        <description>Shared authorized statement selection, reviewed snapshot and independent delivery parameters.</description>
+        <description>The statements to make: an organization's customers (all with an open balance, or the ones listed), one
+            statement per customer and currency, as of a date.</description>
         <in-parameters>
-            <parameter name="organizationPartyId"/>
+            <parameter name="organizationPartyId" required="true"/>
             <parameter name="customerPartyIdList" type="List"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="asOfDate" type="Timestamp"/>
             <parameter name="currencyUomId"/>
-            <parameter name="includeZeroBalance" type="Boolean"/>
-            <parameter name="snapshotId"/>
-            <parameter name="inputFingerprint"/>
-            <parameter name="operationKey"/>
-            <parameter name="emailAccountId"/>
-            <parameter name="toAddresses"/>
-            <parameter name="customerPartyId"/>
-            <parameter name="recipient"/>
-            <parameter name="requestHash"/>
-            <parameter name="result" type="Map"/>
+            <parameter name="asOfDate" type="Date"/>
+            <parameter name="includeZeroBalance" type="Boolean" default="false"/>
         </in-parameters>
     </service>
-    <service verb="preview" noun="Statements" allow-remote="false">
-        <description>Freeze authorized customer statements by currency and as-of date for review and delivery.</description>
+    <service verb="get" noun="Statements" allow-remote="false">
+        <description>Customer statements of an organization, one for each customer and currency with unpaid invoices or
+            unapplied payments (get#ReceivableStatementInfo, its aging as of asOfDate), each with its billing addresses and
+            its print (template/account/ReceivableStatement.print.html.fancy). A customer another user keeps private is left
+            out; more than 500 statements refuse. Needs RECEIVABLE_EDIT in the organization.</description>
         <implements service="mantle.account.CollectionServices.define#StatementParameters"/>
         <out-parameters>
-            <parameter name="snapshotId"/>
-            <parameter name="inputFingerprint"/>
             <parameter name="statementRows" type="List"/>
             <parameter name="previewHtml"/>
-            <parameter name="results" type="List"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/Statements.js').execute('preview', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <script>ec.resource.script(workflow).execute('organization',
+                {organizationPartyId:organizationPartyId, permission:'RECEIVABLE_EDIT'})</script>
+            <set field="customerIds" from="customerPartyIdList ? Array.from(customerPartyIdList) : null"/>
+            <entity-find entity-name="mantle.account.invoice.Invoice" list="openInvoiceList" distinct="true" limit="1001"
+                    disable-authz="true">
+                <econdition field-name="fromPartyId" from="organizationPartyId"/>
+                <econdition field-name="toPartyId" operator="in" from="customerIds" ignore="customerIds == null"/>
+                <econdition field-name="currencyUomId" ignore-if-empty="true"/>
+                <econdition field-name="statusId" operator="in" value="InvoiceFinalized,InvoiceSent,InvoiceAcked"/>
+                <econdition field-name="unpaidTotal" operator="not-equals" from="toDecimal(0)"/>
+                <select-field field-name="toPartyId"/><select-field field-name="currencyUomId"/>
+            </entity-find>
+            <entity-find entity-name="mantle.account.payment.Payment" list="openPaymentList" distinct="true" limit="1001"
+                    disable-authz="true">
+                <econdition field-name="toPartyId" from="organizationPartyId"/>
+                <econdition field-name="fromPartyId" operator="in" from="customerIds" ignore="customerIds == null"/>
+                <econdition field-name="amountUomId" from="currencyUomId" ignore-if-empty="true"/>
+                <econdition field-name="statusId" operator="in" value="PmntDelivered,PmntConfirmed"/>
+                <econdition field-name="unappliedTotal" operator="not-equals" from="toDecimal(0)"/>
+                <select-field field-name="fromPartyId"/><select-field field-name="amountUomId"/>
+            </entity-find>
+            <set field="pairs" from="Array.from(openInvoiceList).map((row) => [row.toPartyId, row.currencyUomId])
+                .concat(Array.from(openPaymentList).map((row) => [row.fromPartyId, row.amountUomId]))"/>
+            <!-- a customer listed with no open items has a zero statement in the organization's base currency when asked -->
+            <if condition="includeZeroBalance &amp;&amp; customerIds">
+                <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference" out-map="preferenceOut"
+                        in-map="{organizationPartyId:organizationPartyId}" disable-authz="true"/>
+                <set field="pairs" from="pairs.concat(customerIds.filter((id) => !pairs.some((pair) => pair[0] == id))
+                    .map((id) => [id, currencyUomId || preferenceOut.partyAcctgPreference?.baseCurrencyUomId]))"/>
+            </if>
+            <set field="pairs" from="Array.from(new Map(pairs.map((pair) => [pair.join('|'), pair])).values())
+                .sort((a, b) => a.join('|').localeCompare(b.join('|')))"/>
+            <if condition="pairs.length &gt; 500">
+                <return error="true"
+                        message="STATEMENT_SCOPE_TOO_LARGE: Narrow the statement customer or currency selection"/></if>
+            <set field="statementRows" from="[]"/>
+            <if condition="!pairs.length"><set field="previewHtml" value=""/><return/></if>
+
+            <entity-find entity-name="mantle.party.PartyDetail" list="customerList" disable-authz="true">
+                <econdition field-name="partyId" operator="in" from="pairs.map((pair) => pair[0])"/></entity-find>
+            <set field="customers" from="Object.fromEntries(Array.from(customerList)
+                .filter((party) => !party.privateOwnerUserId || party.privateOwnerUserId == ec.user.userId)
+                .map((party) => [party.partyId, party.organizationName ||
+                    [party.firstName, party.lastName].filter((name) => name).join(' ') || party.partyId]))"/>
+            <entity-find-one entity-name="mantle.party.PartyDetail" value-field="organization" disable-authz="true">
+                <field-map field-name="partyId" from="organizationPartyId"/></entity-find-one>
+            <set field="organizationName" from="organization?.organizationName || organizationPartyId"/>
+            <set field="asOfDateText" from="ec.l10n.format(asOfDate ?? ec.user.nowTimestamp, 'yyyy-MM-dd')"/>
+            <set field="statementTemplate" value="component://mr-mantle/template/account/ReceivableStatement.print.html.fancy"/>
+            <iterate list="pairs" entry="pair">
+                <if condition="!customers[pair[0]]"><continue/></if>
+                <service-call name="mantle.account.InvoiceServices.get#ReceivableStatementInfo" out-map="info"
+                        out-map-add-to-existing="false" disable-authz="true"
+                        in-map="{toPartyId:pair[0], fromPartyId:organizationPartyId, currencyUomId:pair[1], asOfDate:asOfDate}"/>
+                <set field="receivable" from="Array.from(info.receivableInfoList ?? [])
+                    .find((row) => row.fromPartyId == organizationPartyId) ?? {}"/>
+                <set field="closingBalance" from="toDecimal(receivable.balanceDue ?? 0)"/>
+                <if condition="closingBalance.isZero() &amp;&amp; !includeZeroBalance"><continue/></if>
+                <service-call name="mantle.party.ContactServices.get#PartyContactInfoList" out-map="billingContacts"
+                        out-map-add-to-existing="false" disable-authz="true"
+                        in-map="{partyId:pair[0], emailContactMechPurposeId:'EmailBilling', alsoIncludePrimaryPurpose:false}"/>
+                <set field="statement" from="{customerPartyId:pair[0], customerName:customers[pair[0]], currencyUomId:pair[1],
+                    periodDays:info.periodDays ?? 30, unpaidTotal:toDecimal(receivable.unpaidTotal ?? 0),
+                    unappliedTotal:toDecimal(receivable.unappliedTotal ?? 0), closingBalance:closingBalance,
+                    agingSummaryList:receivable.agingSummaryList ?? [],
+                    invoiceRows:Array.from(receivable.invoiceList ?? []).map((invoice) => ({invoiceId:invoice.invoiceId,
+                        referenceNumber:invoice.referenceNumber,
+                        invoiceDateText:invoice.invoiceDate == null ? '' : ec.l10n.format(invoice.invoiceDate, 'yyyy-MM-dd'),
+                        dueDateText:invoice.dueDate == null ? '' : ec.l10n.format(invoice.dueDate, 'yyyy-MM-dd'),
+                        currencyUomId:pair[1], invoiceTotal:invoice.invoiceTotal, unpaidTotal:invoice.unpaidTotal})),
+                    paymentRows:Array.from(receivable.unappliedPaymentList ?? []).map((payment) => ({paymentId:payment.paymentId,
+                        effectiveDateText:payment.effectiveDate == null ? '' :
+                            ec.l10n.format(payment.effectiveDate, 'yyyy-MM-dd'),
+                        currencyUomId:pair[1], amount:payment.amount,
+                        unappliedTotal:payment.unappliedTotal})),
+                    recipients:Array.from(billingContacts.emailAddressList ?? []).map((row) => row.emailAddress)
+                        .filter((address) => address)}"/>
+                <set field="statement.unpaidText" from="ec.l10n.formatCurrency(statement.unpaidTotal, pair[1])"/>
+                <set field="statement.unappliedText" from="ec.l10n.formatCurrency(statement.unappliedTotal, pair[1])"/>
+                <set field="statement.closingBalanceText" from="ec.l10n.formatCurrency(closingBalance, pair[1])"/>
+                <set field="statement.printHtml" from="ec.resource.template(statementTemplate,
+                    {statement:statement, organizationName:organizationName, asOfDateText:asOfDateText})"/>
+                <script>statementRows.push(statement)</script>
+            </iterate>
+            <set field="previewHtml" from="statementRows.map((row) => row.printHtml).join('\n')"/>
         </actions>
     </service>
-    <service verb="get" noun="StatementPreview" allow-remote="false">
-        <description>Read the exact authorized statement snapshot and its delivery results.</description>
+    <service verb="send" noun="Statements" allow-remote="false">
+        <description>Send the statements get#Statements makes, each as its PDF by email to toAddresses or the customer's
+            billing addresses, through send#EmailTemplate (emailTemplateId, MANTLE_STATEMENT_EMAIL by default) from the
+            organization's billing address: each address its own message in its own transaction, a statement without an
+            address or an address that fails named in results, the others sent. The same operationKey and request answers
+            the first result. Needs RECEIVABLE_EDIT in the organization.</description>
         <implements service="mantle.account.CollectionServices.define#StatementParameters"/>
+        <in-parameters>
+            <parameter name="operationKey" required="true"/>
+            <parameter name="toAddresses"/>
+            <parameter name="emailTemplateId" default-value="MANTLE_STATEMENT_EMAIL"/>
+        </in-parameters>
         <out-parameters>
-            <parameter name="snapshotId"/>
-            <parameter name="inputFingerprint"/>
-            <parameter name="statementRows" type="List"/>
-            <parameter name="previewHtml"/>
-            <parameter name="results" type="List"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/Statements.js').execute('get', context))</script>
-        </actions>
-    </service>
-    <service verb="prepare" noun="StatementSend" allow-remote="false">
-        <description>Reserve statement request identity before any recipient delivery, or return its durable completed result.</description>
-        <implements service="mantle.account.CollectionServices.define#StatementParameters"/>
-        <out-parameters>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="result" type="Map"/>
-            <parameter name="requestHash"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/Statements.js').execute('prepare', context))</script>
-        </actions>
-    </service>
-    <service verb="send" noun="Statements" allow-remote="false" transaction="ignore">
-        <description>Send only a current reviewed statement snapshot, retaining independent recipient results and same-key replay.</description>
-        <implements service="mantle.account.CollectionServices.define#StatementParameters"/>
-        <out-parameters>
-            <parameter name="snapshotId"/>
             <parameter name="results" type="List"/>
             <parameter name="successCount" type="Integer"/>
             <parameter name="failureCount" type="Integer"/>
             <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/Statements.js').execute('send', context))</script>
-        </actions>
-    </service>
-    <service verb="deliver" noun="StatementRecipient" allow-remote="false">
-        <description>Deliver one frozen customer and currency statement through an authorized native mail draft.</description>
-        <implements service="mantle.account.CollectionServices.define#StatementParameters"/>
-        <out-parameters>
-            <parameter name="customerPartyId"/>
-            <parameter name="currencyUomId"/>
-            <parameter name="recipient"/>
-            <parameter name="status"/>
-            <parameter name="reasonCode"/>
-            <parameter name="emailMessageId"/>
-            <parameter name="errorMessage"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/Statements.js').execute('deliver', context))</script>
-        </actions>
-    </service>
-    <service verb="record" noun="StatementResult" allow-remote="false">
-        <description>Persist the authorized aggregate statement outcome on the common posting operation.</description>
-        <implements service="mantle.account.CollectionServices.define#StatementParameters"/>
-        <out-parameters>
-
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/Statements.js').execute('recordResult', context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/InvoiceWorkflow.js"/>
+            <service-call name="mantle.account.CollectionServices.get#Statements" out-map="statements" disable-authz="true"
+                    in-map="{organizationPartyId:organizationPartyId, customerPartyIdList:customerPartyIdList,
+                        currencyUomId:currencyUomId, asOfDate:asOfDate, includeZeroBalance:includeZeroBalance}"/>
+            <set field="replay" from="ec.resource.script(workflow).execute('replay', {operationKey:operationKey,
+                operationType:'StatementSend', organizationPartyId:organizationPartyId, request:{organizationPartyId,
+                customerPartyIdList:customerPartyIdList ? Array.from(customerPartyIdList) : null,
+                currencyUomId:currencyUomId || null,
+                asOfDate:asOfDate ? String(asOfDate) : null, toAddresses:toAddresses || null, emailTemplateId}})"/>
+            <if condition="replay.previous">
+                <set field="results" from="replay.previous.results"/>
+                <set field="successCount" from="replay.previous.successCount"/>
+                <set field="failureCount" from="replay.previous.failureCount"/>
+                <set field="alreadyApplied" from="true"/>
+                <return/>
+            </if>
+            <service-call name="mantle.party.ContactServices.get#PartyContactInfo" out-map="issuerContact" disable-authz="true"
+                    in-map="{partyId:organizationPartyId, emailContactMechPurposeId:'EmailBilling'}"/>
+            <entity-find-one entity-name="mantle.party.PartyDetail" value-field="organization" disable-authz="true">
+                <field-map field-name="partyId" from="organizationPartyId"/></entity-find-one>
+            <set field="fromName" from="organization?.organizationName || organizationPartyId"/>
+            <set field="givenAddresses" from="toAddresses ? String(toAddresses).split(/[,;\n]+/) : null"/>
+            <set field="results" from="[]"/>
+            <iterate list="statements.statementRows" entry="statement">
+                <set field="recipientList" from="Array.from(new Set((givenAddresses ?? statement.recipients)
+                    .map((address) => String(address).trim().toLowerCase()).filter((address) => address)))"/>
+                <set field="statementKey"
+                        from="{customerPartyId:statement.customerPartyId, currencyUomId:statement.currencyUomId}"/>
+                <if condition="!recipientList.length">
+                    <script>results.push(Object.assign({status:'failed', reasonCode:'RECIPIENT_REQUIRED',
+                        errorMessage:'No billing recipient'}, statementKey))</script>
+                    <continue/>
+                </if>
+                <set field="fileName" from="'Statement-' + statement.customerPartyId + '-' + statement.currencyUomId + '.pdf'"/>
+                <set field="pdfBytes" from="ec.resource.xslFoTransform(statement.printHtml, null, null, 'application/pdf')"/>
+                <set field="emailParameters" from="{subject:'Statement from ' + fromName + ' · ' + statement.currencyUomId,
+                    fromAddress:issuerContact.emailAddress, fromName:fromName}"/>
+                <set field="bodyText" from="'Statement as of ' + ec.l10n.format(asOfDate ?? ec.user.nowTimestamp, 'yyyy-MM-dd') +
+                    ': ' + ec.l10n.formatCurrency(statement.closingBalance, statement.currencyUomId)"/>
+                <iterate list="recipientList" entry="recipient">
+                    <set field="validAddress" from="/^[^\s&lt;&gt;@,;]+@[^\s&lt;&gt;@,;]+\.[^\s&lt;&gt;@,;]+$/.test(recipient)"/>
+                    <if condition="!validAddress">
+                        <script>results.push(Object.assign({recipient:recipient, status:'failed', reasonCode:'RECIPIENT_INVALID',
+                            errorMessage:'Invalid recipient address'}, statementKey))</script>
+                        <continue/>
+                    </if>
+                    <service-call name="org.moqui.impl.EmailServices.send#EmailTemplate" out-map="sendOut"
+                            out-map-add-to-existing="false" transaction="force-new" ignore-error="true"
+                            in-map="{emailTemplateId:emailTemplateId, toAddresses:recipient, bodyParameters:emailParameters,
+                                body:statement.printHtml, bodyText:bodyText,
+                                attachments:[{fileName:fileName, contentType:'application/pdf', contentBytes:pdfBytes}]}"/>
+                    <set field="emailMessage" from="null"/>
+                    <if condition="sendOut?.emailMessageId">
+                        <entity-find-one entity-name="moqui.basic.email.EmailMessage" value-field="emailMessage"
+                                disable-authz="true">
+                            <field-map field-name="emailMessageId" from="sendOut.emailMessageId"/></entity-find-one>
+                    </if>
+                    <set field="sendStatus" from="emailMessage?.statusId == 'ES_SENT' ? 'sent' :
+                        ['ES_READY', 'ES_SCHEDULED'].includes(emailMessage?.statusId) ? 'queued' : 'failed'"/>
+                    <script>results.push(Object.assign({recipient:recipient, emailMessageId:emailMessage?.emailMessageId ?? null,
+                        status:sendStatus, reasonCode:(sendStatus == 'failed' ? 'DELIVERY_FAILED' : sendStatus.toUpperCase()),
+                        errorMessage:(sendStatus == 'failed' ? 'The email could not be sent' : null)}, statementKey))</script>
+                </iterate>
+            </iterate>
+            <set field="successCount" from="results.filter((row) => row.status != 'failed').length"/>
+            <set field="failureCount" from="results.length - successCount"/>
+            <set field="alreadyApplied" from="false"/>
+            <script>ec.resource.script(workflow).execute('record', {operationKey:operationKey, operationType:'StatementSend',
+                organizationPartyId:organizationPartyId, requestHash:replay.requestHash,
+                result:{results, successCount, failureCount}})</script>
         </actions>
     </service>
 </services>

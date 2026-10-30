@@ -1,9 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
     <eeca id="IssuedInvoiceContentImmutable" entity="mantle.account.invoice.InvoiceContent"
             on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false"
             get-entire-entity="true" get-original-value="true">
-        <description>Issued delivery evidence keeps its public content identity even when artifact authorization is disabled.</description>
-        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceAttachments.js').guardContent(context)</script></actions>
+        <description>An issued invoice file (the PDF send#Invoice froze and the supporting copies it sent) is kept as
+            sent: the generic file screens and services write InvoiceContent too, so the guard is on the entity, for issued
+            rows only.</description>
+        <condition><expression>isImmutable == 'Y' || originalValue?.isImmutable == 'Y' ||
+            String(contentLocation || originalValue?.contentLocation || '').includes('/invoice-issued/')</expression></condition>
+        <actions>
+            <set field="contentValue" from="{invoiceContentId:invoiceContentId, invoiceId:invoiceId,
+                contentLocation:contentLocation, contentDate:contentDate, userId:userId, isImmutable:isImmutable}"/>
+            <set field="attachments" value="component://mr-mantle/service/mantle/account/InvoiceAttachments.js"/>
+            <script>ec.resource.script(attachments).execute('guardContent',
+                {eecaOperation:eecaOperation, originalValue:originalValue, entityValue:contentValue})</script>
+        </actions>
     </eeca>
 </eecas>

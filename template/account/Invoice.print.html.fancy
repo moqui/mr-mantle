@@ -1,0 +1,105 @@
+<#--
+This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<#-- The invoice or credit memo as issued, printed to PDF and sent by mantle.account.InvoiceServices.send#Invoice: the
+     get#InvoicePrintInfo output with what get#InvoiceOutput adds (issuerName, recipientName, issuerContactInfo,
+     recipientContactInfo, isCredit, invoiceDateText, dueDateText, documentFooter). -->
+<#assign currencyUomId = invoice.currencyUomId>
+<#assign money = (value) => ec.l10n.formatCurrency(toDecimal(value ?? 0), currencyUomId)>
+<#assign lineTotal = (item) => toDecimal(item.quantity ?? 1).multiply(item.amount ?? 0)>
+<#assign title = ec.l10n.localize(isCredit ? 'Credit memo' : 'Invoice')>
+<!doctype html>
+<html><head><meta charset="utf-8"><title>${title} ${invoiceId}</title>
+<style>
+@page { size: A4; margin: 18mm; }
+body { font: 10pt Helvetica, Arial, sans-serif; color: #20252b; }
+h1 { font-size: 18pt; margin: 0 0 6mm; }
+table { border-collapse: collapse; width: 100%; }
+td, th { padding: 4px 6px; text-align: left; vertical-align: top; }
+thead { display: table-header-group; }
+tbody tr { break-inside: avoid; }
+.parties td { width: 50%; padding: 0 6px 6mm 0; }
+.facts th { width: 30mm; font-weight: bold; }
+.lines { margin-top: 6mm; }
+.lines th { border-bottom: 1px solid #20252b; }
+.lines td { border-bottom: 1px solid #ddd; }
+.amount { text-align: right; white-space: nowrap; }
+.total td { border-bottom: none; font-weight: bold; }
+.message { margin-top: 6mm; white-space: pre-wrap; }
+footer { margin-top: 10mm; font-size: 8pt; color: #555; }
+</style></head>
+<body>
+<h1>${title} ${invoiceId}</h1>
+<table class="parties"><tbody><tr>
+    <td>
+        <div><strong>${issuerName}</strong></div>
+        <#if issuerContactInfo?.postalAddress>
+            <div>${issuerContactInfo.postalAddress.address1 ?? ''}</div>
+            <#if issuerContactInfo.postalAddress.address2><div>${issuerContactInfo.postalAddress.address2}</div></#if>
+            <div>${issuerContactInfo.postalAddress.city ?? ''} ${issuerContactInfo.postalAddress.postalCode ?? ''}</div>
+        </#if>
+        <#if issuerContactInfo?.emailAddress><div>${issuerContactInfo.emailAddress}</div></#if>
+    </td>
+    <td>
+        <div>${ec.l10n.localize('Bill to')}</div>
+        <div><strong>${recipientName}</strong></div>
+        <#if recipientContactInfo?.postalAddress>
+            <div>${recipientContactInfo.postalAddress.address1 ?? ''}</div>
+            <#if recipientContactInfo.postalAddress.address2><div>${recipientContactInfo.postalAddress.address2}</div></#if>
+            <div>${recipientContactInfo.postalAddress.city ?? ''} ${recipientContactInfo.postalAddress.postalCode ?? ''}</div>
+        </#if>
+    </td>
+</tr></tbody></table>
+<table class="facts"><tbody>
+    <tr><th>${ec.l10n.localize('Date')}</th><td>${invoiceDateText ?? ''}</td></tr>
+    <#if dueDateText><tr><th>${ec.l10n.localize('Due')}</th><td>${dueDateText}</td></tr></#if>
+    <#if settlementTerm?.description><tr><th>${ec.l10n.localize('Terms')}</th><td>${settlementTerm.description}</td></tr></#if>
+    <#if invoice.referenceNumber><tr><th>${ec.l10n.localize('Reference')}</th><td>${invoice.referenceNumber}</td></tr></#if>
+    <#if invoice.otherPartyOrderId><tr><th>${ec.l10n.localize('Your order')}</th><td>${invoice.otherPartyOrderId}</td></tr></#if>
+    <#if invoice.description><tr><th>${ec.l10n.localize('Description')}</th><td>${invoice.description}</td></tr></#if>
+</tbody></table>
+<table class="lines">
+    <thead><tr>
+        <th>${ec.l10n.localize('Line')}</th>
+        <th>${ec.l10n.localize('Description')}</th>
+        <th class="amount">${ec.l10n.localize('Quantity')}</th>
+        <th class="amount">${ec.l10n.localize('Price')}</th>
+        <th class="amount">${ec.l10n.localize('Amount')}</th>
+    </tr></thead>
+    <tbody>
+    <#list (invoiceItemList ?? []).concat(adjustmentItemList ?? []) as item>
+        <tr>
+            <td>${item.invoiceItemSeqId}</td>
+            <td>${item.description || item.productId || item.itemTypeEnumId}</td>
+            <td class="amount">${String(item.quantity ?? 1)}</td>
+            <td class="amount">${money(item.amount)}</td>
+            <td class="amount">${money(lineTotal(item))}</td>
+        </tr>
+    </#list>
+        <tr class="total">
+            <td></td><td></td><td></td>
+            <td class="amount">${ec.l10n.localize('Total')}</td>
+            <td class="amount">${money(invoiceTotal)}</td>
+        </tr>
+        <#if toDecimal(appliedPaymentsTotal ?? 0).compare(0) != 0>
+            <tr class="total">
+                <td></td><td></td><td></td>
+                <td class="amount">${ec.l10n.localize('Balance due')}</td>
+                <td class="amount">${money(unpaidTotal)}</td>
+            </tr>
+        </#if>
+    </tbody>
+</table>
+<#if invoice.invoiceMessage><div class="message">${invoice.invoiceMessage}</div></#if>
+<#if fromPartyMessage><div class="message">${fromPartyMessage}</div></#if>
+<#if documentFooter><footer>${documentFooter}</footer></#if>
+</body></html>
