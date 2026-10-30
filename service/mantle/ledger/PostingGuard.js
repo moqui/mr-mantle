@@ -348,7 +348,11 @@ function check(p) {
             /mantle\.ledger\.(InvoiceAutoPostServices|PaymentAutoPostServices|AssetAutoPostServices|OtherAutoPostServices|AssetBookServices)\./.test(
                 stack
             )
-        if (!reviewed && !source) throw new Error("REVIEW_REQUIRED: Use a reviewed posting operation")
+        // These controllers retain and recheck the complete application/cash plans before posting corrections.
+        const paymentReviewed = /mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment)(?:\b|$)/.test(
+            stack
+        )
+        if (!reviewed && !source && !paymentReviewed) throw new Error("REVIEW_REQUIRED: Use a reviewed posting operation")
         if (out.captureAccountingDate)
             lib.call("update#" + T, {acctgTransId: p.acctgTransId, accountingDate: out.captureAccountingDate})
     }

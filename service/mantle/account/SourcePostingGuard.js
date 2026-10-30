@@ -71,11 +71,10 @@ function positiveApplications(tx) {
     const cf = ec.entity.conditionFactory
     const conditions = []
     const linked = tx.paymentApplicationId ? one(A, {paymentApplicationId: tx.paymentApplicationId}) : null
+    // Full-single cash headers also name an invoice; unrelated receipts/credits do not consume this payment's cash.
+    const cash = tx.paymentId && cashTypes.includes(tx.acctgTransTypeEnumId)
     for (const [sources, fields] of [
-        [
-            [tx.invoiceId, tx.toInvoiceId, linked?.invoiceId, linked?.toInvoiceId],
-            ["invoiceId", "toInvoiceId"]
-        ],
+        [cash ? [] : [tx.invoiceId, tx.toInvoiceId, linked?.invoiceId, linked?.toInvoiceId], ["invoiceId", "toInvoiceId"]],
         [
             [tx.paymentId, tx.toPaymentId, linked?.paymentId, linked?.toPaymentId],
             ["paymentId", "toPaymentId"]

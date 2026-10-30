@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-facade-xml type="seed-initial">
+    <moqui.security.user.NotificationTopic topic="PaymentValidation" inboxEnumId="NinNotifications" description="Payment to validate" typeString="info"
+        showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+        approveServiceName="mantle.account.PaymentServices.approve#PaymentValidationNotice"
+        refuseServiceName="mantle.account.PaymentServices.refuse#PaymentValidationNotice" refuseReasonRequired="Y"
+        titleTemplate="Validate payment ${paymentId}"/>
+    <moqui.service.job.ServiceJob jobName="retry_PaymentValidationNotices" description="Retry payment validation notices"
+        serviceName="mantle.account.PaymentNotificationServices.process#PaymentValidationNotices" cronExpression="0 */5 * * * ?" paused="Y"/>
+</entity-facade-xml>

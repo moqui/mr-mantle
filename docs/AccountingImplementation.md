@@ -38,3 +38,32 @@ stored totals are absent. The parent record's permission and organization checks
 
 Document projections include public or actor-owned counterparty names after the parent record is authorized;
 other users' private names are omitted even when artifact authorization is disabled.
+
+## Receivables, settlement and payment lifecycle
+
+P4 implements native invoice state guards, durable sending/batches and statements. P5a implements authoritative
+open items, retained atomic settlement and automatic application, with exact retry, actual source backing, SQL posting
+days and adopted application/source guards. Their acceptance records and commits are in
+[Accounting implementation](../../mr-boss/docs/AccountingImplementation.md).
+
+P5b1 adds native payment list/detail/method reads, reviewed drafts, validate/deliver/confirm/cancel/void and selected
+unapplication. Authoritative revisions include actual source/method/posting evidence. Direct cash restoration reverses
+the complete direct set and posts its exact unapplied replacement at the unchanged original SQL day. Ordinary release
+and void use the actual applications and separate postings; closed history refuses atomically. Exact state/unapply
+controllers join PostingGuard validation while the same actor's unreviewed Ledger reversal remains refused.
+
+Issued payment outputs and frozen evidence retain immutable resource identities, versions, blobs and bytes. Native
+archive/private-drive guards also cover raw/generic writes, shares, public tokens, searches and aliased locations.
+First-reference issuance and raw mutations serialize on stable archive ancestors, including shared deduplicated blobs;
+new unpublished upload identities remain compatible with independent storage transactions. Real races verify exact
+hashes and ordinary source replacement; an isolated control without the shared blob lock reproduces corruption.
+
+PaymentValidation stores event-bound publication and per-recipient delivery identity, independent permission/private/
+organization checks, guarded decisions and durable retirement. Commit workers retain the immutable actor instead of
+depending on interactive login state. Native services and tests have no BOSS dependency. Provider operations and
+refunds/transfers remain the subsequent P5b2/P5b3 contracts; their actions are unavailable in this slice.
+
+Final native server gate: 1,074 passed, the same four reproduced baseline failures, 17 skipped, 1,095 features across
+117 specs. All 75 added native cases pass. BOSS's full suite passes 1,145 with no failures and five skips; all seven
+payment browser walks and independent output review pass. XML validation and unchanged screen-lint findings are recorded
+with the app's verification. Current user scope completes P6 and pauses before P7.

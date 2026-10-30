@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+    <seca id="PaymentDraftValidationOutbox" service="mantle.account.PaymentServices.create#PaymentDraft" when="post-service" run-on-error="false">
+        <actions><service-call name="mantle.account.PaymentNotificationServices.prepare#PaymentValidationNotice" in-map="context"/></actions>
+    </seca>
+    <seca id="PaymentEditValidationOutbox" service="mantle.account.PaymentServices.store#PaymentDraft" when="post-service" run-on-error="false">
+        <actions><service-call name="mantle.account.PaymentNotificationServices.prepare#PaymentValidationNotice" in-map="context"/></actions>
+    </seca>
+    <seca id="PaymentDraftValidationPublish" service="mantle.account.PaymentServices.create#PaymentDraft" when="tx-commit" run-on-error="false">
+        <condition><expression>validationRequired &amp;&amp; !!validationEventId</expression></condition>
+        <actions><service-call name="mantle.account.PaymentNotificationServices.process#PaymentValidationNotices" in-map="{validationEventId:validationEventId}"/></actions>
+    </seca>
+    <seca id="PaymentEditValidationPublish" service="mantle.account.PaymentServices.store#PaymentDraft" when="tx-commit" run-on-error="false">
+        <condition><expression>validationRequired &amp;&amp; !!validationEventId</expression></condition>
+        <actions><service-call name="mantle.account.PaymentNotificationServices.process#PaymentValidationNotices" in-map="{validationEventId:validationEventId}"/></actions>
+    </seca>
+    <seca id="PaymentEditValidationRetire" service="mantle.account.PaymentServices.store#PaymentDraft" when="tx-commit" run-on-error="false">
+        <actions><service-call name="mantle.account.PaymentNotificationServices.retire#PaymentValidationNotices" in-map="{paymentId:paymentId}"/></actions>
+    </seca>
+    <seca id="PaymentStateValidationRetire" service="mantle.account.PaymentServices.change#PaymentState" when="tx-commit" run-on-error="false">
+        <actions><service-call name="mantle.account.PaymentNotificationServices.retire#PaymentValidationNotices" in-map="{paymentId:paymentId}"/></actions>
+    </seca>
+    <seca id="PaymentApprovedValidationRetire" service="mantle.account.PaymentServices.approve#PaymentValidationNotice" when="tx-commit" run-on-error="false">
+        <actions><service-call name="mantle.account.PaymentNotificationServices.retire#PaymentValidationNotices" in-map="{paymentId:paymentId}"/></actions>
+    </seca>
+    <seca id="PaymentRefusedValidationRetire" service="mantle.account.PaymentServices.refuse#PaymentValidationNotice" when="tx-commit" run-on-error="false">
+        <actions><service-call name="mantle.account.PaymentNotificationServices.retire#PaymentValidationNotices" in-map="{paymentId:paymentId}"/></actions>
+    </seca>
+</secas>

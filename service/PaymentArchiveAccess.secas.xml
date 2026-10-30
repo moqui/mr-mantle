@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+    <seca id="PaymentArchiveDriveAccess" service="org.moqui.impl.FileServices.get#DriveAccess" when="post-service" run-on-error="false">
+        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentDriveGuard.js').access(context)</script></actions>
+    </seca>
+    <seca id="PaymentArchiveFolderList" service="org.moqui.impl.FileServices.list#Folder" when="post-service" run-on-error="false">
+        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentDriveGuard.js').listing(context, 'fileList')</script></actions>
+    </seca>
+    <seca id="PaymentArchiveSearchScope" service="org.moqui.impl.FileServices.find#Resources" when="pre-service" run-on-error="false">
+        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentDriveGuard.js').search(context)</script></actions>
+    </seca>
+    <seca id="PaymentArchiveZip" service="org.moqui.impl.FileServices.download#Zip" when="pre-service" run-on-error="false">
+        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentDriveGuard.js').recursive(context)</script></actions>
+    </seca>
+    <seca id="PaymentArchiveExport" service="org.moqui.impl.FileServices.export#Drive" when="pre-service" run-on-error="false">
+        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentDriveGuard.js').recursive(context)</script></actions>
+    </seca>
+    <seca id="PaymentArchiveCopy" service="org.moqui.impl.FileServices.copy#Resource" when="pre-service" run-on-error="false">
+        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentDriveGuard.js').recursive(context)</script></actions>
+    </seca>
+    <seca id="PaymentArchiveShare" service="org.moqui.impl.FileServices.share#Resource" when="pre-service" run-on-error="false">
+        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentDriveGuard.js').recursive(context)</script></actions>
+    </seca>
+    <seca id="PaymentArchivePublicToken" service="org.moqui.impl.FileServices.check#PublicShareToken" when="post-service" run-on-error="false">
+        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentDriveGuard.js').publicToken(context)</script></actions>
+    </seca>
+</secas>

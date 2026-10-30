@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
+    <eeca id="PaymentIssuedContentInvariant" entity="mantle.account.payment.PaymentContent" on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false" get-entire-entity="true" get-original-value="true">
+        <description>Protect issued payment bytes and file identity independently of caller flags and artifact authorization.</description>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentContentGuard.js').guardContent(context)</script>
+        </actions>
+    </eeca>
+    <eeca id="PaymentIssuedOutputInvariant" entity="mantle.account.payment.PaymentIssuedOutput" on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false" get-entire-entity="true" get-original-value="true">
+        <description>Only a reviewed delivery creates immutable payment output records.</description>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentContentGuard.js').guardOutput(context)</script>
+        </actions>
+    </eeca>
+    <eeca id="PaymentLifecycleEvidenceInvariant" entity="mantle.account.payment.PaymentLifecycleEvent" on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false" get-entire-entity="true" get-original-value="true">
+        <description>Lifecycle action and evidence history comes from the reviewed native writer and retains its original identity.</description>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentContentGuard.js').guardEvent(context)</script>
+        </actions>
+    </eeca>
+</eecas>

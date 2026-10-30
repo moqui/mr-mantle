@@ -436,7 +436,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="Payment">
         <in-parameters>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
+                <exclude field-name="accountingDate"/>
+                <exclude field-name="financeOrganizationPartyId"/>
+                <exclude field-name="financeDirection"/>
+                <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
             <parameter name="paymentTypeEnumId" default-value="PtInvoicePayment"/>
@@ -464,7 +468,11 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="paymentId"><description>Not required, used to exclude current Payment from total of other payments</description></parameter>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
+                <exclude field-name="accountingDate"/>
+                <exclude field-name="financeOrganizationPartyId"/>
+                <exclude field-name="financeDirection"/>
+                <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="settlementAccountingDate"/>
             </auto-parameters>
         </in-parameters>
         <out-parameters><auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk"/></out-parameters>
@@ -578,7 +586,11 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="invoiceId" required="true"/>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
+                <exclude field-name="accountingDate"/>
+                <exclude field-name="financeOrganizationPartyId"/>
+                <exclude field-name="financeDirection"/>
+                <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="overrideGlAccountId"/><exclude field-name="acctgTransResultEnumId"/>
                 <exclude field-name="reconcileStatusId"/><exclude field-name="paymentMethodFileId"/></auto-parameters>
             <parameter name="paymentTypeEnumId"/>
@@ -646,7 +658,11 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="paymentId" required="true"><description>The ID of the original Payment</description></parameter>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
+                <exclude field-name="accountingDate"/>
+                <exclude field-name="financeOrganizationPartyId"/>
+                <exclude field-name="financeDirection"/>
+                <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="fromPartyId"/><exclude field-name="toPartyId"/><exclude field-name="forInvoiceId"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/>
@@ -797,7 +813,11 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="paymentId" required="true"/>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
+                <exclude field-name="accountingDate"/>
+                <exclude field-name="financeOrganizationPartyId"/>
+                <exclude field-name="financeDirection"/>
+                <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
         </in-parameters>
@@ -2100,6 +2120,9 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions>
             <if condition="contentFile != null &amp;&amp; contentFile.size &gt; 0">
+                <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentContentGuard.js').assertMutableContent(context)</script>
+            </if>
+            <if condition="contentFile != null &amp;&amp; contentFile.size &gt; 0">
                 <entity-find-one entity-name="mantle.account.payment.PaymentContent" value-field="paymentContent"/>
                 <service-call name="mantle.account.PaymentServices.save#PaymentContentFile" out-map="context"
                         in-map="Object.assign({}, context, {paymentId:paymentContent.paymentId, saveContentLocation:false})"/>
@@ -2116,6 +2139,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="contentLocation"/></out-parameters>
         <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentContentGuard.js').assertMutableContent(context)</script>
             <set field="filename" from="contentFile.getName()"/>
             <!-- the content type, and so text or not, comes from the file name's extension -->
             <if condition="ec.resource.getLocationReference('dbresource://' + filename).isText()"><then>
@@ -2314,4 +2338,466 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
+    <!-- Explicit reviewed payment lifecycle; legacy payment services above retain their contracts. -->
+    <service verb="find" noun="Payments" allow-remote="false">
+        <description>Find authorized payments and current application balances; edit authority alone cannot browse.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="queue"/>
+            <parameter name="partyId"/>
+            <parameter name="paymentInstrumentEnumId"/>
+            <parameter name="statusId"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="fromDay"/>
+            <parameter name="throughDay"/>
+            <parameter name="text"/>
+            <parameter name="selectedPaymentIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="totals" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentWorkflow.js').payments(context))</script>
+        </actions>
+    </service>
+
+    <service verb="get" noun="PaymentFinanceDetail" allow-remote="false">
+        <description>Read narrow payment identity, masked methods and authorized evidence; restricted financial values are omitted.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="payment" type="Map"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="totals" type="Map"/>
+            <parameter name="maskedMethodRows" type="List"/>
+            <parameter name="applicationRows" type="List"/>
+            <parameter name="refundRows" type="List"/>
+            <parameter name="gatewayRows" type="List"/>
+            <parameter name="ledgerRows" type="List"/>
+            <parameter name="contentRows" type="List"/>
+            <parameter name="historyRows" type="List"/>
+            <parameter name="sourceRows" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="reasons" type="List"/>
+            <parameter name="refundableAvailable" type="Boolean"/>
+            <parameter name="refundableReason"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+            <parameter name="evidenceRows" type="List"/>
+            <parameter name="evidenceIncomplete" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentWorkflow.js').paymentDetail(context))</script>
+        </actions>
+    </service>
+
+    <service verb="find" noun="PaymentMethods" allow-remote="false">
+        <description>Search active owned payment methods and return masked identities and reviewed versions, never banking credentials.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="cashDirection"/>
+            <parameter name="methodRole"/>
+            <parameter name="partyId"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="text"/>
+            <parameter name="selectedPaymentMethodIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="totals" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentWorkflow.js').methods(context))</script>
+        </actions>
+    </service>
+
+    <service verb="define" noun="PaymentDraftParameters" type="interface">
+        <description>Explicit draft payment fields and reviewed method identities; derived parties, status, SQL day and ledger accounts are not caller inputs.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="cashDirection" required="true"/>
+            <parameter name="partyId" required="true"/>
+            <parameter name="amount" type="BigDecimal" required="true"/>
+            <parameter name="currencyUomId" required="true"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="paymentInstrumentEnumId" required="true"/>
+            <parameter name="organizationPaymentMethodId" required="true"/>
+            <parameter name="organizationMethodVersion" required="true"/>
+            <parameter name="counterpartyPaymentMethodId"/>
+            <parameter name="counterpartyMethodVersion"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="comments"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+    </service>
+
+    <service verb="create" noun="PaymentDraft" allow-remote="false">
+        <description>Create an explicitly scoped proposed receipt or disbursement with canonical day and an idempotent operation identity.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentDraftParameters"/>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="statusId"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+            <parameter name="validationRequired" type="Boolean"/>
+            <parameter name="validationEventId"/>
+            <parameter name="validationSourceVersion"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').createDraft(context))</script>
+        </actions>
+    </service>
+
+    <service verb="store" noun="PaymentDraft" allow-remote="false">
+        <description>Update a reviewed mutable proposed payment; posted cash, applications, gateway instructions and stale versions refuse.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentDraftParameters"/>
+        <in-parameters>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="sourceVersion" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="statusId"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+            <parameter name="validationRequired" type="Boolean"/>
+            <parameter name="validationEventId"/>
+            <parameter name="validationSourceVersion"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').storeDraft(context))</script>
+        </actions>
+    </service>
+
+    <service verb="preview" noun="PaymentState" allow-remote="false">
+        <description>Review an explicit finite payment transition, optional local evidence and exact posting effects before confirmation.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="sourceVersion" required="true"/>
+            <parameter name="action" required="true"/>
+            <parameter name="settlementDate" type="Timestamp"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="reason"/>
+            <parameter name="evidenceContentIdList" type="List"/>
+            <parameter name="evidenceVersions" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="operationKey"/>
+            <parameter name="expiresAt" type="Timestamp"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="status"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="action"/>
+            <parameter name="before" type="Map"/>
+            <parameter name="after" type="Map"/>
+            <parameter name="effectiveDateText"/>
+            <parameter name="settlementDateText"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="reason"/>
+            <parameter name="evidenceRows" type="List"/>
+            <parameter name="applicationEffects" type="List"/>
+            <parameter name="sourceVersions" type="Map"/>
+            <parameter name="ledgerPreview" type="List"/>
+            <parameter name="paymentSummary" type="Map"/>
+            <parameter name="postingSummary" type="Map"/>
+            <parameter name="beforeBalances" type="List"/>
+            <parameter name="afterBalances" type="List"/>
+            <parameter name="blockers" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="results" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').previewState(context))</script>
+        </actions>
+    </service>
+
+    <service verb="get" noun="PaymentStatePreview" allow-remote="false">
+        <description>Read the retained owner-scoped payment review with current-authority projection; no financial state changes.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="previewId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="operationKey"/>
+            <parameter name="expiresAt" type="Timestamp"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="status"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="action"/>
+            <parameter name="before" type="Map"/>
+            <parameter name="after" type="Map"/>
+            <parameter name="effectiveDateText"/>
+            <parameter name="settlementDateText"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="reason"/>
+            <parameter name="evidenceRows" type="List"/>
+            <parameter name="applicationEffects" type="List"/>
+            <parameter name="sourceVersions" type="Map"/>
+            <parameter name="ledgerPreview" type="List"/>
+            <parameter name="paymentSummary" type="Map"/>
+            <parameter name="postingSummary" type="Map"/>
+            <parameter name="beforeBalances" type="List"/>
+            <parameter name="afterBalances" type="List"/>
+            <parameter name="blockers" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="results" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').getStatePreview(context))</script>
+        </actions>
+    </service>
+
+    <service verb="change" noun="PaymentState" allow-remote="false">
+        <description>Confirm only the retained payment transition under locks; replay is exact and posting or evidence mismatch rolls back the operation.</description>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="statusId"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+            <parameter name="validationRequired" type="Boolean"/>
+            <parameter name="validationEventId"/>
+            <parameter name="validationSourceVersion"/>
+            <parameter name="action"/>
+            <parameter name="settlementDateText"/>
+            <parameter name="applicationResults" type="List"/>
+            <parameter name="acctgTransIds" type="List"/>
+            <parameter name="paymentLifecycleEventId"/>
+            <parameter name="reasonCode"/>
+            <parameter name="outputId"/>
+            <parameter name="outputRows" type="List"/>
+            <parameter name="originalAcctgTransIds" type="List"/>
+            <parameter name="reversalAcctgTransIds" type="List"/>
+            <parameter name="replacementAcctgTransIds" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').changeState(context))</script>
+        </actions>
+    </service>
+    <service verb="preview" noun="PaymentUnapply" allow-remote="false">
+        <description>Review selected original-day application reversals and any required direct-cash replacement before mutation.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="sourceVersion" required="true"/>
+            <parameter name="paymentApplicationIdList" type="List" required="true"/>
+            <parameter name="applicationVersions" type="Map" required="true"/>
+            <parameter name="reason" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="operationKey"/>
+            <parameter name="expiresAt" type="Timestamp"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="status"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="action"/>
+            <parameter name="before" type="Map"/>
+            <parameter name="after" type="Map"/>
+            <parameter name="effectiveDateText"/>
+            <parameter name="settlementDateText"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="reason"/>
+            <parameter name="evidenceRows" type="List"/>
+            <parameter name="applicationEffects" type="List"/>
+            <parameter name="beforeBalances" type="List"/>
+            <parameter name="afterBalances" type="List"/>
+            <parameter name="sourceVersions" type="Map"/>
+            <parameter name="ledgerPreview" type="List"/>
+            <parameter name="paymentSummary" type="Map"/>
+            <parameter name="postingSummary" type="Map"/>
+            <parameter name="blockers" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="results" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').previewUnapply(context))</script>
+        </actions>
+    </service>
+
+    <service verb="get" noun="PaymentUnapplyPreview" allow-remote="false">
+        <description>Read an immutable owner-scoped unapplication review with current permissions.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="previewId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="operationKey"/>
+            <parameter name="expiresAt" type="Timestamp"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="status"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="action"/>
+            <parameter name="before" type="Map"/>
+            <parameter name="after" type="Map"/>
+            <parameter name="effectiveDateText"/>
+            <parameter name="settlementDateText"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="reason"/>
+            <parameter name="evidenceRows" type="List"/>
+            <parameter name="applicationEffects" type="List"/>
+            <parameter name="beforeBalances" type="List"/>
+            <parameter name="afterBalances" type="List"/>
+            <parameter name="sourceVersions" type="Map"/>
+            <parameter name="ledgerPreview" type="List"/>
+            <parameter name="paymentSummary" type="Map"/>
+            <parameter name="postingSummary" type="Map"/>
+            <parameter name="blockers" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="results" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').getUnapplyPreview(context))</script>
+        </actions>
+    </service>
+
+    <service verb="unapply" noun="ReviewedPayment" allow-remote="false">
+        <description>Confirm only a retained application correction; exact history, dates, permissions and balances are rechecked under locks.</description>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="statusId"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="action"/>
+            <parameter name="applicationResults" type="List"/>
+            <parameter name="acctgTransIds" type="List"/>
+            <parameter name="originalAcctgTransIds" type="List"/>
+            <parameter name="reversalAcctgTransIds" type="List"/>
+            <parameter name="replacementAcctgTransIds" type="List"/>
+            <parameter name="paymentLifecycleEventId"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').unapplyReviewed(context))</script>
+        </actions>
+    </service>
+
+    <service verb="get" noun="PaymentOutput" allow-remote="false">
+        <description>Read the exact issued payment document; check output requires treasury authority and reading never issues a check number.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId"/>
+            <parameter name="outputType"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="outputId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="outputId"/>
+            <parameter name="outputType"/>
+            <parameter name="approvedHtml"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="outputSourceVersion"/>
+            <parameter name="contentHash"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+            <parameter name="contentSize" type="Long"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="summary" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentOutput.js').getOutput(context))</script>
+        </actions>
+    </service>
+    <service verb="approve" noun="PaymentValidationNotice" allow-remote="false">
+        <description>Resolve only a real assigned payment validation notice against its immutable native request and current financial authority.</description>
+        <in-parameters>
+            <parameter name="recordEntityName" required="true"/>
+            <parameter name="recordId" required="true"/>
+            <parameter name="message" type="Map" required="true"/>
+            <parameter name="notificationMessageId" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="statusId"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="validationEventId"/>
+            <parameter name="paymentLifecycleEventId"/>
+            <parameter name="decision"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').approveValidation(context))</script>
+        </actions>
+    </service>
+    <service verb="refuse" noun="PaymentValidationNotice" allow-remote="false">
+        <description>Resolve only a real assigned payment validation notice against its immutable native request and current financial authority.</description>
+        <in-parameters>
+            <parameter name="recordEntityName" required="true"/>
+            <parameter name="recordId" required="true"/>
+            <parameter name="message" type="Map" required="true"/>
+            <parameter name="notificationMessageId" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+            <parameter name="statusId"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="validationEventId"/>
+            <parameter name="paymentLifecycleEventId"/>
+            <parameter name="decision"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').refuseValidation(context))</script>
+        </actions>
+    </service>
 </services>

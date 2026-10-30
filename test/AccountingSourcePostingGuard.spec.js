@@ -324,6 +324,102 @@ feature("a real full-single original cash posting retains its application ID and
     }
 })
 
+feature("a direct cash #action depends on its own applications while the shared invoice and other cash stay protected", {
+    where: [{action: "unpost"}, {action: "reverse"}],
+    when({action}) {
+        const h = helper(),
+            invoiceId = h.invoice(f, "100"),
+            made = h.call("mantle.account.PaymentServices.create#InvoicePayment", {
+                invoiceId,
+                amount: "60",
+                effectiveDate: f.timestamp,
+                paymentStatusId: "PmntDelivered",
+                paymentInstrumentEnumId: "PiCompanyCheck"
+            }),
+            otherPaymentId = h.payment(f, "60")
+        const cash = h.lib
+            .rows(T, {paymentId: made.paymentId})
+            .find(tx => tx.acctgTransTypeEnumId === "AttIncomingPayment" && !tx.reverseOfAcctgTransId)
+        const invoice = h.lib
+                .rows(T, {invoiceId})
+                .find(tx => !tx.paymentId && !tx.paymentApplicationId && !tx.reverseOfAcctgTransId),
+            otherCash = h.lib
+                .rows(T, {paymentId: otherPaymentId})
+                .find(tx => !tx.paymentApplicationId && !tx.reverseOfAcctgTransId)
+        assert(
+            cash && cash.isPosted === "Y" && cash.paymentApplicationId,
+            "The direct cash needs its real full-single posting and application identity"
+        )
+        assert(
+            invoice?.isPosted === "Y" && otherCash?.isPosted === "Y",
+            "The shared invoice and independent cash need actual posted backing"
+        )
+        const other = apply({invoiceId, paymentId: otherPaymentId}, "SOURCE_GUARD_ISOLATE_" + action),
+            request = mutation(action, cash),
+            before = Object.assign(counts(), {audit: h.auditCount()}),
+            originalCash = snapshot(cash.acctgTransId)
+        const ownRefusal = h.rejected(request.service, request.input),
+            afterOwnRefusal = Object.assign(counts(), {audit: h.auditCount()}),
+            retainedCash = snapshot(cash.acctgTransId)
+        h.clearImportedApplication(cash.paymentApplicationId, invoiceId)
+        const protectedBefore = Object.assign(counts(), {audit: h.auditCount()}),
+            originalInvoice = snapshot(invoice.acctgTransId),
+            originalOtherCash = snapshot(otherCash.acctgTransId)
+        const refusals = [invoice, otherCash].map(source => {
+            const blocked = mutation(action, source)
+            return h.rejected(blocked.service, blocked.input)
+        })
+        const protectedAfter = Object.assign(counts(), {audit: h.auditCount()}),
+            permitted = freeMutation(action, cash)
+        return {
+            ownRefusal,
+            before,
+            afterOwnRefusal,
+            originalCash,
+            retainedCash,
+            refusals,
+            protectedBefore,
+            protectedAfter,
+            originalInvoice,
+            retainedInvoice: snapshot(invoice.acctgTransId),
+            originalOtherCash,
+            retainedOtherCash: snapshot(otherCash.acctgTransId),
+            ownApplication: row(A, {paymentApplicationId: cash.paymentApplicationId}),
+            otherApplication: row(A, {paymentApplicationId: other.paymentApplicationId}),
+            permitted
+        }
+    },
+    then({
+        ownRefusal,
+        before,
+        afterOwnRefusal,
+        originalCash,
+        retainedCash,
+        refusals,
+        protectedBefore,
+        protectedAfter,
+        originalInvoice,
+        retainedInvoice,
+        originalOtherCash,
+        retainedOtherCash,
+        ownApplication,
+        otherApplication,
+        permitted
+    }) {
+        ownRefusal.includes("SOURCE_HAS_APPLICATIONS")
+        JSON.stringify(afterOwnRefusal) == JSON.stringify(before)
+        retainedCash == originalCash
+        ownApplication.amountApplied == 0
+        otherApplication.amountApplied == 10
+        refusals.length == 2
+        refusals.every(message => message.includes("SOURCE_HAS_APPLICATIONS"))
+        JSON.stringify(protectedAfter) == JSON.stringify(protectedBefore)
+        retainedInvoice == originalInvoice
+        retainedOtherCash == originalOtherCash
+        permitted == true
+    }
+})
+
 feature("generic application creation and raw #kind unpost cannot commit an unbacked positive application", {
     where: [{kind: "invoice"}, {kind: "cash"}],
     when({kind}) {
