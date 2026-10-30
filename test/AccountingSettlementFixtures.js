@@ -139,9 +139,7 @@ function user(f, suffix, permissions) {
 function directPayment(f, invoiceId, amount = "10", postedAmount = amount) {
     const paymentId = payment(f, postedAmount)
     // Imported inconsistent legacy source: genuine cash posted for postedAmount, but the document claims amount.
-    const record = lib.one("mantle.account.payment.Payment", {paymentId})
-    record.set("amount", toDecimal(amount))
-    record.update()
+    call("update#mantle.account.payment.Payment", {paymentId, amount: toDecimal(amount)})
     return paymentId
 }
 function clearImportedApplication(paymentApplicationId, invoiceIdToRestore = null) {

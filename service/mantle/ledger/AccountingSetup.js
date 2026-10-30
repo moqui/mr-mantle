@@ -25,6 +25,7 @@ const preferenceFields = [
     "invoiceApprovalRequired",
     "paymentAutoApplicationEnabled",
     "settlementApplicationGuardEnabled",
+    "paymentGatewayWorkflowEnabled",
     "inventoryRevaluationEnabled",
     "invoiceDocumentTemplate",
     "paymentDocumentTemplate",
@@ -213,12 +214,16 @@ function storePreferences(p) {
         "invoiceApprovalRequired",
         "paymentAutoApplicationEnabled",
         "settlementApplicationGuardEnabled",
+        "paymentGatewayWorkflowEnabled",
         "inventoryRevaluationEnabled",
         "realTimeGlSummary"
     ]) {
         if (values[field] != null && !["Y", "N"].includes(values[field]))
             throw new Error("Choose Enabled or Disabled for " + field)
     }
+    const effective = Object.assign({}, lib.preference(org), map(old), values)
+    if (effective.paymentGatewayWorkflowEnabled === "Y" && effective.settlementApplicationGuardEnabled !== "Y")
+        throw new Error("GATEWAY_SETTLEMENT_REQUIRED: Enable settlement controls before reviewed payment processing")
     for (const field of ["baseCurrencyUomId", "localCurrencyUomId"]) if (values[field]) lib.currency(values[field])
     const hasHistory =
         find("mantle.ledger.transaction.AcctgTrans", {

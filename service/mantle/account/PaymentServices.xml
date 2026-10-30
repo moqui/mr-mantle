@@ -440,99 +440,121 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="gatewayInstructionId"/>
+                <exclude field-name="gatewayAttemptId"/>
+                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
-                <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
-                <exclude field-name="paymentMethodFileId"/></auto-parameters>
+                <exclude field-name="acctgTransResultEnumId"/>
+                <exclude field-name="reconcileStatusId"/>
+                <exclude field-name="paymentMethodFileId"/>
+            </auto-parameters>
             <parameter name="paymentTypeEnumId" default-value="PtInvoicePayment"/>
             <parameter name="statusId" default-value="PmntPromised"/>
             <parameter name="fromPartyId" required="true"/>
             <parameter name="toPartyId" required="true"/>
             <parameter name="amount" type="BigDecimal" default="0.0"/>
-            <parameter name="amountUomId"><description>Defaults to OrderHeader.currencyUomId if there is an orderId, or
-                PartyAcctgPreference.baseCurrencyUomId for whichever Party (from or to) is an internal organization with an accounting preference record.</description></parameter>
-            <parameter name="effectiveDate" type="Timestamp"><description>No default value, allow null until effectiveDate known, must be set before Delivered status</description></parameter>
+            <parameter name="amountUomId">
+                <description>Defaults to OrderHeader.currencyUomId if there is an orderId, or
+                PartyAcctgPreference.baseCurrencyUomId for whichever Party (from or to) is an internal organization with an accounting preference record.</description>
+            </parameter>
+            <parameter name="effectiveDate" type="Timestamp">
+                <description>No default value, allow null until effectiveDate known, must be set before Delivered status</description>
+            </parameter>
             <parameter name="visitId" default="ec.user.visitId"/>
         </in-parameters>
-        <out-parameters><parameter name="paymentId"/></out-parameters>
+        <out-parameters>
+            <parameter name="paymentId"/>
+        </out-parameters>
         <actions>
             <service-call name="mantle.account.PaymentServices.set#PaymentAutoInfo" in-map="context" out-map="context"/>
             <set field="initialStatusId" from="statusId == 'PmntProposed' ? statusId : 'PmntPromised'"/>
             <service-call name="create#mantle.account.payment.Payment" in-map="Object.assign({}, context, {statusId:initialStatusId})" out-map="context"/>
             <!-- if target status is PmntConfirmed go to PmntDelivered first for GL posting, etc -->
             <if condition="statusId == 'PmntConfirmed'">
-                <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:paymentId, statusId:'PmntDelivered'}"/></if>
+                <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:paymentId, statusId:'PmntDelivered'}"/>
+            </if>
             <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:paymentId, statusId:statusId}"/>
         </actions>
     </service>
     <service verb="set" noun="PaymentAutoInfo">
         <in-parameters>
-            <parameter name="paymentId"><description>Not required, used to exclude current Payment from total of other payments</description></parameter>
+            <parameter name="paymentId">
+                <description>Not required, used to exclude current Payment from total of other payments</description>
+            </parameter>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
                 <exclude field-name="accountingDate"/>
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="gatewayInstructionId"/>
+                <exclude field-name="gatewayAttemptId"/>
+                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
             </auto-parameters>
         </in-parameters>
-        <out-parameters><auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk"/></out-parameters>
+        <out-parameters>
+            <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk"/>
+        </out-parameters>
         <actions>
             <entity-find entity-name="mantle.party.PartyRole" list="fromOrgInternalList">
                 <econdition field-name="partyId" from="fromPartyId"/>
-                <econdition field-name="roleTypeId" value="OrgInternal"/></entity-find>
+                <econdition field-name="roleTypeId" value="OrgInternal"/>
+            </entity-find>
             <set field="isOutgoing" from="fromOrgInternalList.length &gt; 0"/>
-
             <if condition="!paymentInstrumentEnumId &amp;&amp; finAccountId">
-                <set field="paymentInstrumentEnumId" value="PiFinancialAccount"/></if>
-
+                <set field="paymentInstrumentEnumId" value="PiFinancialAccount"/>
+            </if>
             <if condition="paymentMethodId">
-                <entity-find-one entity-name="mantle.account.method.PaymentMethod" value-field="paymentMethod"/></if>
+                <entity-find-one entity-name="mantle.account.method.PaymentMethod" value-field="paymentMethod"/>
+            </if>
             <if condition="toPaymentMethodId">
                 <entity-find-one entity-name="mantle.account.method.PaymentMethod" value-field="toPaymentMethod">
-                    <field-map field-name="paymentMethodId" from="toPaymentMethodId"/></entity-find-one>
+                    <field-map field-name="paymentMethodId" from="toPaymentMethodId"/>
+                </entity-find-one>
             </if>
-
-            <if condition="isOutgoing"><then>
-                <!-- outgoing payment, get paymentInstrumentEnumId and paymentGatewayConfigId from toPaymentMethod -->
-
-                <if condition="!paymentInstrumentEnumId &amp;&amp; toPaymentMethod != null">
-                    <!-- may be more than one, just pick first by description for consistency -->
-                    <entity-find entity-name="moqui.basic.Enumeration" list="instrEnumList">
-                        <econdition field-name="relatedEnumId" from="toPaymentMethod.paymentMethodTypeEnumId"/>
-                        <order-by field-name="description"/>
-                    </entity-find>
-                    <set field="paymentInstrumentEnumId" from="instrEnumList.length ? instrEnumList[0].enumId : null"/>
-                </if>
-
-                <!-- see if associated PaymentMethod has a paymentGatewayConfigId first, override Payment or other settings, override parameter too -->
-                <if condition="toPaymentMethod?.paymentGatewayConfigId">
-                    <set field="paymentGatewayConfigId" from="toPaymentMethod.paymentGatewayConfigId"/></if>
-            </then><else>
-                <!-- incoming payment, get paymentInstrumentEnumId and paymentGatewayConfigId from paymentMethod -->
-
-                <if condition="!paymentInstrumentEnumId &amp;&amp; paymentMethod != null">
-                    <!-- may be more than one, just pick first by description for consistency -->
-                    <entity-find entity-name="moqui.basic.Enumeration" list="instrEnumList">
-                        <econdition field-name="relatedEnumId" from="paymentMethod.paymentMethodTypeEnumId"/>
-                        <order-by field-name="description"/>
-                    </entity-find>
-                    <set field="paymentInstrumentEnumId" from="instrEnumList.length ? instrEnumList[0].enumId : null"/>
-                </if>
-
-                <!-- see if associated PaymentMethod has a paymentGatewayConfigId first, override Payment or other settings, override parameter too -->
-                <if condition="paymentMethod?.paymentGatewayConfigId">
-                    <set field="paymentGatewayConfigId" from="paymentMethod.paymentGatewayConfigId"/></if>
-            </else></if>
-
+            <if condition="isOutgoing">
+                <then>
+                    <!-- outgoing payment, get paymentInstrumentEnumId and paymentGatewayConfigId from toPaymentMethod -->
+                    <if condition="!paymentInstrumentEnumId &amp;&amp; toPaymentMethod != null">
+                        <!-- may be more than one, just pick first by description for consistency -->
+                        <entity-find entity-name="moqui.basic.Enumeration" list="instrEnumList">
+                            <econdition field-name="relatedEnumId" from="toPaymentMethod.paymentMethodTypeEnumId"/>
+                            <order-by field-name="description"/>
+                        </entity-find>
+                        <set field="paymentInstrumentEnumId" from="instrEnumList.length ? instrEnumList[0].enumId : null"/>
+                    </if>
+                    <!-- see if associated PaymentMethod has a paymentGatewayConfigId first, override Payment or other settings, override parameter too -->
+                    <if condition="toPaymentMethod?.paymentGatewayConfigId">
+                        <set field="paymentGatewayConfigId" from="toPaymentMethod.paymentGatewayConfigId"/>
+                    </if>
+                </then>
+                <else>
+                    <!-- incoming payment, get paymentInstrumentEnumId and paymentGatewayConfigId from paymentMethod -->
+                    <if condition="!paymentInstrumentEnumId &amp;&amp; paymentMethod != null">
+                        <!-- may be more than one, just pick first by description for consistency -->
+                        <entity-find entity-name="moqui.basic.Enumeration" list="instrEnumList">
+                            <econdition field-name="relatedEnumId" from="paymentMethod.paymentMethodTypeEnumId"/>
+                            <order-by field-name="description"/>
+                        </entity-find>
+                        <set field="paymentInstrumentEnumId" from="instrEnumList.length ? instrEnumList[0].enumId : null"/>
+                    </if>
+                    <!-- see if associated PaymentMethod has a paymentGatewayConfigId first, override Payment or other settings, override parameter too -->
+                    <if condition="paymentMethod?.paymentGatewayConfigId">
+                        <set field="paymentGatewayConfigId" from="paymentMethod.paymentGatewayConfigId"/>
+                    </if>
+                </else>
+            </if>
             <!-- make sure there is always a paymentInstrumentEnumId -->
-            <if condition="!paymentInstrumentEnumId"><set field="paymentInstrumentEnumId" value="PiCompanyCheck"/></if>
-
+            <if condition="!paymentInstrumentEnumId">
+                <set field="paymentInstrumentEnumId" value="PiCompanyCheck"/>
+            </if>
             <if condition="orderId">
                 <entity-find-one entity-name="mantle.order.OrderHeader" value-field="orderHeader"/>
-                <if condition="!amountUomId"><set field="amountUomId" from="orderHeader?.currencyUomId"/></if>
+                <if condition="!amountUomId">
+                    <set field="amountUomId" from="orderHeader?.currencyUomId"/>
+                </if>
                 <if condition="!paymentGatewayConfigId &amp;&amp; paymentInstrumentEnumId &amp;&amp; orderHeader?.productStoreId">
-                    <entity-find-one entity-name="mantle.product.store.ProductStorePaymentGateway"
-                            value-field="productStorePaymentGateway" cache="true">
+                    <entity-find-one entity-name="mantle.product.store.ProductStorePaymentGateway" value-field="productStorePaymentGateway" cache="true">
                         <field-map field-name="productStoreId" from="orderHeader.productStoreId"/>
                         <field-map field-name="paymentInstrumentEnumId" from="paymentInstrumentEnumId"/>
                     </entity-find-one>
@@ -540,7 +562,6 @@ along with this software (see the LICENSE.md file). If not, see
                 </if>
                 <if condition="orderPartSeqId &amp;&amp; (amount == null || toDecimal(amount).isZero())">
                     <entity-find-one entity-name="mantle.order.OrderPart" value-field="orderPart"/>
-
                     <entity-find entity-name="mantle.account.payment.Payment" list="partPaymentList">
                         <econdition field-name="orderId"/>
                         <econdition field-name="orderPartSeqId"/>
@@ -548,25 +569,29 @@ along with this software (see the LICENSE.md file). If not, see
                         <econdition field-name="paymentId" operator="not-equals" ignore-if-empty="true"/>
                     </entity-find>
                     <set field="partOtherPaymentTotal" from="Array.from(partPaymentList).reduce((total, pmt) =&gt; total.add(pmt.amount ?? 0), toDecimal(0))"/>
-
                     <set field="amount" from="toDecimal(orderPart?.partTotal ?? 0).subtract(partOtherPaymentTotal)"/>
-                    <if condition="amount.compare(0) &lt; 0"><set field="amount" from="toDecimal(0)"/></if>
+                    <if condition="amount.compare(0) &lt; 0">
+                        <set field="amount" from="toDecimal(0)"/>
+                    </if>
                 </if>
             </if>
-
             <if condition="!amountUomId">
-                <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference" out-map="context"
-                        in-map="{organizationPartyId:fromPartyId}"/>
-                <if condition="partyAcctgPreference"><then>
-                    <set field="amountUomId" from="partyAcctgPreference.baseCurrencyUomId"/>
-                </then><else>
-                    <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference" out-map="context"
-                            in-map="{organizationPartyId:toPartyId}"/>
-                    <if condition="partyAcctgPreference != null">
-                        <set field="amountUomId" from="partyAcctgPreference.baseCurrencyUomId"/></if>
-                </else></if>
+                <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference" out-map="context" in-map="{organizationPartyId:fromPartyId}"/>
+                <if condition="partyAcctgPreference">
+                    <then>
+                        <set field="amountUomId" from="partyAcctgPreference.baseCurrencyUomId"/>
+                    </then>
+                    <else>
+                        <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference" out-map="context" in-map="{organizationPartyId:toPartyId}"/>
+                        <if condition="partyAcctgPreference != null">
+                            <set field="amountUomId" from="partyAcctgPreference.baseCurrencyUomId"/>
+                        </if>
+                    </else>
+                </if>
             </if>
-            <if condition="!amountUomId"><set field="amountUomId" value="USD"/></if>
+            <if condition="!amountUomId">
+                <set field="amountUomId" value="USD"/>
+            </if>
         </actions>
     </service>
 
@@ -590,15 +615,24 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="gatewayInstructionId"/>
+                <exclude field-name="gatewayAttemptId"/>
+                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
-                <exclude field-name="overrideGlAccountId"/><exclude field-name="acctgTransResultEnumId"/>
-                <exclude field-name="reconcileStatusId"/><exclude field-name="paymentMethodFileId"/></auto-parameters>
+                <exclude field-name="overrideGlAccountId"/>
+                <exclude field-name="acctgTransResultEnumId"/>
+                <exclude field-name="reconcileStatusId"/>
+                <exclude field-name="paymentMethodFileId"/>
+            </auto-parameters>
             <parameter name="paymentTypeEnumId"/>
             <parameter name="paymentStatusId" default-value="PmntDelivered"/>
             <parameter name="statusId" default="paymentStatusId"/>
-            <parameter name="amount" type="BigDecimal"><description>Defaults to invoice unpaid total</description></parameter>
+            <parameter name="amount" type="BigDecimal">
+                <description>Defaults to invoice unpaid total</description>
+            </parameter>
             <parameter name="paymentInstrumentEnumId" default-value="PiCompanyCheck"/>
-            <parameter name="effectiveDate" type="Timestamp"/><!-- no default value, allow null until effectiveDate known -->
+            <parameter name="effectiveDate" type="Timestamp"/>
+            <!-- no default value, allow null until effectiveDate known -->
             <parameter name="paymentRefNum"/>
             <parameter name="comments"/>
             <parameter name="visitId" default="ec.user.visitId"/>
@@ -611,44 +645,43 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <service-call name="mantle.account.PaymentServices.check#InvoiceStatusForPayment" in-map="{invoiceId:invoiceId}"/>
-
             <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice"/>
-
             <if condition="paymentTypeEnumId == null">
                 <entity-find-one entity-name="moqui.basic.Enumeration" value-field="invoiceTypeEnum">
-                    <field-map field-name="enumId" from="invoice.invoiceTypeEnumId"/></entity-find-one>
+                    <field-map field-name="enumId" from="invoice.invoiceTypeEnumId"/>
+                </entity-find-one>
                 <set field="paymentTypeEnumId" from="(invoiceTypeEnum?.relatedEnumId) || 'PtInvoicePayment'"/>
             </if>
-
             <if condition="amount == null || toDecimal(amount).isZero()">
                 <service-call name="mantle.account.InvoiceServices.get#InvoiceTotal" in-map="{invoiceId:invoiceId}" out-map="totalOut"/>
                 <set field="amount" from="totalOut.unpaidTotal"/>
             </if>
-
-            <if condition="!amountUomId"><set field="amountUomId" from="invoice.currencyUomId"/></if>
-            <if condition="amount != null &amp;&amp; toDecimal(amount).isZero()"><return message="Not creating payment for invoice ${invoiceId}, unpaid total is zero"/></if>
-
+            <if condition="!amountUomId">
+                <set field="amountUomId" from="invoice.currencyUomId"/>
+            </if>
+            <if condition="amount != null &amp;&amp; toDecimal(amount).isZero()">
+                <return message="Not creating payment for invoice ${invoiceId}, unpaid total is zero"/>
+            </if>
             <!-- Check if this a duplicate -->
             <entity-find entity-name="mantle.account.payment.Payment" list="paymentList">
                 <econdition field-name="forInvoiceId" from="invoiceId"/>
                 <econdition field-name="statusId" operator="not-in" value="PmntCancelled,PmntVoid,PmntDeclined"/>
             </entity-find>
             <set field="forTotal" from="paymentList.length ? Array.from(paymentList).reduce((total, pmt) =&gt; total.add(pmt.amount ?? 0), toDecimal(0)) : null"/>
-            <if condition="forTotal != null &amp;&amp; forTotal.compare(invoice.invoiceTotal ?? 0) &gt;= 0"><return message="Not creating payment for invoice ${invoiceId}, found payments [${Array.from(paymentList).map(pmt =&gt; pmt.paymentId).join(', ')}] for this invoice"/></if>
-
+            <if condition="forTotal != null &amp;&amp; forTotal.compare(invoice.invoiceTotal ?? 0) &gt;= 0">
+                <return message="Not creating payment for invoice ${invoiceId}, found payments [${Array.from(paymentList).map(pmt =&gt; pmt.paymentId).join(', ')}] for this invoice"/>
+            </if>
             <set field="initialStatusId" from="statusId == 'PmntProposed' ? statusId : 'PmntPromised'"/>
-            <service-call name="create#mantle.account.payment.Payment" out-map="context"
-                    in-map="Object.assign({}, context, {fromPartyId:invoice.toPartyId, toPartyId:invoice.fromPartyId, forInvoiceId:invoiceId,
-                        statusId:initialStatusId, overrideGlAccountId:paymentOverrideGlAccountId})"/>
-
+            <service-call name="create#mantle.account.payment.Payment" out-map="context" in-map="Object.assign({}, context, {fromPartyId:invoice.toPartyId, toPartyId:invoice.fromPartyId, forInvoiceId:invoiceId,                         statusId:initialStatusId, overrideGlAccountId:paymentOverrideGlAccountId})"/>
             <!-- if target status is PmntConfirmed go to PmntDelivered first for GL posting, etc -->
             <if condition="statusId == 'PmntConfirmed'">
-                <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:paymentId, statusId:'PmntDelivered'}"/></if>
+                <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:paymentId, statusId:'PmntDelivered'}"/>
+            </if>
             <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:paymentId, statusId:statusId}"/>
-
             <!-- NOTE: Because we set Payment.forInvoiceId the Payment will be automatically applied when status set to Delivered or Confirmed if not already applied -->
             <entity-find entity-name="mantle.account.payment.PaymentApplication" list="paymentAppList">
-                <econdition field-name="paymentId"/></entity-find>
+                <econdition field-name="paymentId"/>
+            </entity-find>
             <set field="paymentApplicationId" from="paymentAppList.length ? paymentAppList[0].paymentApplicationId : null"/>
         </actions>
     </service>
@@ -656,46 +689,65 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="RefundPayment">
         <description>Create a refund Payment based on an original. If the status of the refund is Delivered applies new refund Payment to the Payment it was a refund for.</description>
         <in-parameters>
-            <parameter name="paymentId" required="true"><description>The ID of the original Payment</description></parameter>
+            <parameter name="paymentId" required="true">
+                <description>The ID of the original Payment</description>
+            </parameter>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
                 <exclude field-name="accountingDate"/>
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="gatewayInstructionId"/>
+                <exclude field-name="gatewayAttemptId"/>
+                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
-                <exclude field-name="fromPartyId"/><exclude field-name="toPartyId"/><exclude field-name="forInvoiceId"/>
-                <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
+                <exclude field-name="fromPartyId"/>
+                <exclude field-name="toPartyId"/>
+                <exclude field-name="forInvoiceId"/>
+                <exclude field-name="acctgTransResultEnumId"/>
+                <exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/>
             </auto-parameters>
-
-            <parameter name="amount" type="BigDecimal"><description>Defaults to the unapplied amount of the original Payment, cannot be greater than unapplied amount</description></parameter>
+            <parameter name="amount" type="BigDecimal">
+                <description>Defaults to the unapplied amount of the original Payment, cannot be greater than unapplied amount</description>
+            </parameter>
             <parameter name="statusId" default-value="PmntPromised"/>
             <parameter name="paymentTypeEnumId" default-value="PtRefund"/>
-            <parameter name="effectiveDate" type="Timestamp"><description>Only set if specified, set to now if statusId is PmntDelivered as must be set before delivered status</description></parameter>
-            <parameter name="paymentAuthCode"/><parameter name="paymentRefNum"/>
+            <parameter name="effectiveDate" type="Timestamp">
+                <description>Only set if specified, set to now if statusId is PmntDelivered as must be set before delivered status</description>
+            </parameter>
+            <parameter name="paymentAuthCode"/>
+            <parameter name="paymentRefNum"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="paymentId"><description>The ID of the refund Payment</description></parameter>
-            <parameter name="paymentApplicationId"><description>The ID of the application of the refund Payment to the original</description></parameter>
+            <parameter name="paymentId">
+                <description>The ID of the refund Payment</description>
+            </parameter>
+            <parameter name="paymentApplicationId">
+                <description>The ID of the application of the refund Payment to the original</description>
+            </parameter>
             <parameter name="amount" type="BigDecimal"/>
         </out-parameters>
         <actions>
             <!-- Set refundForPaymentId, for use in this service and a field on Payment to be recorded in the create below -->
             <set field="refundForPaymentId" from="paymentId"/>
-
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="refundForPayment" for-update="true">
-                <field-map field-name="paymentId" from="refundForPaymentId"/></entity-find-one>
+                <field-map field-name="paymentId" from="refundForPaymentId"/>
+            </entity-find-one>
             <if condition="!(['PmntDelivered', 'PmntConfirmed'].includes(refundForPayment.statusId))">
-                <return message="Payment must be in Delivered or Confirmed status"/></if>
-
+                <return message="Payment must be in Delivered or Confirmed status"/>
+            </if>
             <service-call name="mantle.account.PaymentServices.get#PaymentTotals" in-map="{paymentId:refundForPaymentId}" out-map="refundForTotalOut"/>
-            <if condition="amount == null || toDecimal(amount).isZero()"><set field="amount" from="refundForTotalOut.unappliedTotal"/></if>
-
-            <if condition="amount == null || toDecimal(amount).isZero()"><return message="Amount is zero, not creating refund payment"/></if>
-
+            <if condition="amount == null || toDecimal(amount).isZero()">
+                <set field="amount" from="refundForTotalOut.unappliedTotal"/>
+            </if>
+            <if condition="amount == null || toDecimal(amount).isZero()">
+                <return message="Amount is zero, not creating refund payment"/>
+            </if>
             <!-- automatic field settings -->
             <if condition="['PmntDelivered', 'PmntConfirmed'].includes(statusId) &amp;&amp; effectiveDate == null">
-                <set field="effectiveDate" from="ec.user.nowTimestamp"/></if>
+                <set field="effectiveDate" from="ec.user.nowTimestamp"/>
+            </if>
             <set field="fromPartyId" from="refundForPayment.toPartyId"/>
             <set field="toPartyId" from="refundForPayment.fromPartyId"/>
             <set field="orderId" from="orderId || refundForPayment.orderId"/>
@@ -705,17 +757,14 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- create the refund Payment -->
             <service-call name="mantle.account.PaymentServices.create#Payment" in-map="context" out-map="createOut"/>
             <set field="paymentId" from="createOut.paymentId"/>
-
             <if condition="['PmntDelivered', 'PmntConfirmed'].includes(statusId)">
                 <!-- only auto apply up to unappliedTotal on refundForPayment -->
                 <set field="amountToApply" from="amount"/>
                 <if condition="toDecimal(amountToApply).compare(refundForTotalOut.unappliedTotal ?? 0) &gt; 0">
                     <set field="amountToApply" from="refundForTotalOut.unappliedTotal"/>
                 </if>
-
                 <!-- apply refund to original -->
-                <service-call name="mantle.account.PaymentServices.apply#PaymentToPayment" out-map="context"
-                        in-map="{paymentId:paymentId, toPaymentId:refundForPaymentId, amount:amountToApply}"/>
+                <service-call name="mantle.account.PaymentServices.apply#PaymentToPayment" out-map="context" in-map="{paymentId:paymentId, toPaymentId:refundForPaymentId, amount:amountToApply}"/>
             </if>
         </actions>
     </service>
@@ -817,9 +866,14 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
+                <exclude field-name="gatewayInstructionId"/>
+                <exclude field-name="gatewayAttemptId"/>
+                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
-                <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
-                <exclude field-name="paymentMethodFileId"/></auto-parameters>
+                <exclude field-name="acctgTransResultEnumId"/>
+                <exclude field-name="reconcileStatusId"/>
+                <exclude field-name="paymentMethodFileId"/>
+            </auto-parameters>
         </in-parameters>
         <out-parameters>
             <parameter name="oldStatusId"/>
@@ -828,7 +882,6 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
             <entity-set value-field="payment" set-if-empty="true"/>
-
             <service-call name="mantle.account.PaymentServices.set#PaymentAutoInfo" in-map="payment.getMap()" out-map="context"/>
             <service-call name="update#mantle.account.payment.Payment" in-map="context" out-map="context"/>
         </actions>
@@ -953,12 +1006,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="orderPartSeqId" required="true"/>
             <parameter name="invoiceId" required="true"/>
         </in-parameters>
-        <out-parameters><parameter name="paymentApplicationIdByPaymentId" type="Map"/></out-parameters>
+        <out-parameters>
+            <parameter name="paymentApplicationIdByPaymentId" type="Map"/>
+        </out-parameters>
         <actions>
             <set field="paymentApplicationIdByPaymentId" from="{}"/>
-            <service-call name="mantle.account.InvoiceServices.get#InvoiceTotal" out-map="invTotal"
-                    in-map="{invoiceId:invoiceId}"/>
-            
+            <service-call name="mantle.account.InvoiceServices.get#InvoiceTotal" out-map="invTotal" in-map="{invoiceId:invoiceId}"/>
             <!-- now trying by oldest payment first and using single query because mixed header/part payments not common, was: try payments by part first, then payments for entire order -->
             <entity-find entity-name="mantle.account.payment.Payment" list="paymentList">
                 <econdition field-name="orderId"/>
@@ -966,27 +1019,27 @@ along with this software (see the LICENSE.md file). If not, see
                 <econdition field-name="paymentTypeEnumId" value="PtInvoicePayment"/>
                 <order-by field-name="paymentId"/>
             </entity-find>
-
             <set field="remainingAmount" from="invTotal.unpaidTotal"/>
             <iterate list="paymentList" entry="payment">
-                <if condition="toDecimal(remainingAmount).isZero()"><break/></if>
-                <service-call name="mantle.account.PaymentServices.get#PaymentTotals" out-map="context"
-                        in-map="{paymentId:payment.paymentId}"/>
+                <if condition="ec.resource.script('component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js').isManaged(payment)">
+                    <log level="warn" message="Skipping reviewed payment ${payment.paymentId} in legacy apply#OrderPaymentsToInvoice"/>
+                    <continue/>
+                </if>
+                <if condition="toDecimal(remainingAmount).isZero()">
+                    <break/>
+                </if>
+                <service-call name="mantle.account.PaymentServices.get#PaymentTotals" out-map="context" in-map="{paymentId:payment.paymentId}"/>
                 <if condition="toDecimal(unappliedTotal).compare(0) &gt; 0">
                     <set field="amountToApply" from="toDecimal(unappliedTotal).compare(remainingAmount) &gt; 0 ? remainingAmount : unappliedTotal"/>
-
                     <!-- capture Payment if promised or authorized -->
                     <if condition="['PmntPromised', 'PmntAuthorized'].includes(payment.statusId)">
                         <!-- TODO: currently captures full payment amount, could capture only amountToApply but leaves Payment
                             considered fully captured when it is not yet; may consider splitting the Payment to create another
                             promised payment for order with remaining balance if this becomes an issue -->
-                        <service-call name="mantle.account.PaymentServices.capture#SinglePayment" out-map="captOut"
-                                in-map="{paymentId:payment.paymentId, amount:payment.amount}"/>
+                        <service-call name="mantle.account.PaymentServices.capture#SinglePayment" out-map="captOut" in-map="{paymentId:payment.paymentId, amount:payment.amount}"/>
                     </if>
-
                     <if condition="['PmntDelivered', 'PmntConfirmed'].includes(payment.statusId)">
-                        <service-call name="mantle.account.PaymentServices.apply#InvoicePayment" out-map="applyOut"
-                                in-map="{paymentId:payment.paymentId, invoiceId:invoiceId, amount:amountToApply}"/>
+                        <service-call name="mantle.account.PaymentServices.apply#InvoicePayment" out-map="applyOut" in-map="{paymentId:payment.paymentId, invoiceId:invoiceId, amount:amountToApply}"/>
                         <script>paymentApplicationIdByPaymentId[payment.paymentId] = applyOut.paymentApplicationId</script>
                         <set field="remainingAmount" from="toDecimal(remainingAmount).subtract(applyOut.amountApplied ?? 0)"/>
                     </if>
@@ -1334,16 +1387,26 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <entity-find-one entity-name="mantle.order.OrderHeader" value-field="orderHeader"/>
-            <if condition="orderHeader == null"><return error="true" message="Order ${orderId} not found"/></if>
+            <if condition="orderHeader == null">
+                <return error="true" message="Order ${orderId} not found"/>
+            </if>
             <!-- don't auto-authorize if there is no store for the order -->
-            <if condition="!orderHeader.productStoreId"><return/></if>
-
+            <if condition="!orderHeader.productStoreId">
+                <return/>
+            </if>
             <set field="authFailed" from="false"/>
             <set field="totalAuthorized" from="toDecimal(0)"/>
             <entity-find entity-name="mantle.account.payment.Payment" list="paymentList">
-                <econdition field-name="orderId"/></entity-find>
+                <econdition field-name="orderId"/>
+            </entity-find>
             <iterate list="paymentList" entry="payment">
-                <if condition="['PmntCancelled', 'PmntVoid'].includes(payment.statusId)"><continue/></if>
+                <if condition="ec.resource.script('component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js').isManaged(payment)">
+                    <log level="warn" message="Skipping reviewed payment ${payment.paymentId} in legacy authorize#OrderPayments"/>
+                    <continue/>
+                </if>
+                <if condition="['PmntCancelled', 'PmntVoid'].includes(payment.statusId)">
+                    <continue/>
+                </if>
                 <if condition="['PmntAuthorized', 'PmntDelivered', 'PmntConfirmed'].includes(payment.statusId)">
                     <set field="totalAuthorized" from="totalAuthorized.add(payment.amount ?? 0)"/>
                     <continue/>
@@ -1352,43 +1415,44 @@ along with this software (see the LICENSE.md file). If not, see
                     <log message="Not authorizing payment ${payment.paymentId} with no paymentMethodId or finAccountId"/>
                     <continue/>
                 </if>
-
-                <service-call name="mantle.account.PaymentServices.authorize#StorePayment" out-map="authOut"
-                    in-map="{paymentId:payment.paymentId, payment:payment, productStoreId:orderHeader.productStoreId,
-                        cardSecurityCode:cardSecurityCodeByPaymentId?.[payment.paymentId]}"/>
-
+                <service-call name="mantle.account.PaymentServices.authorize#StorePayment" out-map="authOut" in-map="{paymentId:payment.paymentId, payment:payment, productStoreId:orderHeader.productStoreId,                         cardSecurityCode:cardSecurityCodeByPaymentId?.[payment.paymentId]}"/>
                 <entity-find-one entity-name="mantle.account.payment.Payment" value-field="updatedPayment">
-                    <field-map field-name="paymentId" from="payment.paymentId"/></entity-find-one>
+                    <field-map field-name="paymentId" from="payment.paymentId"/>
+                </entity-find-one>
                 <if condition="!authOut.paymentGatewayResponse &amp;&amp; !(['PmntAuthorized', 'PmntDelivered', 'PmntConfirmed'].includes(updatedPayment.statusId))">
                     <set field="authFailed" from="true"/>
                     <log level="warn" message="Authorize Payment [${payment.paymentId}] failed with no PaymentGatewayResponse and status after is ${updatedPayment.statusId}"/>
-                    <service-call name="mantle.account.PaymentServices.get#PaymentDescription"
-                            in-map="{paymentId:payment.paymentId}" out-map="pmtDescOut"/>
+                    <service-call name="mantle.account.PaymentServices.get#PaymentDescription" in-map="{paymentId:payment.paymentId}" out-map="pmtDescOut"/>
                     <message>Authorization failed for ${pmtDescOut.paymentDescription}</message>
                 </if>
-
                 <if condition="authOut.paymentGatewayResponse">
-                    <if condition="authOut.paymentGatewayResponse.resultSuccess == 'Y'"><then>
-                        <set field="totalAuthorized" from="totalAuthorized.add(authOut.paymentGatewayResponse.amount ?? 0)"/>
-                    </then><else>
-                        <set field="authFailed" from="true"/>
-                        <service-call name="mantle.account.PaymentServices.get#PaymentDescription"
-                                in-map="{paymentId:payment.paymentId}" out-map="pmtDescOut"/>
-                        <if condition="authOut.paymentGatewayResponse.resultDeclined == 'Y'">
-                            <message>${pmtDescOut.paymentDescription} was declined</message></if>
-                        <if condition="authOut.paymentGatewayResponse.resultNsf == 'Y'">
-                            <message>${pmtDescOut.paymentDescription} has insufficient funds</message></if>
-                        <if condition="authOut.paymentGatewayResponse.resultBadExpire == 'Y'">
-                            <message>${pmtDescOut.paymentDescription} has an invalid expiration date</message></if>
-                        <if condition="authOut.paymentGatewayResponse.resultBadCardNumber == 'Y'">
-                            <message>${pmtDescOut.paymentDescription} has an invalid card number</message></if>
-                    </else></if>
+                    <if condition="authOut.paymentGatewayResponse.resultSuccess == 'Y'">
+                        <then>
+                            <set field="totalAuthorized" from="totalAuthorized.add(authOut.paymentGatewayResponse.amount ?? 0)"/>
+                        </then>
+                        <else>
+                            <set field="authFailed" from="true"/>
+                            <service-call name="mantle.account.PaymentServices.get#PaymentDescription" in-map="{paymentId:payment.paymentId}" out-map="pmtDescOut"/>
+                            <if condition="authOut.paymentGatewayResponse.resultDeclined == 'Y'">
+                                <message>${pmtDescOut.paymentDescription} was declined</message>
+                            </if>
+                            <if condition="authOut.paymentGatewayResponse.resultNsf == 'Y'">
+                                <message>${pmtDescOut.paymentDescription} has insufficient funds</message>
+                            </if>
+                            <if condition="authOut.paymentGatewayResponse.resultBadExpire == 'Y'">
+                                <message>${pmtDescOut.paymentDescription} has an invalid expiration date</message>
+                            </if>
+                            <if condition="authOut.paymentGatewayResponse.resultBadCardNumber == 'Y'">
+                                <message>${pmtDescOut.paymentDescription} has an invalid card number</message>
+                            </if>
+                        </else>
+                    </if>
                 </if>
             </iterate>
-
             <!-- try order auto-approve (called explicitly here is order is in Placed status, otherwise called by SECA on status change to OrderPlaced -->
             <if condition="orderHeader.statusId == 'OrderPlaced' &amp;&amp; totalAuthorized.compare(orderHeader.grandTotal ?? 0) &gt;= 0">
-                <service-call name="mantle.order.OrderServices.autoApprove#Order" in-map="{orderId:orderId}"/></if>
+                <service-call name="mantle.order.OrderServices.autoApprove#Order" in-map="{orderId:orderId}"/>
+            </if>
         </actions>
     </service>
     <service verb="authorize" noun="StorePayment">
@@ -1551,16 +1615,27 @@ along with this software (see the LICENSE.md file). If not, see
     
     <service verb="capture" noun="InvoicePayments">
         <description>DEPRECATED by direct call to capture#SinglePayment in apply#OrderPaymentsToInvoice. Was called by SECA rule.</description>
-        <in-parameters><parameter name="invoiceId" required="true"/></in-parameters>
-        <out-parameters><parameter name="captureFailed" type="Boolean"/></out-parameters>
+        <in-parameters>
+            <parameter name="invoiceId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="captureFailed" type="Boolean"/>
+        </out-parameters>
         <actions>
             <set field="captureFailed" from="false"/>
             <entity-find entity-name="mantle.account.payment.PaymentApplication" list="paymentApplicationList">
-                <econdition field-name="invoiceId"/></entity-find>
+                <econdition field-name="invoiceId"/>
+            </entity-find>
             <!-- capture full or partial Payment for each PaymentApplication -->
             <iterate list="paymentApplicationList" entry="paymentApplication">
-                <service-call name="mantle.account.PaymentServices.capture#SinglePayment" out-map="captOut"
-                        in-map="{paymentId:paymentApplication.paymentId, amount:paymentApplication.amountApplied}"/>
+                <entity-find-one entity-name="mantle.account.payment.Payment" value-field="sourcePayment">
+                    <field-map field-name="paymentId" from="paymentApplication.paymentId"/>
+                </entity-find-one>
+                <if condition="ec.resource.script('component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js').isManaged(sourcePayment)">
+                    <log level="warn" message="Skipping reviewed payment ${paymentApplication.paymentId} in legacy capture#InvoicePayments"/>
+                    <continue/>
+                </if>
+                <service-call name="mantle.account.PaymentServices.capture#SinglePayment" out-map="captOut" in-map="{paymentId:paymentApplication.paymentId, amount:paymentApplication.amountApplied}"/>
             </iterate>
         </actions>
     </service>
@@ -2057,15 +2132,23 @@ along with this software (see the LICENSE.md file). If not, see
                 <econdition field-name="paymentGatewayConfigId" operator="is-not-null"/>
                 <econdition field-name="paymentMethodId" operator="is-not-null"/>
                 <econdition field-name="effectiveDate" operator="greater" from="basisTimestamp" or-null="true"/>
+                <econditions combine="or">
+                    <econdition field-name="lifecycleManaged" operator="is-null"/>
+                    <econdition field-name="lifecycleManaged" operator="not-equals" value="Y"/>
+                </econditions>
+                <econdition field-name="gatewayInstructionId" operator="is-null"/>
+                <econdition field-name="gatewayAttemptId" operator="is-null"/>
+                <econdition field-name="gatewayRole" operator="is-null"/>
                 <select-field field-name="paymentId,paymentGatewayConfigId"/>
             </entity-find>
             <iterate list="paymentList" entry="payment">
                 <entity-find-one entity-name="mantle.account.method.PaymentGatewayConfig" value-field="paymentGatewayConfig" cache="true">
-                    <field-map field-name="paymentGatewayConfigId" from="payment.paymentGatewayConfigId"/></entity-find-one>
-                <if condition="!paymentGatewayConfig?.detailsServiceName"><continue/></if>
-
-                <service-call name="mantle.account.PaymentServices.get#SinglePaymentGatewayDetails" transaction="force-new"
-                        in-map="{paymentId:payment.paymentId}"/>
+                    <field-map field-name="paymentGatewayConfigId" from="payment.paymentGatewayConfigId"/>
+                </entity-find-one>
+                <if condition="!paymentGatewayConfig?.detailsServiceName">
+                    <continue/>
+                </if>
+                <service-call name="mantle.account.PaymentServices.get#SinglePaymentGatewayDetails" transaction="force-new" in-map="{paymentId:payment.paymentId}"/>
             </iterate>
         </actions>
     </service>
@@ -2388,6 +2471,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="applicationRows" type="List"/>
             <parameter name="refundRows" type="List"/>
             <parameter name="gatewayRows" type="List"/>
+            <parameter name="gatewayInstruction" type="Map"/>
             <parameter name="ledgerRows" type="List"/>
             <parameter name="contentRows" type="List"/>
             <parameter name="historyRows" type="List"/>
@@ -2798,6 +2882,412 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentLifecycle.js').refuseValidation(context))</script>
+        </actions>
+    </service>
+
+    <!-- Reviewed gateway foundation. Dispatch and local completion are separate guarded stages. -->
+    <service verb="invoke" noun="ReviewedGatewayOperation" type="interface">
+        <description>Nonmutating adapter boundary: use the supplied versioned credentialSnapshot, never reread mutable method identities; submit one exact operation without changing local money.</description>
+        <in-parameters>
+            <parameter name="providerOperationId" required="true"/>
+            <parameter name="merchantNamespace" required="true"/>
+            <parameter name="adapterVersion" required="true"/>
+            <parameter name="action" required="true"/>
+            <parameter name="parentProviderReference"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="paymentGatewayConfigId" required="true"/>
+            <parameter name="sourcePaymentMethodId"/>
+            <parameter name="destinationPaymentMethodId"/>
+            <parameter name="sourceMethodVersion"/>
+            <parameter name="destinationMethodVersion"/>
+            <parameter name="credentialSnapshot" type="Map"/>
+            <parameter name="amount" type="BigDecimal" required="true"/>
+            <parameter name="currencyUomId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="providerOperationId"/>
+            <parameter name="merchantNamespace"/>
+            <parameter name="adapterVersion"/>
+            <parameter name="action"/>
+            <parameter name="outcome"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="providerReference"/>
+            <parameter name="providerDate" type="Timestamp"/>
+            <parameter name="providerSettlementDate" type="Timestamp"/>
+            <parameter name="responseCode"/>
+            <parameter name="reasonCode"/>
+            <parameter name="message"/>
+            <parameter name="definitiveNonexecution" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="lookup" noun="ReviewedGatewayOperation" type="interface">
+        <description>Read authoritative provider outcome by exact original operation identity without creating another external effect.</description>
+        <implements service="mantle.account.PaymentServices.invoke#ReviewedGatewayOperation"/>
+    </service>
+    <service verb="define" noun="PaymentGatewayPreviewResult" type="interface">
+        <description>Owner-bound retained gateway review with narrow financial summaries and current authority.</description>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="previewKind"/>
+            <parameter name="financialOnly" type="Boolean"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId"/>
+            <parameter name="action"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="attemptVersion"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="effectiveDateText"/>
+            <parameter name="status"/>
+            <parameter name="operationKey"/>
+            <parameter name="reason"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="paymentSummary" type="Map"/>
+            <parameter name="gatewaySummary" type="Map"/>
+            <parameter name="before" type="Map"/>
+            <parameter name="after" type="Map"/>
+            <parameter name="reservationEffects" type="List"/>
+            <parameter name="applicationEffects" type="List"/>
+            <parameter name="postingSummary" type="Map"/>
+            <parameter name="ledgerPreview" type="List"/>
+            <parameter name="evidenceRows" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="blockers" type="List"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="results" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="PaymentGatewayBindings" allow-remote="false">
+        <description>Page active organization gateway identities with reviewed adapter capabilities and masked method versions.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="action"/>
+            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="text"/>
+            <parameter name="selectedIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').findBindings(context))</script>
+        </actions>
+    </service>
+    <service verb="preview" noun="PaymentGatewayAction" allow-remote="false">
+        <description>Review authorization, partial capture or release without contacting a provider or creating cash.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayPreviewResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="sourceVersion" required="true"/>
+            <parameter name="action" required="true"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="reason" required="true"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="paymentGatewayConfigId"/>
+            <parameter name="gatewayBindingVersion"/>
+            <parameter name="parentAttemptId"/>
+            <parameter name="evidenceContentIdList" type="List"/>
+            <parameter name="evidenceVersions" type="Map"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').previewAction(context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="PaymentGatewayActionPreview" allow-remote="false">
+        <description>Reload action or recovery review with current payment, treasury and ledger authority.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayPreviewResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="previewId" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').getPreview(context))</script>
+        </actions>
+    </service>
+    <service verb="define" noun="PaymentGatewayResult" type="interface">
+        <description>Flat retained provider and financial outcome with exact cash-child and separately authorized posting evidence.</description>
+        <out-parameters>
+            <parameter name="attemptId"/>
+            <parameter name="attemptVersion"/>
+            <parameter name="providerOperationId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId"/>
+            <parameter name="cashPaymentId"/>
+            <parameter name="paymentLifecycleEventId"/>
+            <parameter name="action"/>
+            <parameter name="outcome"/>
+            <parameter name="providerState"/>
+            <parameter name="financialState"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="operationKey"/>
+            <parameter name="applicationResults" type="List"/>
+            <parameter name="acctgTransIds" type="List"/>
+            <parameter name="outputRows" type="List"/>
+            <parameter name="reasonCode"/>
+            <parameter name="errorMessage"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="paymentSummary" type="Map"/>
+            <parameter name="gatewaySummary" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="PaymentGatewayAttempt" allow-remote="false">
+        <description>Read one exact provider attempt without lookup, dispatch or financial mutation.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="attemptId" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').getAttempt(context))</script>
+        </actions>
+    </service>
+    <service verb="find" noun="PaymentGatewayTransactions" allow-remote="false">
+        <description>Search scoped reviewed attempts and safe legacy gateway evidence before exact count and paging.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId"/>
+            <parameter name="partyId"/>
+            <parameter name="paymentGatewayConfigId"/>
+            <parameter name="action"/>
+            <parameter name="outcome"/>
+            <parameter name="fromDay"/>
+            <parameter name="throughDay"/>
+            <parameter name="text"/>
+            <parameter name="selectedAttemptIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').findTransactions(context))</script>
+        </actions>
+    </service>
+    <service verb="find" noun="PaymentGatewayProviders" allow-remote="false">
+        <description>Search provider identities present in currently visible organization transactions without reading executable bindings or credentials.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="text"/>
+            <parameter name="selectedIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').findProviders(context))</script>
+        </actions>
+    </service>
+    <service verb="execute" noun="PaymentGatewayAction" allow-remote="false" transaction="ignore">
+        <description>Reserve exact provider identity and capacity, dispatch once outside financial locks, retain outcome and complete accepted local money atomically.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayResult"/>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').execute(context))</script>
+        </actions>
+    </service>
+    <service verb="refresh" noun="PaymentGatewayAttempt" allow-remote="false" transaction="ignore">
+        <description>Lookup the original provider operation identity without creating a new external operation; retain and finalize its authoritative result.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="attemptVersion" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').refresh(context))</script>
+        </actions>
+    </service>
+    <service verb="preview" noun="PaymentGatewayRecovery" allow-remote="false">
+        <description>Review local completion of an accepted operation using its original SQL day and current financial policy, without another provider request.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayPreviewResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="attemptVersion" required="true"/>
+            <parameter name="reason" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').previewRecovery(context))</script>
+        </actions>
+    </service>
+    <service verb="complete" noun="PaymentGatewayAttempt" allow-remote="false">
+        <description>Only local financial finalizer: post the exact accepted cash leg and issued outputs once under retained review, locks and current native authority.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayResult"/>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').complete(context))</script>
+        </actions>
+    </service>
+    <service verb="define" noun="PaymentGatewayStageResult" type="interface">
+        <description>Internal stage result; provider claim tokens and typed evidence never enter public gateway result projections.</description>
+        <out-parameters>
+            <parameter name="attemptId"/>
+            <parameter name="token"/>
+            <parameter name="shouldDispatch" type="Boolean"/>
+            <parameter name="shouldLookup" type="Boolean"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+            <parameter name="savedResultJson"/>
+            <parameter name="providerEvidence" type="Map"/>
+            <parameter name="providerState"/>
+            <parameter name="financialState"/>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="result" type="Map"/>
+            <parameter name="adapterServiceName"/>
+            <parameter name="adapterRequest" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="reserve" noun="PaymentGatewayAction" allow-remote="false" transaction="force-new">
+        <description>Internal orchestrator-only stage committing operation, exact frozen evidence, capacity hold and placeholder gateway response before I/O.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').reserve(context))</script>
+        </actions>
+    </service>
+    <service verb="dispatch" noun="PaymentGatewayAttempt" allow-remote="false" transaction="ignore">
+        <description>Provider-isolated nonfinancial frame invoking only the frozen safe adapter and immutable request identity.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
+        <in-parameters>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="token" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').dispatch(context))</script>
+        </actions>
+    </service>
+    <service verb="lookup" noun="PaymentGatewayAttempt" allow-remote="false" transaction="ignore">
+        <description>Provider-isolated exact-identity lookup frame; it cannot issue another charge or write local financial records.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
+        <in-parameters>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="token" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').lookup(context))</script>
+        </actions>
+    </service>
+    <service verb="prepare" noun="PaymentGatewayDispatch" allow-remote="false" transaction="force-new">
+        <description>Private direct-dispatch stage locking and rechecking original reviewed method identity, then returning a by-value credential snapshot before external I/O.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
+        <in-parameters>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="token" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').prepareDispatch(context))</script>
+        </actions>
+    </service>
+    <service verb="record" noun="PaymentGatewayResult" allow-remote="false" transaction="force-new">
+        <description>Persist a nonce-bound typed provider receipt after the isolated I/O frame has exited, retaining ambiguous outcomes and their holds.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
+        <in-parameters>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="token" required="true"/>
+            <parameter name="kind" required="true"/>
+            <parameter name="providerEvidence" type="Map"/>
+            <parameter name="transportFailure" type="Boolean"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').record(context))</script>
+        </actions>
+    </service>
+    <service verb="claim" noun="PaymentGatewayLookup" allow-remote="false" transaction="force-new">
+        <description>Reserve one current lookup lease and operation identity without releasing or spending an unresolved hold.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="attemptVersion" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').claimLookup(context))</script>
+        </actions>
+    </service>
+    <service verb="finish" noun="PaymentGatewayLookup" allow-remote="false" transaction="force-new">
+        <description>Record the exact completed lookup command outcome for replay independently of later provider-state changes.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
+        <in-parameters>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').finishLookup(context))</script>
+        </actions>
+    </service>
+    <service verb="fail" noun="PaymentGatewayCompletion" allow-remote="false" transaction="force-new">
+        <description>Retain accepted-unposted state after a local finalizer rollback; never reclassify provider acceptance as decline.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
+        <in-parameters>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="reasonCode"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').failCompletion(context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="FreshPaymentGatewayAttempt" allow-remote="false" transaction="force-new">
+        <description>Internal fresh-stage read and authorized projection independent of an outer caller's retained transaction snapshot.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
+        <in-parameters>
+            <parameter name="attemptId" required="true"/>
+            <parameter name="savedResultJson"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').freshRead(context))</script>
         </actions>
     </service>
 </services>

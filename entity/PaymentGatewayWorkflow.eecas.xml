@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
+    <eeca id="PaymentGatewayReviewInvariant" entity="mantle.account.payment.PaymentGatewayPreview" on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false" get-entire-entity="true" get-original-value="true">
+        <description>Retain the owner-bound reviewed gateway payload and exact confirmation identity.</description>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayGuard.js').guard(context, 'preview')</script>
+        </actions>
+    </eeca>
+    <eeca id="PaymentGatewayInstructionInvariant" entity="mantle.account.payment.PaymentGatewayInstruction" on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false" get-entire-entity="true" get-original-value="true">
+        <description>Authorization ceilings and original source identity remain native financial records.</description>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayGuard.js').guard(context, 'instruction')</script>
+        </actions>
+    </eeca>
+    <eeca id="PaymentGatewayAttemptInvariant" entity="mantle.account.payment.PaymentGatewayAttempt" on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false" get-entire-entity="true" get-original-value="true">
+        <description>Provider identity and accepted receipts cannot be forged or changed by generic writers.</description>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayGuard.js').guard(context, 'attempt')</script>
+        </actions>
+    </eeca>
+    <eeca id="PaymentGatewayReservationInvariant" entity="mantle.account.payment.PaymentGatewayReservation" on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false" get-entire-entity="true" get-original-value="true">
+        <description>Durable capacity holds survive adoption changes and become consumed atomically with local money.</description>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayGuard.js').guard(context, 'reservation')</script>
+        </actions>
+    </eeca>
+    <eeca id="PaymentGatewayResponseInvariant" entity="mantle.account.method.PaymentGatewayResponse" on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false" get-entire-entity="true" get-original-value="true">
+        <description>Reviewed attempts own their response rows; unmanaged legacy responses retain their behavior.</description>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayGuard.js').guard(context, 'response')</script>
+        </actions>
+    </eeca>
+    <eeca id="PaymentGatewayCashIdentity" entity="mantle.account.payment.Payment" on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false" get-entire-entity="true" get-original-value="true">
+        <description>Authorization parents are not cash and accepted capture legs retain exact immutable provenance.</description>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayGuard.js').guard(context, 'payment')</script>
+        </actions>
+    </eeca>
+</eecas>

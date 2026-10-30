@@ -7,6 +7,7 @@ const find = policy.find
 const one = policy.one
 const rows = policy.rows
 const call = policy.call
+const probe = policy.probe
 const ms = policy.ms
 const map = policy.map
 const display = policy.display
@@ -270,17 +271,7 @@ function page(query, p, field = "records", recordCount) {
         result[field + key] = result[key[0].toLowerCase() + key.slice(1)]
     return result
 }
-function probe(name, parameters) {
-    ec.message.pushErrors()
-    try {
-        const result = ec.service.sync().name(name).parameters(parameters).disableAuthz().requireNewTransaction(true).call() || {}
-        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
-        return result
-    } finally {
-        ec.message.clearErrors()
-        ec.message.popErrors()
-    }
-}
+
 function escapeHtml(value) {
     const entities = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}
     return String(value ?? "").replace(/[&<>"']/g, character => entities[character])

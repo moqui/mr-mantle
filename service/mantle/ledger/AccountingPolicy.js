@@ -9,6 +9,18 @@ const call = (name, parameters = {}) => {
     if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
     return out
 }
+// Expected independent failures use a separate transaction and error frame.
+function probe(name, parameters) {
+    ec.message.pushErrors()
+    try {
+        const result = ec.service.sync().name(name).parameters(parameters).disableAuthz().requireNewTransaction(true).call() || {}
+        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+        return result
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+}
 const ms = value =>
     value == null || value === "" ? null : /^-?\d+$/.test(String(value)) ? Number(value) : Date.parse(String(value))
 const active = (row, date = ec.user.nowTimestamp) =>
@@ -354,6 +366,7 @@ function record(p, need = "read", lock = false) {
     postingDay,
     accountingDateCondition,
     call,
+    probe,
     ms,
     active,
     pick,

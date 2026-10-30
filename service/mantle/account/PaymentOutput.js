@@ -159,7 +159,10 @@ function issue(scope, request, operationKey) {
         methodId = actual.cashDirection === "incoming" ? r.toPaymentMethodId : r.paymentMethodId,
         method = one("mantle.account.method.PaymentMethod", {paymentMethodId: methodId}),
         masked = method ? methodRows([method])[0] : null,
-        check = actual.cashDirection === "outgoing" && ["PiCompanyCheck", "PiCertifiedCheck"].includes(r.paymentInstrumentEnumId),
+        check =
+            !r.gatewayRole &&
+            actual.cashDirection === "outgoing" &&
+            ["PiCompanyCheck", "PiCertifiedCheck"].includes(r.paymentInstrumentEnumId),
         checkRow = check ? one("mantle.account.method.BankAccountCheck", {paymentId: r.paymentId}) : null,
         bank = check ? one("mantle.account.method.BankAccount", {paymentMethodId: methodId}) : null
     if (check && (!checkRow || !bank || !treasury(actual)))

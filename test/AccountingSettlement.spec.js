@@ -1317,10 +1317,8 @@ feature("correctly posted off-invoice history remains eligible when actual cash 
         const h = helper(),
             a = h.invoice(f, "5"),
             b = h.invoice(f, "5"),
-            p = h.payment(f, "10"),
-            record = h.lib.one("mantle.account.payment.Payment", {paymentId: p})
-        record.set("forInvoiceId", a)
-        record.update()
+            p = h.payment(f, "10")
+        h.call("update#mantle.account.payment.Payment", {paymentId: p, forInvoiceId: a})
         const earlier = h.native("apply#InvoicePayment", {paymentId: p, invoiceId: b, amount: "5"})
         login(f.users.ar)
         const applied = h.confirm(

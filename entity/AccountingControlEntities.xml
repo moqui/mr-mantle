@@ -1,11 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
     <extend-entity entity-name="PartyAcctgPreference" package="mantle.ledger.config">
         <field name="postingGuardEnabled" type="text-indicator" default="'N'" enable-audit-log="update"/>
         <field name="requiredLedgerDimensionsEnabled" type="text-indicator" default="'N'" enable-audit-log="update"/>
         <field name="forwardIssuanceRepostEnabled" type="text-indicator" default="'N'" enable-audit-log="update"/>
         <field name="allowAccountingSelfApproval" type="text-indicator" default="'N'" enable-audit-log="update"/>
+        <field name="paymentGatewayWorkflowEnabled" type="text-indicator" default="'N'" enable-audit-log="update"/>
         <field name="invoiceDocumentTemplate" type="text-medium" enable-audit-log="update"/>
         <field name="paymentDocumentTemplate" type="text-medium" enable-audit-log="update"/>
         <field name="documentLocale" type="text-medium" enable-audit-log="update"/>
@@ -122,6 +135,13 @@
     </extend-entity>
     <extend-entity entity-name="GlAccountGroupMember" package="mantle.ledger.account">
         <field name="glAccountGroupId" type="id" enable-audit-log="update"/>
+    </extend-entity>
+    <extend-entity entity-name="PaymentGatewayConfig" package="mantle.account.method">
+        <field name="reviewedOperationServiceName" type="text-medium" enable-audit-log="update"/>
+        <field name="reviewedLookupServiceName" type="text-medium" enable-audit-log="update"/>
+        <field name="reviewedAdapterVersion" type="text-short" enable-audit-log="update"/>
+        <field name="reviewedMerchantNamespace" type="text-medium" enable-audit-log="update"/>
+        <field name="reviewedGuaranteesJson" type="text-very-long" enable-audit-log="update"/>
     </extend-entity>
     <entity entity-name="PaymentGatewayOrganization" package="mantle.account.method" cache="never">
         <description>Organization gateway bindings provisioned outside finance forms. Finance administrators may bind methods only to these active gateways; credentials and executable configuration remain in Admin.</description>

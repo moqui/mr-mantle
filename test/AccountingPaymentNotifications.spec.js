@@ -25,8 +25,19 @@ function draft(extra = {}) {
 }
 function notice(created, userId = f.users.treasury) {
     const delivery = one(DELIVERY, {validationEventId: created.validationEventId, userId})
-    if (!delivery?.notificationMessageId || delivery.status !== "sent")
-        throw new Error("Actual native worker did not publish the scoped recipient's validation notice")
+    if (!delivery?.notificationMessageId || delivery.status !== "sent") {
+        const publication = one(PUBLICATION, {validationEventId: created.validationEventId})
+        throw new Error(
+            "Actual native worker did not publish the scoped recipient's validation notice: " +
+                JSON.stringify({
+                    validationEventId: created.validationEventId,
+                    userId,
+                    publicationStatus: publication?.status,
+                    lastError: publication?.lastError,
+                    delivery: helper().lib.map(delivery)
+                })
+        )
+    }
     const message = one(MESSAGE, {notificationMessageId: delivery.notificationMessageId})
     if (!message || !one(RECIPIENT, {notificationMessageId: message.notificationMessageId, userId}))
         throw new Error("Validation notice is missing its persisted framework message or recipient")

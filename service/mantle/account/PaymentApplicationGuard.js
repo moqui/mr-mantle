@@ -91,13 +91,41 @@ function applicationRows(records, ownId) {
     if (ownId) query = query.condition("paymentApplicationId", "not-equals", ownId)
     return Array.from(query.list())
 }
-function capacity(record, applications) {
+function cashHold(record, organizationPartyId) {
+    if (record.entity !== P) return {heldAmount: toDecimal(0)}
+    if (
+        !find("mantle.account.payment.PaymentGatewayReservation", {
+            paymentId: record.id,
+            organizationPartyId,
+            holdKind: "cash",
+            status: "held"
+        })
+            .useCache(false)
+            .limit(1)
+            .one()
+    )
+        return {heldAmount: toDecimal(0)}
+    return ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayReservations.js").cashHoldSummary({
+        organizationPartyId,
+        paymentId: record.id
+    })
+}
+function assertGatewaySettlement(records) {
+    const gateway = ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
+    for (const record of records.filter(row => row.entity === P)) {
+        if (record.value.gatewayRole === "authorization")
+            denied("GATEWAY_AUTHORIZATION_NOT_CASH", "An authorization instruction cannot enter trade settlement")
+        if (record.value.lifecycleManaged === "Y" && !record.value.gatewayRole && gateway.gatewayCapable(record.value))
+            denied("GATEWAY_CAPTURE_REQUIRED", "Only a completed reviewed provider capture can enter trade settlement")
+    }
+}
+function capacity(record, applications, organizationPartyId) {
     const fields = record.entity === I ? ["invoiceId", "toInvoiceId"] : ["paymentId", "toPaymentId"]
     const consumed = applications
         .filter(row => fields.some(field => row[field] === record.id))
         .reduce((total, row) => total.add(row.amountApplied ?? 0), toDecimal(0))
     const original = record.entity === I ? lib.totals(record.value).invoiceTotal : toDecimal(record.value.amount ?? 0)
-    return original.subtract(consumed)
+    return original.subtract(consumed).subtract(cashHold(record, organizationPartyId).heldAmount)
 }
 function bookDay(application, records, retained = false) {
     if (retained)
@@ -160,6 +188,7 @@ function checkDate(application, records, organizationPartyId, retained = false, 
     if (findings.length) denied(findings[0].code, findings.map(row => row.message).join("; "))
 }
 function guard(p) {
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const updates = map(p.entityValue || p)
     // Entity upsert/createOrUpdate also reports create; an existing identity still has immutable financial history.
     const original = p.originalValue
@@ -178,20 +207,71 @@ function guard(p) {
     let records = documents(candidate)
     const originalRecords = original ? documents(original) : []
     const initialOrgs = [...new Set([...organizations(records), ...organizations(originalRecords)])].sort()
-    if (!initialOrgs.some(org => lib.policy.preference(org).settlementApplicationGuardEnabled === "Y")) return
+    const legacy = ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
+    if (
+        !initialOrgs.some(org => lib.policy.preference(org).settlementApplicationGuardEnabled === "Y") &&
+        [...records, ...originalRecords].filter(record => record.entity === P).every(record => !legacy.isManaged(record.value))
+    ) {
+        const lockedPayments = legacy.lockUnmanagedPayments(
+                [...records, ...originalRecords].filter(record => record.entity === P).map(record => record.id)
+            ),
+            fresh = input =>
+                input.map(record =>
+                    record.entity === P
+                        ? Object.assign({}, record, {
+                              value: lockedPayments.find(payment => payment.paymentId === record.id)
+                          })
+                        : record
+                ),
+            freshRecords = fresh(documents(candidate)),
+            freshOriginals = original ? fresh(documents(original)) : [],
+            identity = input =>
+                input.map(record => ({
+                    entity: record.entity,
+                    id: record.id,
+                    fromPartyId: record.value.fromPartyId,
+                    toPartyId: record.value.toPartyId,
+                    financeOrganizationPartyId: record.value.financeOrganizationPartyId,
+                    financeDirection: record.value.financeDirection,
+                    currencyUomId: record.value.currencyUomId || record.value.amountUomId
+                }))
+        if (
+            lib.hash(identity([...records, ...originalRecords])) !== lib.hash(identity([...freshRecords, ...freshOriginals])) ||
+            JSON.stringify([...new Set([...organizations(freshRecords), ...organizations(freshOriginals)])].sort()) !==
+                JSON.stringify(initialOrgs)
+        )
+            denied("APPLICATION_SOURCE_CHANGED", "The financial record scope changed; retry the operation")
+        if (initialOrgs.some(org => lib.policy.preference(org).settlementApplicationGuardEnabled === "Y"))
+            denied("APPLICATION_SOURCE_CHANGED", "Settlement controls changed; retry the operation")
+        return
+    }
+    // Lock organizations before document and application rows, matching the reviewed settlement writer.
+    Array.from(find("mantle.party.Party").condition("partyId", "in", initialOrgs).orderBy("partyId").forUpdate(true).list())
+    records = documents(candidate, true)
+    const lockedOriginalRecords = original ? documents(original, true) : [],
+        financialRecords = [...records, ...lockedOriginalRecords]
+    assertGatewaySettlement(records)
+    const lockedOrgs = [...new Set(organizations(financialRecords))].sort()
+    if (JSON.stringify(lockedOrgs) !== JSON.stringify(initialOrgs))
+        denied("APPLICATION_SOURCE_CHANGED", "Application organization changed; retry the operation")
+    const holdOrgs = lockedOrgs.filter(org =>
+        financialRecords.some(record => record.entity === P && cashHold(record, org).heldAmount.compare(0) > 0)
+    )
+    const gatewayCash = financialRecords.some(
+        record => record.entity === P && ["capture", "refund"].includes(record.value.gatewayRole)
+    )
+    if (
+        !lockedOrgs.some(org => lib.policy.preference(org).settlementApplicationGuardEnabled === "Y") &&
+        !holdOrgs.length &&
+        !gatewayCash
+    )
+        return
     if (original && !toDecimal(original.amountApplied ?? 0).isZero()) {
         const immutable = [...identityFields, "appliedDate", "accountingDate"]
         if (immutable.some(field => !same(field, original[field], candidate[field])))
             denied("APPLICATION_IMMUTABLE", "An application keeps its original records and dates when it is unapplied")
     }
-    // Lock organizations before document and application rows, matching the reviewed settlement writer.
-    Array.from(find("mantle.party.Party").condition("partyId", "in", initialOrgs).orderBy("partyId").forUpdate(true).list())
-    records = documents(candidate, true)
-    const lockedOrgs = [...new Set([...organizations(records), ...organizations(originalRecords)])].sort()
-    if (JSON.stringify(lockedOrgs) !== JSON.stringify(initialOrgs))
-        denied("APPLICATION_SOURCE_CHANGED", "Application organization changed; retry the operation")
     if (lockedOrgs.length !== 1) denied("INTERCOMPANY_SETTLEMENT_UNAVAILABLE", "Intercompany settlement is not available")
-    if (!lockedOrgs.some(org => lib.policy.preference(org).settlementApplicationGuardEnabled === "Y")) return
     const amount = toDecimal(candidate.amountApplied ?? 0)
     if (original && toDecimal(original.amountApplied ?? 0).isZero() && amount.compare(0) > 0)
         denied("APPLICATION_IMMUTABLE", "Create a new reviewed application instead of restoring an unapplied row")
@@ -226,7 +306,7 @@ function guard(p) {
     const sources = ec.resource.script("component://mr-mantle/service/mantle/account/SourcePostingGuard.js")
     const originals = sources.lockForApplication(records, day)
     for (const record of records) {
-        if (amount.compare(capacity(record, applications)) > 0)
+        if (amount.compare(capacity(record, applications, lockedOrgs[0])) > 0)
             denied("APPLICATION_BALANCE_CHANGED", "Application exceeds an available financial balance; review it again")
     }
     const sourcePayment = records.find(record => record.entity === P && record.id === candidate.paymentId)
@@ -237,7 +317,7 @@ function guard(p) {
             applications,
             originals,
             amount,
-            capacity(sourcePayment, applications),
+            capacity(sourcePayment, applications, lockedOrgs[0]),
             /mantle\.account\.PaymentServices\.(apply#Settlement|autoApply#Payment)(?:\b|$)/.test(
                 ec.artifactExecution.getStackNameString()
             )

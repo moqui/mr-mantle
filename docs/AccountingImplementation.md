@@ -66,4 +66,28 @@ refunds/transfers remain the subsequent P5b2/P5b3 contracts; their actions are u
 Final native server gate: 1,074 passed, the same four reproduced baseline failures, 17 skipped, 1,095 features across
 117 specs. All 75 added native cases pass. BOSS's full suite passes 1,145 with no failures and five skips; all seven
 payment browser walks and independent output review pass. XML validation and unchanged screen-lint findings are recorded
-with the app's verification. Current user scope completes P6 and pauses before P7.
+with the app's verification. Current user scope completes P5 and pauses before P6 with a recorded checkpoint.
+
+## Reviewed provider operations P5b2a
+
+Native gateway instructions retain reviewed organization, currency, SQL day, source/method/binding revisions and
+operation identity. Durable reservation, provider invocation, typed evidence and local completion are separate
+transactions. Authorization parents never post or settle cash; each partial capture creates its own exact cash
+Payment, posting and issued outputs. Pending, uncertain and accepted-unposted outcomes retain capacity. Exact lookup
+cannot initiate another provider operation; reviewed recovery completes only the original accepted local money.
+
+Private dispatch preparation validates fresh locked method and subtype values and passes those exact credentials
+by value after releasing financial locks. Safe adapters explicitly guarantee that contract. Current credential
+rotation does not alter exact lookup identity. Provider ancestors never acquire financial-finalizer admission.
+
+Legacy provider wrappers, configured leaves, refund links, order/invoice loops and polling exclude native records.
+Permanent independently committed admission fences serialize old I/O against first adoption, including caller rollback.
+Common guards protect both original and candidate application/source identities, accepted cash provenance and original
+postings even when adoption is later disabled. Ordinary GL descriptions and reconciliation remain editable.
+
+The full standalone gate has 1,160 features across 130 specs: 1,139 pass, the same four reproduced baseline failures
+and 17 skips. All 65 added cases pass, including actual permission loss, competing capacity writes, caller rollback,
+credential contention, retained large evidence, unsafe legacy entry and initially unmanaged source/adoption races.
+The final safe identity/recovery DTO corrections pass their focused checks. BOSS passes 1,161/0/5; final presentation
+review and the bounded repository commits are recorded in the app's implementation record. Manual/provider refunds
+and transfers remain P5b2b/P5b3; execution pauses after their P5 checkpoint and before P6.

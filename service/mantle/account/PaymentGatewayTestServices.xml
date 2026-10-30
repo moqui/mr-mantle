@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="invoke" noun="ReviewedOperation" allow-remote="false" transaction="ignore">
+        <description>Deterministic safe-provider fixture with independently committed effects and an accepted-then-timeout mode.</description>
+        <implements service="mantle.account.PaymentServices.invoke#ReviewedGatewayOperation"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/test/AccountingPaymentGatewayProvider.js').invoke(context))</script>
+        </actions>
+    </service>
+    <service verb="lookup" noun="ReviewedOperation" allow-remote="false" transaction="ignore">
+        <description>Read the fixture provider by the immutable merchant and operation identity without executing another effect.</description>
+        <implements service="mantle.account.PaymentServices.lookup#ReviewedGatewayOperation"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/test/AccountingPaymentGatewayProvider.js').lookup(context))</script>
+        </actions>
+    </service>
+    <service verb="record" noun="ReviewedEffect" allow-remote="false" transaction="force-new">
+        <description>Commit a deterministic provider-side effect independently of the application caller's transaction.</description>
+        <implements service="mantle.account.PaymentServices.invoke#ReviewedGatewayOperation"/>
+        <in-parameters>
+            <parameter name="fixtureOutcome" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="replayed" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/test/AccountingPaymentGatewayProvider.js').record(context))</script>
+        </actions>
+    </service>
+    <service verb="observe" noun="ReviewedEffect" allow-remote="false" transaction="force-new">
+        <description>Observe a deterministic pending provider instruction's later outcome without executing another provider request.</description>
+        <implements service="mantle.account.PaymentServices.lookup#ReviewedGatewayOperation"/>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/test/AccountingPaymentGatewayProvider.js').observe(context))</script>
+        </actions>
+    </service>
+    <service verb="probe" noun="CallerRollback" allow-remote="false" transaction="cache">
+        <description>Exercise native gateway orchestration inside a caller-owned cached transaction and deliberately roll back only the caller's work.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+            <parameter name="observationId" required="true"/>
+            <parameter name="markerId" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/test/AccountingPaymentGatewayProvider.js').callerRollback(context)</script>
+        </actions>
+    </service>
+    <service verb="pause" noun="BeforeDispatch" allow-remote="false" transaction="force-new">
+        <description>Targeted native-fixture-only bounded barrier before credential preparation; no financial writes or locks and no effect without explicit fixture controls.</description>
+        <in-parameters>
+            <parameter name="attemptId" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.resource.script('component://mr-mantle/test/AccountingPaymentGatewayProvider.js').beforeDispatch(context)</script>
+        </actions>
+    </service>
+    <service verb="hold" noun="CredentialChange" allow-remote="false" transaction="force-new">
+        <description>Native-fixture-only competing transaction changing locked method/subtype data before releasing the dispatcher, holding it uncommitted for a bounded wait.</description>
+        <in-parameters>
+            <parameter name="paymentGatewayConfigId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="paymentMethodId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="originalMethodVersion"/>
+            <parameter name="heldMilliseconds" type="Long"/>
+            <parameter name="providerEffectsWhileLocked" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/test/AccountingPaymentGatewayProvider.js').holdCredentialChange(context))</script>
+        </actions>
+    </service>
+</services>

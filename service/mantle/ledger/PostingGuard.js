@@ -312,9 +312,16 @@ function validate(p, lock = false) {
     }
 }
 function check(p) {
+    if (!p.verifyOnly)
+        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const initial = one(T, {acctgTransId: p.acctgTransId})
     if (!initial) throw new Error("Accounting transaction is not available")
+    const legacyPaymentOnly =
+        !p.verifyOnly &&
+        ec.resource.script("component://mr-mantle/service/mantle/account/SourcePostingGuard.js").assertCashSource(initial)
     const pref = preference(initial.organizationPartyId)
+    if (legacyPaymentOnly && (pref.postingGuardEnabled === "Y" || pref.settlementApplicationGuardEnabled === "Y"))
+        throw new Error("PAYMENT_SOURCE_CHANGED: Financial controls changed; retry the operation")
     const adopted = pref.postingGuardEnabled === "Y"
     if (!p.verifyOnly && !adopted) {
         if (pref.settlementApplicationGuardEnabled === "Y" && initial.isPosted !== "Y" && !initial.accountingDate) {
@@ -349,9 +356,10 @@ function check(p) {
                 stack
             )
         // These controllers retain and recheck the complete application/cash plans before posting corrections.
-        const paymentReviewed = /mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment)(?:\b|$)/.test(
-            stack
-        )
+        const paymentReviewed =
+            /mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment|complete#PaymentGatewayAttempt)(?:\b|$)/.test(
+                stack
+            )
         if (!reviewed && !source && !paymentReviewed) throw new Error("REVIEW_REQUIRED: Use a reviewed posting operation")
         if (out.captureAccountingDate)
             lib.call("update#" + T, {acctgTransId: p.acctgTransId, accountingDate: out.captureAccountingDate})

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <entity entity-name="PaymentLegacyGatewayMutex" package="mantle.account.payment" cache="never">
+        <description>Stable short-lived mutex for first creation of per-Payment legacy provider admission fences.</description>
+        <field name="mutexId" type="id" is-pk="true"/>
+        <seed-data>
+            <mantle.account.payment.PaymentLegacyGatewayMutex mutexId="admission"/>
+        </seed-data>
+    </entity>
+    <entity entity-name="PaymentLegacyGatewayFence" package="mantle.account.payment" cache="never">
+        <description>A permanent record of entry into legacy provider I/O. No Payment FK: publication must not wait on its caller's uncommitted Payment.</description>
+        <field name="paymentId" type="id" is-pk="true"/>
+        <field name="everEnteredProvider" type="text-indicator"/>
+        <field name="firstServiceName" type="text-medium"/>
+        <field name="firstGatewayConfigId" type="id"/>
+        <field name="enteredDate" type="date-time"/>
+    </entity>
+</entities>

@@ -125,6 +125,7 @@ function nativeTransactions(paymentId, org, lock = false) {
 }
 function requireMutable(scope) {
     const r = scope.record
+    ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
     if (!["PmntProposed", "PmntPromised"].includes(r.statusId))
         denied("PAYMENT_STATE_INVALID", "Only a proposed or promised payment can be edited")
     if (r.refundForPaymentId || r.paymentTypeEnumId !== "PtInvoicePayment")
@@ -264,6 +265,9 @@ function storeDraft(p) {
         denied("STALE_REVISION", "The payment changed; reload before editing")
     const methods = methodEvidence(initial, request, request.effectiveDate, true),
         before = initial.record.statusId
+    ec.resource
+        .script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
+        .assertAdoptable(initial.record, true)
     setFields(initial.record, draftFields(request, methods))
     initial.record.update()
     const result = draftResult(one(P, {paymentId: p.paymentId}))
@@ -501,6 +505,7 @@ function stateNormalized(p, lock = false) {
     if (p.action === "void") return unapplyNormalized(p, lock, true)
     const scope = paymentScope(p, true, lock),
         r = scope.record
+    ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
     requireGuard(scope)
     counterparty({partyId: scope.partyId}, scope.organizationPartyId)
     if (!p.sourceVersion || paymentVersion(r) !== p.sourceVersion)
@@ -782,6 +787,9 @@ function changeState(p) {
         denied("STALE_PREVIEW", "The payment or its posting policy changed; review it again")
     if (n.request.action === "deliver" || n.evidence.length)
         ec.resource.script("component://mr-mantle/service/mantle/account/PaymentArchiveGuard.js").prepare()
+    ec.resource
+        .script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
+        .assertAdoptable(n.scope.record, true)
     let record = n.scope.record
     const before = record.statusId,
         action = n.request.action
@@ -989,6 +997,7 @@ function allDocumentApplications(documents, lock = false) {
 function unapplyNormalized(p, lock = false, voidPayment = false) {
     const scope = paymentScope(p, true, lock),
         r = scope.record
+    ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
     requireGuard(scope)
     counterparty({partyId: scope.partyId}, scope.organizationPartyId)
     if (!p.sourceVersion || p.sourceVersion !== paymentVersion(r))
@@ -1347,6 +1356,9 @@ function verifyReversal(original, reversalId, expected) {
 }
 function executeCorrection(n, op) {
     if (n.evidence.length) ec.resource.script("component://mr-mantle/service/mantle/account/PaymentArchiveGuard.js").prepare()
+    ec.resource
+        .script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
+        .assertAdoptable(n.scope.record, true)
     const reversalIds = [],
         replacementIds = [],
         before = n.scope.record.statusId
@@ -1576,6 +1588,10 @@ function refuseValidation(p) {
     projectPreview,
     evidenceOptions,
     selectedEvidence,
+    methodRequest,
+    methodEvidence,
+    cashPlan,
+    freezeEvidence,
     canonicalDbLocation,
     nativeTransactions,
     verifyCash,

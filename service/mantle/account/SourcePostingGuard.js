@@ -13,6 +13,8 @@ const applicationTypes = [
     "AttPaymentAdjust"
 ]
 const cashTypes = ["AttPayment", "AttDisbursement", "AttReceipt", "AttIncomingPayment", "AttOutgoingPayment"]
+const gatewayPosting = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayPostingGuard.js")
+const gatewayTypes = {cashTypes, applicationTypes}
 const headerFields = [
     "organizationPartyId",
     "invoiceId",
@@ -66,6 +68,40 @@ function changed(before, after, fields) {
 }
 function financial(tx) {
     return tx && (tx.invoiceId || tx.paymentId || tx.paymentApplicationId)
+}
+function assertCashSource(tx) {
+    return tx ? gatewayPosting.posting(tx, gatewayTypes) : false
+}
+function assertHeldCashMutable(tx) {
+    if (!tx?.paymentId || !cashTypes.includes(tx.acctgTransTypeEnumId) || !tx.organizationPartyId) return
+    const legacy = ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js"),
+        initial = one("mantle.account.payment.Payment", {paymentId: tx.paymentId})
+    if (!legacy.isManaged(initial)) {
+        legacy.lockUnmanagedPayments([tx.paymentId])
+        return
+    }
+    find("mantle.party.Party", {partyId: tx.organizationPartyId}).forUpdate(true).one()
+    find("mantle.account.payment.Payment", {paymentId: tx.paymentId}).forUpdate(true).one()
+    if (
+        !find("mantle.account.payment.PaymentGatewayReservation", {
+            organizationPartyId: tx.organizationPartyId,
+            paymentId: tx.paymentId,
+            holdKind: "cash",
+            status: "held"
+        })
+            .useCache(false)
+            .limit(1)
+            .one()
+    )
+        return
+    const hold = ec.resource
+        .script("component://mr-mantle/service/mantle/account/PaymentGatewayReservations.js")
+        .cashHoldSummary({
+            organizationPartyId: tx.organizationPartyId,
+            paymentId: tx.paymentId
+        })
+    if (hold.heldAmount.compare(0) > 0)
+        denied("GATEWAY_CASH_RESERVED", "Resolve the pending provider refund before changing its original cash posting")
 }
 function positiveApplications(tx) {
     const cf = ec.entity.conditionFactory
@@ -148,12 +184,15 @@ function assertLocked(tx) {
 }
 function assertMutable(p) {
     const initial = one(T, {acctgTransId: p.acctgTransId})
+    if (assertCashSource(initial)) return
+    assertHeldCashMutable(initial)
     if (!financial(initial) || !adopted(initial)) return
     // Public mutation entry points take the organization first, before their existing transaction/entry locks.
     find("mantle.party.Party", {partyId: initial.organizationPartyId}).forUpdate(true).one()
     assertLocked(find(T, {acctgTransId: p.acctgTransId}).forUpdate(true).one())
 }
 function guardTransaction(p) {
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const values = map(p.entityValue || p)
     const before = p.originalValue
         ? map(p.originalValue)
@@ -161,6 +200,19 @@ function guardTransaction(p) {
           ? one(T, {acctgTransId: values.acctgTransId})
           : null
     const after = Object.assign({}, map(before), values)
+    const legacyOnly = gatewayPosting.header(
+        {
+            before,
+            after,
+            operation: p.eecaOperation,
+            financialChanged: !before || p.eecaOperation === "delete" || changed(before, after, headerFields)
+        },
+        gatewayTypes
+    )
+    if (legacyOnly) return
+    if (!before || p.eecaOperation === "delete" || changed(before, after, headerFields)) {
+        for (const source of [before, p.eecaOperation === "delete" ? null : after].filter(Boolean)) assertHeldCashMutable(source)
+    }
     // New source creation joins the same organization mutex as applications, including raw already-posted imports.
     // This also covers a legacy application created before its first cash transaction in one transaction.
     if (!before && financial(after) && adopted(after))
@@ -171,6 +223,7 @@ function guardTransaction(p) {
         (p.eecaOperation === "create" || !before?.reverseOfAcctgTransId || before.isPosted !== after.isPosted)
     ) {
         const referenced = one(T, {acctgTransId: after.reverseOfAcctgTransId})
+        assertHeldCashMutable(referenced)
         if (financial(referenced) && adopted(referenced))
             assertLocked(find(T, {acctgTransId: after.reverseOfAcctgTransId}).forUpdate(true).one())
     }
@@ -180,6 +233,7 @@ function guardTransaction(p) {
     assertLocked(find(T, {acctgTransId: before.acctgTransId}).forUpdate(true).one())
 }
 function guardEntry(p) {
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const values = map(p.entityValue || p)
     const before = p.originalValue
         ? map(p.originalValue)
@@ -190,9 +244,20 @@ function guardEntry(p) {
             })
           : null
     const after = Object.assign({}, map(before), values)
+    const legacyOnly = gatewayPosting.entry(
+        {
+            before,
+            after,
+            operation: p.eecaOperation,
+            financialChanged: !before || p.eecaOperation === "delete" || changed(before, after, entryFields)
+        },
+        gatewayTypes
+    )
+    if (legacyOnly) return
     if (before && p.eecaOperation !== "delete" && !changed(before, after, entryFields)) return
     for (const id of [...new Set([before?.acctgTransId, after.acctgTransId].filter(Boolean))].sort()) {
         const initial = one(T, {acctgTransId: id})
+        assertHeldCashMutable(initial)
         if (financial(initial) && adopted(initial)) assertLocked(find(T, {acctgTransId: id}).forUpdate(true).one())
     }
 }
@@ -345,6 +410,7 @@ function checkDirectApplication(application, records, applications, originals, a
         denied("DIRECT_PAYMENT_RESTORE_REQUIRED", "Restore the entire currently available direct payment to its original invoice")
 }
 ;({
+    assertCashSource,
     assertMutable,
     guardTransaction,
     guardEntry,

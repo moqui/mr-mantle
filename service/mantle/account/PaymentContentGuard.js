@@ -5,7 +5,7 @@ const {lib} = workflow
 const CONTENT = "mantle.account.payment.PaymentContent",
     OUTPUT = "mantle.account.payment.PaymentIssuedOutput"
 function reviewed() {
-    return /mantle\.account\.PaymentServices\.(create#PaymentDraft|store#PaymentDraft|change#PaymentState|unapply#ReviewedPayment)(?:\b|$)/.test(
+    return /mantle\.account\.PaymentServices\.(create#PaymentDraft|store#PaymentDraft|change#PaymentState|unapply#ReviewedPayment|complete#PaymentGatewayAttempt)(?:\b|$)/.test(
         ec.artifactExecution.getStackNameString()
     )
 }
@@ -22,6 +22,7 @@ function assertMutableContent(p) {
     return row
 }
 function guardContent(p) {
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const updates = lib.map(p.entityValue || p),
         original = p.originalValue
             ? lib.map(p.originalValue)
@@ -85,6 +86,7 @@ function guardContent(p) {
     }
 }
 function guardOutput(p) {
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     if (p.eecaOperation !== "create" || !reviewed())
         lib.denied("ISSUED_PAYMENT_IMMUTABLE", "Issued payment output is an immutable lifecycle record")
     const row = lib.map(p.entityValue || p),
@@ -99,6 +101,7 @@ function guardOutput(p) {
         lib.denied("PAYMENT_OUTPUT_LOCATION_INVALID", "Issued output must use its private immutable archive")
 }
 function guardEvent(p) {
+    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const callback =
         /mantle\.account\.PaymentServices\.(approve#PaymentValidationNotice|refuse#PaymentValidationNotice)(?:\b|$)/.test(
             ec.artifactExecution.getStackNameString()
