@@ -809,42 +809,6 @@ function latestPostingDay(invoices, payments) {
     ].map(tx => policy.postingDay(tx))
     return days.sort().slice(-1)[0] || null
 }
-// Gateway cash: an authorization is not cash, a reviewed gateway payment needs its capture, and held refund cash is
-// not available to apply.
-function gatewayCash(payment, amount) {
-    const legacy = ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
-    if (payment.gatewayRole === "authorization")
-        denied("GATEWAY_AUTHORIZATION_NOT_CASH", "An authorization instruction cannot enter trade settlement")
-    if (
-        payment.lifecycleManaged === "Y" &&
-        payment.paymentTypeEnumId === "PtInvoicePayment" &&
-        !payment.gatewayRole &&
-        legacy.gatewayCapable(payment) &&
-        !legacy.hasManualCash(payment)
-    )
-        denied("GATEWAY_CAPTURE_REQUIRED", "Only a completed reviewed provider capture can enter trade settlement")
-    const held = find("mantle.account.payment.PaymentGatewayReservation", {
-        paymentId: payment.paymentId,
-        holdKind: "cash",
-        status: "held"
-    })
-        .useCache(false)
-        .limit(1)
-        .one()
-    if (!held) return
-    const hold = ec.resource
-        .script("component://mr-mantle/service/mantle/account/PaymentGatewayReservations.js")
-        .cashHoldSummary({organizationPartyId: held.organizationPartyId, paymentId: payment.paymentId, lock: true})
-    const applied = workflow.applications([payment]).reduce((sum, row) => sum.add(row.amountApplied ?? 0), toDecimal(0))
-    if (
-        amount.compare(
-            toDecimal(payment.amount ?? 0)
-                .subtract(applied)
-                .subtract(hold.heldAmount)
-        ) > 0
-    )
-        denied("APPLICATION_BALANCE_CHANGED", "Application exceeds an available financial balance; review it again")
-}
 function checkApplication(p) {
     const amount = toDecimal(p.amount ?? 0)
     if (amount.compare(0) <= 0) return
@@ -853,13 +817,8 @@ function checkApplication(p) {
     const currency = invoices[0]?.currencyUomId || payments[0]?.amountUomId
     if (currency && !ec.l10n.roundCurrency(amount, currency).eq(amount))
         denied("APPLICATION_AMOUNT_PRECISION", "Application amount must use its currency's precision")
-    const application = {paymentId: p.paymentId, toPaymentId: p.toPaymentId, invoiceId: p.invoiceId, toInvoiceId: p.toInvoiceId}
     if (payments.some(row => row.paymentTypeEnumId === "PtInternalTransfer"))
         denied("TRANSFER_APPLICATION_REFUSED", "Internal transfers cannot fund trade applications or refunds")
-    ec.resource
-        .script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js")
-        .application({after: application})
-    for (const payment of payments) gatewayCash(payment, amount)
     // The book day: as reviewed, else the day the posting would take from its source, else the applied date's day.
     const bookDay = p.accountingDate
         ? policy.calendarDateText(p.accountingDate)
@@ -871,11 +830,14 @@ function checkApplication(p) {
     if (latest && latest > bookDay)
         denied("APPLICATION_BEFORE_SOURCE_POSTING", "The application date cannot precede a document's posting day " + latest)
 }
-// An application that funds a completed refund stays applied.
+// An application that funds a completed refund stays applied: a delivered or confirmed refund applied to the payment it
+// refunds. Voiding the refund first (PaymentCancelledCleanup) unapplies it.
 function checkUnapply(p) {
-    ec.resource
-        .script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js")
-        .application({before: map(p.paymentApplication)})
+    const row = p.paymentApplication
+    if (!row?.paymentId || !row.toPaymentId || toDecimal(row.amountApplied ?? 0).compare(0) <= 0) return
+    const refund = one(P, {paymentId: row.paymentId})
+    if (refund?.refundForPaymentId === row.toPaymentId && ["PmntDelivered", "PmntConfirmed"].includes(refund.statusId))
+        denied("REFUND_FUNDING_IMMUTABLE", "A completed refund keeps its application to the payment it refunds")
 }
 
 const operations = {

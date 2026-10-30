@@ -1,11 +1,13 @@
-// Exact manual opposite cash and permanent original funding identities, using the real native money controller.
-const helper = () => ec.resource.script("component://mr-mantle/test/AccountingPaymentRefundFixtures.js")
+// Manual refunds through Mantle's create#RefundPayment: get#PaymentRefundSummary, preview#PaymentRefund and
+// refund#ReviewedPayment, the cumulative refund cap with pending refunds counted, and the funding application a
+// completed refund keeps.
+const helper = () => ec.resource.script("component://mr-mantle/test/AccountingPaymentLifecycleFixtures.js")
 let f
 spec({
     setupSpec() {
         login("john.doe")
         ec.artifactExecution.disableAuthz()
-        f = helper().fixtures("ACCT_P5_REF_MONEY")
+        f = helper().fixtures("ACCT_RFD")
     },
     setup() {
         login("john.doe")
@@ -16,115 +18,184 @@ spec({
     },
     cleanupSpec() {
         login("john.doe")
-        if (f?.org) helper().lifecycle.settlement.base.cleanupLocks(f.org)
+        if (f?.org) helper().settlement.base.cleanupLocks(f.org)
     }
 })
-feature("partial manual refunds consume exact original cash once and exact retry survives later original balance changes", {
-    when() {
-        const h = helper(),
-            paymentId = h.cash(f),
-            review = h.preview(f, paymentId),
-            first = h.confirm(review, "refund-partial-twenty"),
-            second = h.confirm(h.preview(f, paymentId, {amount: "40"}), "refund-remaining-forty"),
-            again = h.confirm(review, "refund-partial-twenty"),
-            records = h.lib.rows("mantle.account.payment.PaymentRefundRecord", {originalPaymentId: paymentId}),
-            summary = h.native("get#PaymentRefundSummary", {organizationPartyId: f.org, paymentId}),
-            children = records.map(row => h.lifecycle.detail(f, row.refundPaymentId)),
-            transactions = records.flatMap(row =>
-                h.lib.rows("mantle.ledger.transaction.AcctgTrans", {paymentId: row.refundPaymentId})
-            )
-        return {
-            paymentId,
-            first,
-            second,
-            again,
-            records,
-            summary,
-            children,
-            transactions,
-            original: h.lib.one("mantle.account.payment.Payment", {paymentId})
-        }
-    },
-    then({paymentId, first, second, again, records, summary, children, transactions, original}) {
-        first.originalPaymentId == paymentId
-        first.paymentId == paymentId
-        first.refundPaymentId != paymentId
-        first.reasonCode == "REFUND_COMPLETED"
-        first.acctgTransIds.length == 2
-        second.acctgTransIds.length == 2
-        first.outputRows.every(row => row.paymentId === first.refundPaymentId && row.canOpen === true)
-        again.refundPaymentId == first.refundPaymentId
-        again.paymentApplicationId == first.paymentApplicationId
-        again.alreadyApplied == true
-        records.length == 2
-        records.every(row => row.currencyUomId === "USD" && row.originalPaymentId === paymentId && row.paymentApplicationId)
-        children.every(
-            row =>
-                row.payment.paymentTypeEnumId === "PtRefund" &&
-                row.payment.cashDirection === "outgoing" &&
-                row.payment.financeDirection === "receivable"
+
+// A delivered customer receipt of 60, posted through the payment lifecycle.
+function receipt() {
+    return helper().delivered(f, {paymentInstrumentEnumId: "PiOther"})
+}
+function review(paymentId, extra = {}) {
+    return helper().native(
+        "preview#PaymentRefund",
+        Object.assign(
+            {
+                organizationPartyId: f.org,
+                paymentId,
+                amount: "20",
+                effectiveDate: f.timestamp,
+                reason: "Return unused cash",
+                referenceNumber: "RFD-1"
+            },
+            extra
         )
-        children.every(row => toDecimal(row.totals.unappliedTotal).isZero())
-        transactions.length == 4
-        transactions.every(row => row.isPosted === "Y" && row.glFiscalTypeEnumId === "GLFT_ACTUAL")
-        toDecimal(summary.refundSummary.completedRefundAmount).eq(60)
-        toDecimal(summary.refundSummary.refundableAmount).isZero()
-        summary.capabilities.canRefund == false
-        toDecimal(original.amount).eq(60)
-        original.statusId == "PmntDelivered"
+    )
+}
+function confirm(preview, operationKey = helper().key("rfd-")) {
+    return helper().native("refund#ReviewedPayment", {
+        previewId: preview.previewId,
+        inputFingerprint: preview.inputFingerprint,
+        operationKey
+    })
+}
+const payment = paymentId => helper().lib.one("mantle.account.payment.Payment", {paymentId})
+const summary = paymentId => helper().native("get#PaymentRefundSummary", {organizationPartyId: f.org, paymentId})
+
+feature("treasury refunds part of a receipt on its own book day; a retry with the same key answers the first result", {
+    when() {
+        const h = helper()
+        login(f.users.treasury)
+        const paymentId = receipt(),
+            before = summary(paymentId),
+            preview = review(paymentId),
+            operationKey = h.key("rfd-first-"),
+            first = confirm(preview, operationKey),
+            retry = confirm(preview, operationKey),
+            refund = payment(first.refundPaymentId),
+            applications = h.lib.rows("mantle.account.payment.PaymentApplication", {
+                paymentId: first.refundPaymentId,
+                toPaymentId: paymentId
+            }),
+            reopened = h.native("get#PaymentRefundPreview", {organizationPartyId: f.org, previewId: preview.previewId})
+        return {before, preview, first, retry, refund, applications, reopened, after: summary(paymentId)}
+    },
+    then({before, preview, first, retry, refund, applications, reopened, after}) {
+        before.canRefund == true
+        toDecimal(before.refundSummary.refundableAmount).eq(60)
+        preview.canApply == true
+        toDecimal(preview.amount).eq(20)
+        preview.organizationMethod.paymentMethodId == f.methodId
+        preview.organizationMethod.accountNumber == null
+        first.statusId == "PmntDelivered"
+        first.acctgTransIds.length > 0
+        first.accountingDateText == f.day
+        retry.alreadyApplied == true
+        retry.refundPaymentId == first.refundPaymentId
+        refund.paymentTypeEnumId == "PtRefund"
+        refund.refundForPaymentId == first.paymentId
+        refund.paymentMethodId == f.methodId
+        refund.paymentRefNum == "RFD-1"
+        refund.comments == "Return unused cash"
+        helper().lib.policy.calendarDateText(refund.accountingDate) == f.day
+        applications.length == 1 && toDecimal(applications[0].amountApplied).eq(20)
+        reopened.status == "complete"
+        reopened.results.refundPaymentId == first.refundPaymentId
+        toDecimal(after.refundSummary.completedRefundAmount).eq(20)
+        toDecimal(after.refundSummary.refundableAmount).eq(40)
     }
 })
-feature("supplier refund reverses outgoing cash while preserving payable side and exact funding application", {
+
+feature("the refund cap counts completed and pending refunds and keeps to the unapplied cash", {
     when() {
-        const h = helper(),
-            paymentId = h.cash(f, "outgoing", "50"),
-            result = h.confirm(h.preview(f, paymentId, {amount: "15"}), "refund-supplier-fifteen"),
-            record = h.lib.one("mantle.account.payment.PaymentRefundRecord", {refundPaymentId: result.refundPaymentId}),
-            tx = h.lib.one("mantle.ledger.transaction.AcctgTrans", {acctgTransId: record.cashAcctgTransId})
+        const h = helper()
+        login(f.users.treasury)
+        const paymentId = receipt()
+        confirm(review(paymentId, {amount: "15"}))
+        // a pending refund, not yet applied, holds its amount
+        h.native("create#RefundPayment", {paymentId, amount: "30", statusId: "PmntPromised"})
+        const held = summary(paymentId).refundSummary,
+            overPreview = h.rejected("preview#PaymentRefund", {
+                organizationPartyId: f.org,
+                paymentId,
+                amount: "16",
+                effectiveDate: f.timestamp,
+                reason: "Over the cap"
+            }),
+            overCreate = h.rejected("create#RefundPayment", {paymentId, amount: "16", statusId: "PmntPromised"}),
+            finer = h.rejected("preview#PaymentRefund", {
+                organizationPartyId: f.org,
+                paymentId,
+                amount: "0.005",
+                effectiveDate: f.timestamp,
+                reason: "Finer than the currency"
+            })
+        return {held, overPreview, overCreate, finer}
+    },
+    then({held, overPreview, overCreate, finer}) {
+        toDecimal(held.completedRefundAmount).eq(15)
+        toDecimal(held.pendingRefundAmount).eq(30)
+        toDecimal(held.unappliedTotal).eq(45)
+        toDecimal(held.refundableAmount).eq(15)
+        overPreview.includes("REFUND_AMOUNT_INVALID")
+        overCreate.includes("greater than refundable amount")
+        finer.includes("REFUND_AMOUNT_INVALID")
+    }
+})
+
+feature("a review is stale after the refunds change, owned by its user, and refused to receivables users", {
+    when() {
+        const h = helper()
+        login(f.users.treasury)
+        const paymentId = receipt(),
+            preview = review(paymentId)
+        h.native("create#RefundPayment", {paymentId, amount: "5", statusId: "PmntPromised"})
+        const stale = h.rejected("refund#ReviewedPayment", {
+            previewId: preview.previewId,
+            inputFingerprint: preview.inputFingerprint,
+            operationKey: h.key("rfd-stale-")
+        })
+        const current = review(paymentId)
+        login(f.users.ar)
+        const arSummary = summary(paymentId),
+            arPreview = h.rejected("preview#PaymentRefund", {
+                organizationPartyId: f.org,
+                paymentId,
+                amount: "5",
+                effectiveDate: f.timestamp,
+                reason: "Not mine"
+            }),
+            arConfirm = h.rejected("refund#ReviewedPayment", {
+                previewId: current.previewId,
+                inputFingerprint: current.inputFingerprint,
+                operationKey: h.key("rfd-ar-")
+            })
         return {
-            result,
-            record,
-            tx,
-            entries: h.lib.rows("mantle.ledger.transaction.AcctgTransEntry", {acctgTransId: tx.acctgTransId}),
-            child: h.lifecycle.detail(f, result.refundPaymentId),
-            summary: h.native("get#PaymentRefundSummary", {organizationPartyId: f.org, paymentId})
+            stale,
+            arSummary,
+            arPreview,
+            arConfirm,
+            refunds: h.count("mantle.account.payment.Payment", {refundForPaymentId: paymentId})
         }
     },
-    then({result, record, tx, entries, child, summary}) {
-        child.payment.cashDirection == "incoming"
-        child.payment.financeDirection == "payable"
-        record.financeDirection == "payable"
-        record.cashDirection == "incoming"
-        tx.acctgTransTypeEnumId == "AttIncomingPayment"
-        entries.some(row => row.glAccountId === "111100000" && row.debitCreditFlag === "D" && toDecimal(row.amount).eq(15))
-        result.applicationResults.length == 1
-        toDecimal(summary.refundSummary.refundableAmount).eq(35)
+    then({stale, arSummary, arPreview, arConfirm, refunds}) {
+        stale.includes("STALE_PREVIEW")
+        arSummary.canRefund == false
+        arSummary.reasonCode == "PERMISSION_DENIED"
+        arPreview.includes("PERMISSION_DENIED")
+        arConfirm.includes("REFUND_PREVIEW_UNAVAILABLE")
+        refunds == 1
     }
 })
-feature("an opposing reviewed clean draft becomes the actual refund child with immutable links and owned outputs", {
+
+feature("a completed refund keeps its application to the original until the refund itself is voided", {
     when() {
-        const h = helper(),
-            paymentId = h.cash(f),
-            draft = h.lifecycle.draft(f, {cashDirection: "outgoing", amount: "20"}),
-            view = h.lifecycle.detail(f, draft),
-            review = h.preview(f, paymentId, {refundPaymentId: draft, refundSourceVersion: view.sourceVersion}),
-            result = h.confirm(review, "refund-existing-draft"),
-            record = h.lib.one("mantle.account.payment.PaymentRefundRecord", {refundPaymentId: draft}),
-            reopened = h.native("get#PaymentRefundPreview", {organizationPartyId: f.org, previewId: review.previewId}),
-            changed = h.lifecycle.rejected("refund#ReviewedPayment", {
-                previewId: review.previewId,
-                inputFingerprint: "changed-fingerprint",
-                operationKey: "refund-existing-draft"
-            })
-        return {paymentId, draft, result, record, reopened, changed}
+        const h = helper()
+        login(f.users.treasury)
+        const paymentId = receipt(),
+            refunded = confirm(review(paymentId, {amount: "25"})),
+            unapplyRefused = h.rejected("unapply#PaymentApplication", {paymentApplicationId: refunded.paymentApplicationId})
+        login("john.doe")
+        h.call("update#mantle.account.payment.Payment", {paymentId: refunded.refundPaymentId, statusId: "PmntVoid"})
+        const application = h.lib.one("mantle.account.payment.PaymentApplication", {
+            paymentApplicationId: refunded.paymentApplicationId
+        })
+        return {unapplyRefused, application, after: summary(paymentId).refundSummary}
     },
-    then({paymentId, draft, result, record, reopened, changed}) {
-        result.refundPaymentId == draft
-        record.originalPaymentId == paymentId
-        result.outputRows.every(row => row.paymentId === draft)
-        reopened.status == "complete"
-        reopened.operationKey == "refund-existing-draft"
-        reopened.results.refundPaymentId == draft
-        changed.includes("OPERATION_KEY_CONFLICT")
+    then({unapplyRefused, application, after}) {
+        unapplyRefused.includes("REFUND_FUNDING_IMMUTABLE")
+        application == null || toDecimal(application.amountApplied ?? 0).eq(0)
+        toDecimal(after.completedRefundAmount).eq(0)
+        toDecimal(after.refundableAmount).eq(60)
     }
 })

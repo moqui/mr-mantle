@@ -440,9 +440,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="gatewayInstructionId"/>
-                <exclude field-name="gatewayAttemptId"/>
-                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
@@ -475,9 +472,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="gatewayInstructionId"/>
-                <exclude field-name="gatewayAttemptId"/>
-                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
             </auto-parameters>
         </in-parameters>
@@ -596,9 +590,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="gatewayInstructionId"/>
-                <exclude field-name="gatewayAttemptId"/>
-                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="overrideGlAccountId"/><exclude field-name="acctgTransResultEnumId"/>
                 <exclude field-name="reconcileStatusId"/><exclude field-name="paymentMethodFileId"/></auto-parameters>
@@ -663,17 +654,16 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="create" noun="RefundPayment">
-        <description>Create a refund Payment based on an original. If the status of the refund is Delivered applies new refund Payment to the Payment it was a refund for.</description>
+        <description>Create a refund Payment based on an original. If the status of the refund is Delivered applies new refund
+            Payment to the Payment it was a refund for. Refuses an amount over what is left of the original after its other
+            refunds, pending ones included (all but cancelled, void and declined). An accountingDate is the refund's own book
+            day, set before it is delivered and posted.</description>
         <in-parameters>
             <parameter name="paymentId" required="true"><description>The ID of the original Payment</description></parameter>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/>
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="gatewayInstructionId"/>
-                <exclude field-name="gatewayAttemptId"/>
-                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="fromPartyId"/><exclude field-name="toPartyId"/><exclude field-name="forInvoiceId"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
@@ -705,6 +695,18 @@ along with this software (see the LICENSE.md file). If not, see
 
             <if condition="amount == null || toDecimal(amount).isZero()"><return message="Amount is zero, not creating refund payment"/></if>
 
+            <!-- the original's other refunds, pending ones included, limit this one -->
+            <entity-find entity-name="mantle.account.payment.Payment" list="otherRefundPaymentList">
+                <econdition field-name="refundForPaymentId"/>
+                <econdition field-name="statusId" operator="not-in" value="PmntCancelled,PmntVoid,PmntDeclined"/>
+                <select-field field-name="paymentId,amount"/>
+            </entity-find>
+            <set field="otherRefundTotal" from="Array.from(otherRefundPaymentList).reduce((total, pmt) =&gt; total.add(pmt.amount ?? 0), toDecimal(0))"/>
+            <set field="refundRemaining" from="toDecimal(refundForPayment.amount ?? 0).subtract(otherRefundTotal)"/>
+            <if condition="toDecimal(amount).compare(refundRemaining) &gt; 0">
+                <return error="true" message="Refund amount ${amount} is greater than refundable amount ${refundRemaining} for original payment ${refundForPaymentId} (original amount ${refundForPayment.amount}, other refunds ${otherRefundTotal})"/>
+            </if>
+
             <!-- automatic field settings -->
             <if condition="['PmntDelivered', 'PmntConfirmed'].includes(statusId) &amp;&amp; effectiveDate == null">
                 <set field="effectiveDate" from="ec.user.nowTimestamp"/></if>
@@ -714,9 +716,21 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="orderPartSeqId" from="orderPartSeqId || refundForPayment.orderPartSeqId"/>
             <set field="paymentInstrumentEnumId" from="paymentInstrumentEnumId || refundForPayment.paymentInstrumentEnumId"/>
             <set field="paymentId" from="null"/>
-            <!-- create the refund Payment -->
-            <service-call name="mantle.account.PaymentServices.create#Payment" in-map="context" out-map="createOut"/>
+            <!-- create the refund Payment, give it its book day, then move it to its status so the SECAs post it -->
+            <set field="initialStatusId" from="statusId == 'PmntProposed' ? statusId : 'PmntPromised'"/>
+            <service-call name="mantle.account.PaymentServices.create#Payment" out-map="createOut"
+                    in-map="Object.assign({}, context, {statusId:initialStatusId})"/>
             <set field="paymentId" from="createOut.paymentId"/>
+            <if condition="accountingDate">
+                <service-call name="update#mantle.account.payment.Payment"
+                        in-map="{paymentId:paymentId, accountingDate:accountingDate}"/>
+            </if>
+            <if condition="statusId == 'PmntConfirmed'">
+                <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:paymentId, statusId:'PmntDelivered'}"/>
+            </if>
+            <if condition="statusId != initialStatusId">
+                <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:paymentId, statusId:statusId}"/>
+            </if>
 
             <if condition="['PmntDelivered', 'PmntConfirmed'].includes(statusId)">
                 <!-- only auto apply up to unappliedTotal on refundForPayment -->
@@ -775,6 +789,33 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
+    <service verb="apply" noun="RefundPayment">
+        <description>Apply a delivered refund Payment to the original Payment it refunds (refundForPaymentId), for at most
+            the refund's unapplied and the original's unapplied total, as create#RefundPayment does when it creates a
+            delivered refund. Does nothing for a refund not delivered or already fully applied.</description>
+        <in-parameters>
+            <parameter name="paymentId" required="true"><description>The refund Payment</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentApplicationId"/>
+            <parameter name="amountApplied" type="BigDecimal"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="refundPayment"/>
+            <if condition="refundPayment == null || !refundPayment.refundForPaymentId ||
+                    !['PmntDelivered', 'PmntConfirmed'].includes(refundPayment.statusId)"><return/></if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentTotals" out-map="refundTotalOut"
+                    in-map="{paymentId:paymentId}"/>
+            <service-call name="mantle.account.PaymentServices.get#PaymentTotals" out-map="originalTotalOut"
+                    in-map="{paymentId:refundPayment.refundForPaymentId}"/>
+            <set field="amountToApply" from="[toDecimal(refundTotalOut.unappliedTotal ?? 0),
+                    toDecimal(originalTotalOut.unappliedTotal ?? 0)].reduce((low, value) =&gt; value.compare(low) &lt; 0 ? value : low)"/>
+            <if condition="amountToApply.compare(0) &lt;= 0"><return/></if>
+            <service-call name="mantle.account.PaymentServices.apply#PaymentToPayment" out-map="context"
+                    in-map="{paymentId:paymentId, toPaymentId:refundPayment.refundForPaymentId, amount:amountToApply}"/>
+        </actions>
+    </service>
+
     <service verb="send" noun="PromisedPayment">
         <!-- TODO: with transaction="cache" here is unable to find PaymentApplication for paymentId and invoiceId in apply#InvoicePayment -->
         <in-parameters>
@@ -829,9 +870,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="financeOrganizationPartyId"/>
                 <exclude field-name="financeDirection"/>
                 <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="gatewayInstructionId"/>
-                <exclude field-name="gatewayAttemptId"/>
-                <exclude field-name="gatewayRole"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
@@ -1002,10 +1040,6 @@ along with this software (see the LICENSE.md file). If not, see
 
             <set field="remainingAmount" from="invTotal.unpaidTotal"/>
             <iterate list="paymentList" entry="payment">
-                <if condition="ec.resource.script('component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js').isManaged(payment)">
-                    <log level="warn" message="Skipping reviewed payment ${payment.paymentId} in legacy apply#OrderPaymentsToInvoice"/>
-                    <continue/>
-                </if>
                 <if condition="toDecimal(remainingAmount).isZero()"><break/></if>
                 <service-call name="mantle.account.PaymentServices.get#PaymentTotals" out-map="context"
                         in-map="{paymentId:payment.paymentId}"/>
@@ -1421,10 +1455,6 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find entity-name="mantle.account.payment.Payment" list="paymentList">
                 <econdition field-name="orderId"/></entity-find>
             <iterate list="paymentList" entry="payment">
-                <if condition="ec.resource.script('component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js').isManaged(payment)">
-                    <log level="warn" message="Skipping reviewed payment ${payment.paymentId} in legacy authorize#OrderPayments"/>
-                    <continue/>
-                </if>
                 <if condition="['PmntCancelled', 'PmntVoid'].includes(payment.statusId)"><continue/></if>
                 <if condition="['PmntAuthorized', 'PmntDelivered', 'PmntConfirmed'].includes(payment.statusId)">
                     <set field="totalAuthorized" from="totalAuthorized.add(payment.amount ?? 0)"/>
@@ -1516,6 +1546,8 @@ along with this software (see the LICENSE.md file). If not, see
                 determined by a default (such as from PaymentMethod, auto for FinancialAccount payments, etc)</description></parameter>
             <parameter name="paymentId" required="true"/>
             <parameter name="cardSecurityCode"/>
+            <parameter name="operationKey"><description>A retry with the same key answers the first gateway response
+                without calling the gateway again</description></parameter>
             <parameter name="payment" type="EntityValue"/>
         </in-parameters>
         <out-parameters>
@@ -1525,6 +1557,19 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <if condition="payment == null"><entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/></if>
             <if condition="payment == null"><return message="Payment ${paymentId} not found"/></if>
+            <!-- a retry with the same operation key answers the first gateway response -->
+            <if condition="operationKey">
+                <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" for-update="true"/>
+                <entity-find entity-name="mantle.account.method.PaymentGatewayResponse" list="keyedResponseList">
+                    <econdition field-name="paymentId"/>
+                    <econdition field-name="operationKey"/>
+                </entity-find>
+                <if condition="keyedResponseList.length">
+                    <set field="paymentGatewayResponse" from="keyedResponseList[0]"/>
+                    <set field="paymentGatewayResponseId" from="paymentGatewayResponse.paymentGatewayResponseId"/>
+                    <return/>
+                </if>
+            </if>
 
             <!-- if Payment.statusId is PmntDelivered, don't auth (if PmntAuthorized allow for re-auth) -->
             <if condition="payment.statusId == 'PmntDelivered'">
@@ -1592,6 +1637,10 @@ along with this software (see the LICENSE.md file). If not, see
             </else></if>
             <if condition="paymentGatewayResponse == null">
                 <log level="error" message="No PaymentGatewayResponse found after call to ${paymentGatewayConfig.authorizeServiceName} (for Payment ${payment.paymentId})"/></if>
+            <if condition="operationKey &amp;&amp; paymentGatewayResponse != null">
+                <service-call name="update#mantle.account.method.PaymentGatewayResponse"
+                        in-map="{paymentGatewayResponseId:paymentGatewayResponse.paymentGatewayResponseId, operationKey:operationKey}"/>
+            </if>
 
             <if condition="paymentGatewayResponse?.resultSuccess == 'Y'"><then>
                 <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:payment.paymentId,
@@ -1641,12 +1690,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <econdition field-name="invoiceId"/></entity-find>
             <!-- capture full or partial Payment for each PaymentApplication -->
             <iterate list="paymentApplicationList" entry="paymentApplication">
-                <entity-find-one entity-name="mantle.account.payment.Payment" value-field="sourcePayment">
-                    <field-map field-name="paymentId" from="paymentApplication.paymentId"/></entity-find-one>
-                <if condition="ec.resource.script('component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js').isManaged(sourcePayment)">
-                    <log level="warn" message="Skipping reviewed payment ${sourcePayment.paymentId} in legacy capture#InvoicePayments"/>
-                    <continue/>
-                </if>
                 <service-call name="mantle.account.PaymentServices.capture#SinglePayment" out-map="captOut"
                         in-map="{paymentId:paymentApplication.paymentId, amount:paymentApplication.amountApplied}"/>
             </iterate>
@@ -1668,6 +1711,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="paymentId" required="true"/>
             <parameter name="payment" type="EntityValue"/>
+            <parameter name="operationKey"><description>A retry with the same key answers the first gateway response
+                without calling the gateway again</description></parameter>
             <parameter name="amount" type="BigDecimal"/>
         </in-parameters>
         <out-parameters>
@@ -1677,6 +1722,19 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <if condition="payment == null"><entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/></if>
             <if condition="payment == null"><return message="Payment ${paymentId} not found"/></if>
+            <!-- a retry with the same operation key answers the first gateway response -->
+            <if condition="operationKey">
+                <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" for-update="true"/>
+                <entity-find entity-name="mantle.account.method.PaymentGatewayResponse" list="keyedResponseList">
+                    <econdition field-name="paymentId"/>
+                    <econdition field-name="operationKey"/>
+                </entity-find>
+                <if condition="keyedResponseList.length">
+                    <set field="paymentGatewayResponse" from="keyedResponseList[0]"/>
+                    <set field="paymentGatewayResponseId" from="paymentGatewayResponse.paymentGatewayResponseId"/>
+                    <return/>
+                </if>
+            </if>
             <if condition="amount == null"><set field="amount" from="payment.amount"/></if>
 
             <set field="justDidAuthorize" from="false"/>
@@ -1815,6 +1873,10 @@ along with this software (see the LICENSE.md file). If not, see
             </else></if>
             <if condition="paymentGatewayResponse == null">
                 <log level="error" message="No PaymentGatewayResponse found after call to ${paymentGatewayConfig.captureServiceName} (for Payment ${payment.paymentId})"/></if>
+            <if condition="operationKey &amp;&amp; paymentGatewayResponse != null">
+                <service-call name="update#mantle.account.method.PaymentGatewayResponse"
+                        in-map="{paymentGatewayResponseId:paymentGatewayResponse.paymentGatewayResponseId, operationKey:operationKey}"/>
+            </if>
 
             <if condition="paymentGatewayResponse?.resultSuccess == 'Y'"><then>
                 <service-call name="update#mantle.account.payment.Payment"
@@ -1826,11 +1888,28 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="release" noun="SinglePayment">
-        <in-parameters><parameter name="paymentId" required="true"/></in-parameters>
+        <in-parameters>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="operationKey"><description>A retry with the same key answers the first gateway response
+                without calling the gateway again</description></parameter>
+        </in-parameters>
         <out-parameters><parameter name="paymentGatewayResponseId"/></out-parameters>
         <actions>
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
             <if condition="payment == null"><return message="Payment ${paymentId} not found"/></if>
+            <!-- a retry with the same operation key answers the first gateway response -->
+            <if condition="operationKey">
+                <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" for-update="true"/>
+                <entity-find entity-name="mantle.account.method.PaymentGatewayResponse" list="keyedResponseList">
+                    <econdition field-name="paymentId"/>
+                    <econdition field-name="operationKey"/>
+                </entity-find>
+                <if condition="keyedResponseList.length">
+                    <set field="paymentGatewayResponse" from="keyedResponseList[0]"/>
+                    <set field="paymentGatewayResponseId" from="paymentGatewayResponse.paymentGatewayResponseId"/>
+                    <return/>
+                </if>
+            </if>
 
             <!-- if the Payment.statusId is already PmntDelivered don't try again -->
             <!-- NOTE: also handle other statuses, ie anything other than PmntAuthorized? might be too inflexible... -->
@@ -1895,6 +1974,10 @@ along with this software (see the LICENSE.md file). If not, see
             </else></if>
             <if condition="paymentGatewayResponse == null">
                 <log level="error" message="No PaymentGatewayResponse found after call to ${paymentGatewayConfig.releaseServiceName} (for Payment ${payment.paymentId})"/></if>
+            <if condition="operationKey &amp;&amp; paymentGatewayResponse != null">
+                <service-call name="update#mantle.account.method.PaymentGatewayResponse"
+                        in-map="{paymentGatewayResponseId:paymentGatewayResponse.paymentGatewayResponseId, operationKey:operationKey}"/>
+            </if>
 
             <if condition="paymentGatewayResponse?.resultSuccess == 'Y'">
                 <service-call name="update#mantle.account.payment.Payment"
@@ -1907,6 +1990,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="paymentId" required="true"/>
             <parameter name="refundPaymentId"><description>If specified use this existing refund Payment instead of creating a new one</description></parameter>
+            <parameter name="operationKey"><description>A retry with the same key answers the first gateway response
+                without calling the gateway again</description></parameter>
             <parameter name="amount" type="BigDecimal"><description>Defaults to refund payment amount (if specified in refundPaymentId), or unapplied amount for Payment</description></parameter>
         </in-parameters>
         <out-parameters>
@@ -1916,6 +2001,20 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" for-update="true"/>
             <if condition="payment == null"><return message="Payment ${paymentId} not found"/></if>
+            <!-- a retry with the same operation key answers the first gateway response -->
+            <if condition="operationKey">
+                <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" for-update="true"/>
+                <entity-find entity-name="mantle.account.method.PaymentGatewayResponse" list="keyedResponseList">
+                    <econdition field-name="paymentId"/>
+                    <econdition field-name="operationKey"/>
+                </entity-find>
+                <if condition="keyedResponseList.length">
+                    <set field="paymentGatewayResponse" from="keyedResponseList[0]"/>
+                    <set field="paymentGatewayResponseId" from="paymentGatewayResponse.paymentGatewayResponseId"/>
+                    <set field="refundPaymentId" from="paymentGatewayResponse.refundPaymentId"/>
+                    <return/>
+                </if>
+            </if>
 
             <!-- if refundPaymentId specified look it up and check status/etc -->
             <if condition="refundPaymentId">
@@ -2022,20 +2121,24 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="paymentGatewayResponse == null">
                 <log level="error" message="No PaymentGatewayResponse found after call to ${paymentGatewayConfig.refundServiceName} (for Payment ${payment.paymentId})"/></if>
 
-            <if condition="paymentGatewayResponse?.resultSuccess == 'Y'">
+            <if condition="paymentGatewayResponse?.resultSuccess == 'Y'"><then>
                 <if condition="refundPayment != null"><then>
                     <!-- update status on refundPayment, and set amount if differs, set data to match, etc -->
                     <service-call name="update#mantle.account.payment.Payment"
                             in-map="{paymentId:refundPayment.paymentId, statusId:'PmntDelivered', amount:amount,
+                                effectiveDate:(refundPayment.effectiveDate || ec.user.nowTimestamp),
                                 paymentMethodId:payment.toPaymentMethodId, toPaymentMethodId:payment.paymentMethodId,
                                 paymentInstrumentEnumId:payment.paymentInstrumentEnumId, refundForPaymentId:paymentId,
                                 paymentGatewayConfigId:payment.paymentGatewayConfigId}"/>
 
-                    <!-- if refundPayment.forInvoiceId apply refundPayment to that invoice -->
-                    <if condition="refundPayment.forInvoiceId">
+                    <!-- if refundPayment.forInvoiceId apply refundPayment to that invoice, else to the original -->
+                    <if condition="refundPayment.forInvoiceId"><then>
                         <service-call name="mantle.account.PaymentServices.apply#InvoicePayment" out-map="context"
                                 in-map="{paymentId:refundPayment.paymentId, invoiceId:refundPayment.forInvoiceId}"/>
-                    </if>
+                    </then><else>
+                        <service-call name="mantle.account.PaymentServices.apply#RefundPayment"
+                                in-map="{paymentId:refundPayment.paymentId}"/>
+                    </else></if>
                 </then><else>
                     <!-- create separate refund payment, apply to this payment -->
                     <service-call name="mantle.account.PaymentServices.create#RefundPayment" out-map="refundOut" in-map="{
@@ -2044,6 +2147,21 @@ along with this software (see the LICENSE.md file). If not, see
                         paymentGatewayConfigId:payment.paymentGatewayConfigId}"/>
                     <set field="refundPaymentId" from="refundOut.paymentId"/>
                 </else></if>
+            </then><else-if condition="refundPayment != null &amp;&amp; paymentGatewayResponse?.resultDeclined == 'Y'">
+                <service-call name="update#mantle.account.payment.Payment"
+                        in-map="{paymentId:refundPayment.paymentId, statusId:'PmntDeclined'}"/>
+            </else-if><else-if condition="refundPayment != null &amp;&amp; paymentGatewayResponse?.referenceNum">
+                <!-- pending: the refund keeps the gateway reference, so get#SinglePaymentGatewayDetails can look it up -->
+                <service-call name="update#mantle.account.payment.Payment"
+                        in-map="{paymentId:refundPayment.paymentId, paymentRefNum:paymentGatewayResponse.referenceNum,
+                            paymentGatewayConfigId:paymentGatewayConfigId}"/>
+            </else-if></if>
+
+            <!-- the response links the operation key and the refund Payment -->
+            <if condition="paymentGatewayResponse != null &amp;&amp; (operationKey || refundPaymentId)">
+                <service-call name="update#mantle.account.method.PaymentGatewayResponse"
+                        in-map="{paymentGatewayResponseId:paymentGatewayResponse.paymentGatewayResponseId,
+                            operationKey:operationKey, refundPaymentId:refundPaymentId}"/>
             </if>
         </actions>
     </service>
@@ -2115,6 +2233,11 @@ along with this software (see the LICENSE.md file). If not, see
                         <service-call name="update#mantle.account.payment.Payment"
                                 in-map="{paymentId:paymentId, statusId:detailOut.gatewayStatusId}"/>
                     </else></if>
+                    <!-- a pending gateway refund now delivered funds its original, as refund#SinglePayment would have -->
+                    <if condition="payment.paymentTypeEnumId == 'PtRefund' &amp;&amp; payment.refundForPaymentId &amp;&amp;
+                            ['PmntDelivered', 'PmntConfirmed'].includes(detailOut.gatewayStatusId)">
+                        <service-call name="mantle.account.PaymentServices.apply#RefundPayment" in-map="{paymentId:paymentId}"/>
+                    </if>
                     <message>Status for Payment ${paymentId} updated from gateway transaction status</message>
                 </then><else>
                     <if condition="detailOut.settlementDate != null &amp;&amp; payment.settlementDate == null">
@@ -2145,13 +2268,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <econdition field-name="paymentGatewayConfigId" operator="is-not-null"/>
                 <econdition field-name="paymentMethodId" operator="is-not-null"/>
                 <econdition field-name="effectiveDate" operator="greater" from="basisTimestamp" or-null="true"/>
-                <econditions combine="or">
-                    <econdition field-name="lifecycleManaged" operator="is-null"/>
-                    <econdition field-name="lifecycleManaged" operator="not-equals" value="Y"/>
-                </econditions>
-                <econdition field-name="gatewayInstructionId" operator="is-null"/>
-                <econdition field-name="gatewayAttemptId" operator="is-null"/>
-                <econdition field-name="gatewayRole" operator="is-null"/>
                 <select-field field-name="paymentId,paymentGatewayConfigId"/>
             </entity-find>
             <iterate list="paymentList" entry="payment">
@@ -2673,10 +2789,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="maskedMethodRows" type="List"/>
             <parameter name="applicationRows" type="List"/>
             <parameter name="refundRows" type="List"/>
-            <parameter name="refundSummary" type="Map"/>
-            <parameter name="refundDefaults" type="Map"/>
+            <parameter name="refundSummary" type="Map"><description>get#PaymentRefundSummary, with treasury
+                authority</description></parameter>
+            <parameter name="gatewayActions" type="Map"><description>get#PaymentGatewayActions, with treasury authority:
+                paymentGatewayConfigId, gatewayDescription, actionList and reasonCode</description></parameter>
             <parameter name="gatewayRows" type="List"/>
-            <parameter name="gatewayInstruction" type="Map"/>
             <parameter name="ledgerRows" type="List"/>
             <parameter name="contentRows" type="List"/>
             <parameter name="outputRows" type="List"/>
@@ -2684,8 +2801,6 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sourceRows" type="List"/>
             <parameter name="capabilities" type="Map"/>
             <parameter name="reasons" type="List"/>
-            <parameter name="refundableAvailable" type="Boolean"/>
-            <parameter name="refundableReason"/>
             <parameter name="complete" type="Boolean"/>
             <parameter name="errors" type="List"/>
             <parameter name="evidenceRows" type="List"/>
@@ -3303,211 +3418,716 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
-    <!-- Reviewed gateway foundation. Dispatch and local completion are separate guarded stages. -->
-    <service verb="invoke" noun="ReviewedGatewayOperation" type="interface">
-        <description>Nonmutating adapter boundary: use the supplied versioned credentialSnapshot, never reread mutable method identities; submit one exact operation without changing local money.</description>
-        <in-parameters>
-            <parameter name="providerOperationId" required="true"/>
-            <parameter name="merchantNamespace" required="true"/>
-            <parameter name="adapterVersion" required="true"/>
-            <parameter name="action" required="true"/>
-            <parameter name="parentProviderReference"/>
-            <parameter name="paymentId" required="true"/>
-            <parameter name="paymentGatewayConfigId" required="true"/>
-            <parameter name="sourcePaymentMethodId"/>
-            <parameter name="destinationPaymentMethodId"/>
-            <parameter name="sourceMethodVersion"/>
-            <parameter name="destinationMethodVersion"/>
-            <parameter name="credentialSnapshot" type="Map"/>
-            <parameter name="originalCapture" type="Map"/>
-            <parameter name="amount" type="BigDecimal" required="true"/>
-            <parameter name="currencyUomId" required="true"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="providerOperationId"/>
-            <parameter name="merchantNamespace"/>
-            <parameter name="adapterVersion"/>
-            <parameter name="action"/>
-            <parameter name="outcome"/>
-            <parameter name="amount" type="BigDecimal"/>
-            <parameter name="currencyUomId"/>
-            <parameter name="providerReference"/>
-            <parameter name="providerDate" type="Timestamp"/>
-            <parameter name="providerSettlementDate" type="Timestamp"/>
-            <parameter name="responseCode"/>
-            <parameter name="reasonCode"/>
-            <parameter name="message"/>
-            <parameter name="definitiveNonexecution" type="Boolean"/>
-        </out-parameters>
-    </service>
-    <service verb="lookup" noun="ReviewedGatewayOperation" type="interface">
-        <description>Read authoritative provider outcome by exact original operation identity without creating another external effect.</description>
-        <implements service="mantle.account.PaymentServices.invoke#ReviewedGatewayOperation"/>
-    </service>
-    <service verb="define" noun="PaymentGatewayPreviewResult" type="interface">
-        <description>Owner-bound retained gateway review with narrow financial summaries and current authority.</description>
-        <out-parameters>
-            <parameter name="previewId"/>
-            <parameter name="inputFingerprint"/>
-            <parameter name="previewKind"/>
-            <parameter name="financialOnly" type="Boolean"/>
-            <parameter name="organizationPartyId"/>
-            <parameter name="paymentId"/>
-            <parameter name="originalPaymentId"/>
-            <parameter name="refundPaymentId"/>
-            <parameter name="refundSourceVersion"/>
-            <parameter name="draftClaim" type="Map"/>
-            <parameter name="action"/>
-            <parameter name="sourceVersion"/>
-            <parameter name="attemptVersion"/>
-            <parameter name="expiresDate" type="Timestamp"/>
-            <parameter name="effectiveDateText"/>
-            <parameter name="status"/>
-            <parameter name="operationKey"/>
-            <parameter name="reason"/>
-            <parameter name="referenceNumber"/>
-            <parameter name="paymentSummary" type="Map"/>
-            <parameter name="gatewaySummary" type="Map"/>
-            <parameter name="refundSummary" type="Map"/>
-            <parameter name="before" type="Map"/>
-            <parameter name="after" type="Map"/>
-            <parameter name="reservationEffects" type="List"/>
-            <parameter name="applicationEffects" type="List"/>
-            <parameter name="postingSummary" type="Map"/>
-            <parameter name="ledgerPreview" type="List"/>
-            <parameter name="evidenceRows" type="List"/>
-            <parameter name="capabilities" type="Map"/>
-            <parameter name="blockers" type="List"/>
-            <parameter name="canApply" type="Boolean"/>
-            <parameter name="results" type="Map"/>
-        </out-parameters>
-    </service>
-    <service verb="find" noun="PaymentGatewayBindings" allow-remote="false">
-        <description>Page active organization gateway identities with reviewed adapter capabilities and masked method versions.</description>
+    <!-- Gateway actions and refunds. A reviewed gateway action runs authorize#, capture#, release# or refund#SinglePayment
+        with the confirming operation key, so the gateway response records it; a manual refund is create#RefundPayment.
+        Each review is a PaymentStatePreview (previewKind gateway or refund) its user confirms. All need treasury
+        authority: payment view and payment edit. -->
+    <service verb="check" noun="PaymentGatewayAccess" allow-remote="false">
+        <description>Refuses an organization the user may not use and a user without the treasury authority gateway
+            records need: payment view, and payment edit or accounting administration.</description>
         <in-parameters>
             <parameter name="organizationPartyId" required="true"/>
-            <parameter name="paymentId" required="true"/>
-            <parameter name="action"/>
-            <parameter name="effectiveDate" type="Timestamp"/>
-            <parameter name="text"/>
-            <parameter name="selectedIdList" type="List"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
         </in-parameters>
-        <out-parameters>
-            <parameter name="rows" type="List"/>
-            <parameter name="selectedRows" type="List"/>
-            <parameter name="recordCount" type="Integer"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
-            <parameter name="pageMaxIndex" type="Integer"/>
-            <parameter name="pageRangeLow" type="Integer"/>
-            <parameter name="pageRangeHigh" type="Integer"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="errors" type="List"/>
-        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').findBindings(context))</script>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
+            <set field="accessLib" from="ec.resource.script('component://mr-mantle/service/mantle/product/ProductAccess.js')"/>
+            <if condition="!ec.resource.script(workflow).broadRead()">
+                <return error="true" message="PERMISSION_DENIED: Treasury authority is required for gateway records"/>
+            </if>
+            <script>ec.resource.script(workflow).execute('methodScope', context)</script>
+            <if condition="!accessLib.has('PAYMENT_EDIT') &amp;&amp; !accessLib.has('ACCOUNTING_ADMIN')
+                    &amp;&amp; !accessLib.systemAdmin()">
+                <return error="true" message="PERMISSION_DENIED: Treasury authority is required for gateway records"/>
+            </if>
         </actions>
     </service>
+    <service verb="get" noun="PaymentRefundSummary" allow-remote="false">
+        <description>How much of a payment may still be refunded: its amount less its refunds, completed and pending (all but
+            cancelled, void and declined), and at most its unapplied total less the pending refunds, which are not applied
+            yet. canRefund tells whether the user may refund it now: treasury authority (payment edit), a delivered or
+            confirmed payment that is not itself a refund or a transfer, and something left to refund; reasonCode says why
+            not. Refuses a payment the user may not read.</description>
+        <in-parameters>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="refundSummary" type="Map"><description>paymentId, amount, unappliedTotal,
+                completedRefundAmount, pendingRefundAmount, refundableAmount and currencyUomId</description></parameter>
+            <parameter name="canRefund" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions>
+            <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
+                    in-map="{paymentId:paymentId, organizationPartyId:organizationPartyId}"/>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" disable-authz="true"/>
+            <service-call name="mantle.account.PaymentServices.get#PaymentTotals" out-map="totalOut"
+                    in-map="{paymentId:paymentId}"/>
+            <entity-find entity-name="mantle.account.payment.Payment" list="refundList" disable-authz="true">
+                <econdition field-name="refundForPaymentId" from="paymentId"/>
+                <econdition field-name="statusId" operator="not-in" value="PmntCancelled,PmntVoid,PmntDeclined"/>
+                <select-field field-name="paymentId,amount,statusId"/>
+            </entity-find>
+            <set field="completedRefundAmount" from="Array.from(refundList)
+                    .filter((row) =&gt; ['PmntDelivered', 'PmntConfirmed'].includes(row.statusId))
+                    .reduce((sum, row) =&gt; sum.add(row.amount ?? 0), toDecimal(0))"/>
+            <set field="pendingRefundAmount" from="Array.from(refundList)
+                    .filter((row) =&gt; !['PmntDelivered', 'PmntConfirmed'].includes(row.statusId))
+                    .reduce((sum, row) =&gt; sum.add(row.amount ?? 0), toDecimal(0))"/>
+            <set field="unappliedTotal" from="toDecimal(totalOut.unappliedTotal ?? 0)"/>
+            <set field="capRemaining" from="toDecimal(payment.amount ?? 0).subtract(completedRefundAmount)
+                    .subtract(pendingRefundAmount)"/>
+            <set field="cashRemaining" from="unappliedTotal.subtract(pendingRefundAmount)"/>
+            <set field="refundableAmount" from="cashRemaining.compare(capRemaining) &lt; 0 ? cashRemaining : capRemaining"/>
+            <if condition="refundableAmount.compare(0) &lt; 0"><set field="refundableAmount" from="toDecimal(0)"/></if>
+            <set field="refundSummary" from="{paymentId:paymentId, amount:toDecimal(payment.amount ?? 0),
+                    unappliedTotal:unappliedTotal, completedRefundAmount:completedRefundAmount,
+                    pendingRefundAmount:pendingRefundAmount, refundableAmount:refundableAmount,
+                    currencyUomId:payment.amountUomId}"/>
+            <set field="reasonCode" from="!access.canChange ? 'PERMISSION_DENIED'
+                    : payment.refundForPaymentId || payment.paymentTypeEnumId == 'PtInternalTransfer'
+                        || !['PmntDelivered', 'PmntConfirmed'].includes(payment.statusId) ? 'REFUND_UNAVAILABLE'
+                    : refundableAmount.compare(0) &lt;= 0 ? 'NOTHING_TO_REFUND' : null"/>
+            <set field="canRefund" from="!reasonCode"/>
+        </actions>
+    </service>
+    <service verb="get" noun="PaymentGatewayActions" allow-remote="false">
+        <description>The gateway of a payment the user may read, found as Mantle's gateway services find it (the payment,
+            then its payment method, then FinancialAccountLocal for a financial account payment), and the gateway actions
+            the user may review on it: authorize a promised or declined payment, capture or release an authorized one,
+            refund one with something left to refund (get#PaymentRefundSummary), and look up (lookup#PaymentGatewayDetails)
+            one with a gateway reference, a pending refund included. Each needs treasury authority and the gateway's
+            service for it; reasonCode says why there is none. Refuses a payment the user may not read.</description>
+        <in-parameters>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentGatewayConfigId"/>
+            <parameter name="gatewayDescription"/>
+            <parameter name="actionList" type="List"><description>Of authorize, capture, release, refund and
+                lookup</description></parameter>
+            <parameter name="refundSummary" type="Map"/>
+            <parameter name="canRefund" type="Boolean"><description>Whether a manual refund may be reviewed
+                (get#PaymentRefundSummary)</description></parameter>
+            <parameter name="refundReasonCode"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions>
+            <service-call name="mantle.account.PaymentServices.get#PaymentRefundSummary" out-map="refundOut"
+                    in-map="{paymentId:paymentId, organizationPartyId:organizationPartyId}"/>
+            <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
+                    in-map="{paymentId:paymentId, organizationPartyId:organizationPartyId}"/>
+            <set field="organizationPartyId" from="access.organizationPartyId"/>
+            <set field="refundSummary" from="refundOut.refundSummary"/>
+            <set field="canRefund" from="refundOut.canRefund"/>
+            <set field="refundReasonCode" from="refundOut.reasonCode"/>
+            <set field="actionList" from="[]"/>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" disable-authz="true"/>
+            <entity-find-one entity-name="mantle.account.method.PaymentMethod" value-field="paymentMethod" disable-authz="true">
+                <field-map field-name="paymentMethodId" from="payment.paymentMethodId"/>
+            </entity-find-one>
+            <set field="paymentGatewayConfigId" from="payment.paymentGatewayConfigId || paymentMethod?.paymentGatewayConfigId
+                    || (payment.paymentInstrumentEnumId == 'PiFinancialAccount' ? 'FinancialAccountLocal' : null)"/>
+            <entity-find-one entity-name="mantle.account.method.PaymentGatewayConfig" value-field="gatewayConfig"
+                    disable-authz="true"/>
+            <set field="gatewayDescription" from="gatewayConfig?.description || paymentGatewayConfigId"/>
+            <if condition="!access.canChange">
+                <set field="reasonCode" value="PERMISSION_DENIED"/>
+                <return/>
+            </if>
+            <if condition="gatewayConfig == null || payment.paymentTypeEnumId == 'PtInternalTransfer'">
+                <set field="reasonCode" value="GATEWAY_UNAVAILABLE"/>
+                <return/>
+            </if>
+            <set field="statusId" from="payment.statusId"/>
+            <set field="refund" from="!!payment.refundForPaymentId"/>
+            <set field="actionList" from="[
+                    ['authorize', 'authorizeServiceName', !refund &amp;&amp; ['PmntPromised', 'PmntDeclined'].includes(statusId)],
+                    ['capture', 'captureServiceName', !refund &amp;&amp; statusId == 'PmntAuthorized'],
+                    ['release', 'releaseServiceName', !refund &amp;&amp; statusId == 'PmntAuthorized'],
+                    ['refund', 'refundServiceName', !refund &amp;&amp; refundOut.canRefund],
+                    ['lookup', 'detailsServiceName', !!payment.paymentRefNum &amp;&amp; (refund ? statusId == 'PmntPromised'
+                        : ['PmntAuthorized', 'PmntDelivered'].includes(statusId))]
+                ].filter(([action, serviceField, allowed]) =&gt; allowed &amp;&amp; gatewayConfig[serviceField])
+                .map(([action]) =&gt; action)"/>
+            <if condition="!actionList.length"><set field="reasonCode" value="GATEWAY_ACTION_UNAVAILABLE"/></if>
+        </actions>
+    </service>
+
+    <service verb="define" noun="PaymentGatewayReview" type="interface">
+        <description>A retained gateway action review and, once confirmed, its results.</description>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="previewKind"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="status"><description>review, then complete</description></parameter>
+            <parameter name="operationKey"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId"/>
+            <parameter name="action"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="reason"/>
+            <parameter name="paymentGatewayConfigId"/>
+            <parameter name="gatewayDescription"/>
+            <parameter name="statusId"><description>The payment's status when reviewed</description></parameter>
+            <parameter name="afterStatusId"><description>The status an accepted answer leads to</description></parameter>
+            <parameter name="refundSummary" type="Map"><description>For a refund, get#PaymentRefundSummary when
+                reviewed</description></parameter>
+            <parameter name="results" type="Map"><description>What execute#PaymentGatewayAction returned</description></parameter>
+        </out-parameters>
+    </service>
     <service verb="preview" noun="PaymentGatewayAction" allow-remote="false">
-        <description>Review authorization, partial capture, release or original-reference refund without contacting a provider or creating cash.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayPreviewResult"/>
+        <description>Review a gateway action on a payment (get#PaymentGatewayActions): authorize, capture or release its
+            amount, or refund up to what is left to refund. Retained for ten minutes for its user to
+            confirm with execute#PaymentGatewayAction; contacts no gateway and changes no financial record. Refuses an
+            action the payment does not offer, an amount over the limit or finer than its currency, and a missing
+            reason.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayReview"/>
         <in-parameters>
             <parameter name="organizationPartyId" required="true"/>
             <parameter name="paymentId" required="true"/>
-            <parameter name="sourceVersion" required="true"/>
             <parameter name="action" required="true"/>
-            <parameter name="amount" type="BigDecimal"/>
-            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="amount" type="BigDecimal"><description>For a refund; defaults to all that is left to
+                refund</description></parameter>
             <parameter name="reason" required="true"/>
-            <parameter name="referenceNumber"/>
-            <parameter name="paymentGatewayConfigId"/>
-            <parameter name="gatewayBindingVersion"/>
-            <parameter name="parentAttemptId"/>
-            <parameter name="refundPaymentId"/>
-            <parameter name="refundSourceVersion"/>
-            <parameter name="evidenceContentIdList" type="List"/>
-            <parameter name="evidenceVersions" type="Map"/>
         </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').previewAction(context))</script>
+            <service-call name="mantle.account.PaymentServices.get#PaymentGatewayActions" out-map="gatewayOut"
+                    in-map="{paymentId:paymentId, organizationPartyId:organizationPartyId}"/>
+            <if condition="action == 'lookup' || !gatewayOut.actionList.includes(action)">
+                <return error="true" message="GATEWAY_ACTION_UNAVAILABLE: Payment ${paymentId} cannot be sent to ${action} now"/>
+            </if>
+            <set field="reason" from="String(reason || '').trim()"/>
+            <if condition="!reason || reason.length &gt; 255">
+                <return error="true" message="PAYMENT_REASON_REQUIRED: Enter a reason of at most 255 characters"/>
+            </if>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" disable-authz="true"/>
+            <set field="currencyUomId" from="payment.amountUomId"/>
+            <set field="maximumAmount" from="action == 'refund' ? toDecimal(gatewayOut.refundSummary.refundableAmount)
+                    : toDecimal(payment.amount ?? 0)"/>
+            <set field="amount" from="action == 'refund' &amp;&amp; amount != null ? toDecimal(amount) : maximumAmount"/>
+            <if condition="amount.compare(0) &lt;= 0 || amount.compare(maximumAmount) &gt; 0
+                    || ec.l10n.roundCurrency(amount, currencyUomId).compare(amount) != 0">
+                <return error="true"
+                        message="GATEWAY_AMOUNT_INVALID: Enter an amount from 0 to ${maximumAmount} in ${currencyUomId}"/>
+            </if>
+            <set field="afterStatusId" from="{authorize:'PmntAuthorized', capture:'PmntDelivered', release:'PmntPromised',
+                    refund:payment.statusId}[action]"/>
+            <set field="request" from="{organizationPartyId:gatewayOut.organizationPartyId, paymentId:paymentId,
+                    action:action, amount:String(amount), reason:reason}"/>
+            <set field="inputFingerprint" from="ec.user.singleUseCodeHash(JSON.stringify({request:request,
+                    statusId:payment.statusId, lastUpdatedStamp:Number(payment.lastUpdatedStamp),
+                    refundSummary:action == 'refund' ? gatewayOut.refundSummary : null}))"/>
+            <set field="review" from="{organizationPartyId:gatewayOut.organizationPartyId, paymentId:paymentId,
+                    action:action, amount:String(amount), currencyUomId:currencyUomId, reason:reason,
+                    paymentGatewayConfigId:gatewayOut.paymentGatewayConfigId,
+                    gatewayDescription:gatewayOut.gatewayDescription, statusId:payment.statusId, afterStatusId:afterStatusId,
+                    refundSummary:action == 'refund' ? gatewayOut.refundSummary : null}"/>
+            <set field="expiresDate" from="Number(ec.user.nowTimestamp) + 600000"/>
+            <service-call name="create#mantle.account.payment.PaymentStatePreview" out-map="previewOut"
+                    in-map="{organizationPartyId:gatewayOut.organizationPartyId, paymentId:paymentId, userId:ec.user.userId,
+                        previewKind:'gateway', inputFingerprint:inputFingerprint, requestJson:JSON.stringify(request),
+                        payloadJson:JSON.stringify(review), createdDate:ec.user.nowTimestamp, expiresDate:expiresDate,
+                        status:'review'}"/>
+            <service-call name="mantle.account.PaymentServices.get#PaymentGatewayActionPreview" out-map="context"
+                    in-map="{previewId:previewOut.previewId}"/>
         </actions>
     </service>
     <service verb="get" noun="PaymentGatewayActionPreview" allow-remote="false">
-        <description>Reload action or recovery review with current payment, treasury and ledger authority.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayPreviewResult"/>
+        <description>Read the user's own retained gateway action review and its results with the user's current authority;
+            changes nothing.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentGatewayReview"/>
         <in-parameters>
             <parameter name="organizationPartyId"/>
             <parameter name="previewId" required="true"/>
         </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').getPreview(context))</script>
+            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
+                    disable-authz="true"/>
+            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'gateway'
+                    || (organizationPartyId &amp;&amp; organizationPartyId != previewRow.organizationPartyId)">
+                <return error="true" message="GATEWAY_PREVIEW_UNAVAILABLE: The gateway review is unavailable"/>
+            </if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
+                    in-map="{paymentId:previewRow.paymentId, organizationPartyId:previewRow.organizationPartyId}"/>
+            <script>ec.context.putAll(JSON.parse(previewRow.payloadJson))</script>
+            <set field="amount" from="toDecimal(amount)"/>
+            <set field="previewKind" from="previewRow.previewKind"/>
+            <set field="inputFingerprint" from="previewRow.inputFingerprint"/>
+            <set field="status" from="previewRow.status"/>
+            <set field="operationKey" from="previewRow.operationKey"/>
+            <set field="expiresDate" from="previewRow.expiresDate"/>
+            <set field="canApply" from="status == 'review' &amp;&amp; Number(expiresDate) &gt; Number(ec.user.nowTimestamp)
+                    &amp;&amp; access.canChange"/>
+            <set field="results" from="previewRow.resultJson ? JSON.parse(previewRow.resultJson) : null"/>
         </actions>
     </service>
-    <service verb="define" noun="PaymentGatewayResult" type="interface">
-        <description>Flat retained provider and financial outcome with exact cash-child and separately authorized posting evidence.</description>
+    <service verb="execute" noun="PaymentGatewayAction" allow-remote="false">
+        <description>Confirm a retained gateway action review: with the payment locked and unchanged since the review, run
+            Mantle's authorize#, capture# or release#SinglePayment, or for a refund create#RefundPayment (promised, so it
+            counts against the original until the gateway answers) and refund#SinglePayment for it, all with the operation
+            key, which the gateway response records. The answer sets the payment's status as those services do: an
+            accepted capture delivers and posts it, an accepted refund delivers its refund payment and applies it to the
+            original, a declined refund declines it, a pending one keeps it promised. Refuses another user's, an expired,
+            used or changed review and an operation key used for another review; confirming again with the same key
+            returns the first result.</description>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
         <out-parameters>
-            <parameter name="attemptId"/>
-            <parameter name="attemptVersion"/>
-            <parameter name="providerOperationId"/>
-            <parameter name="organizationPartyId"/>
             <parameter name="paymentId"/>
-            <parameter name="cashPaymentId"/>
-            <parameter name="originalPaymentId"/>
-            <parameter name="refundPaymentId"/>
-            <parameter name="draftClaim" type="Map"/>
-            <parameter name="paymentLifecycleEventId"/>
             <parameter name="action"/>
-            <parameter name="outcome"/>
-            <parameter name="providerState"/>
-            <parameter name="financialState"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="paymentGatewayResponseId"/>
+            <parameter name="outcome"><description>accepted, declined, failed, pending or none (no response)</description>
+            </parameter>
+            <parameter name="statusId"><description>The payment's status after the answer</description></parameter>
+            <parameter name="refundPaymentId"/>
+            <parameter name="refundStatusId"/>
+            <parameter name="operationKey"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <if condition="operationKey.length &gt; 40">
+                <return error="true" message="OPERATION_KEY_REQUIRED: An operation key of at most 40 characters is required"/>
+            </if>
+            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
+                    for-update="true" disable-authz="true"/>
+            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'gateway'">
+                <return error="true" message="GATEWAY_PREVIEW_UNAVAILABLE: The gateway review is unavailable"/>
+            </if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
+                    in-map="{paymentId:previewRow.paymentId, organizationPartyId:previewRow.organizationPartyId}"/>
+            <if condition="!access.canChange">
+                <return error="true" message="PERMISSION_DENIED: Payment editing and payment view authority are required"/>
+            </if>
+            <if condition="previewRow.status == 'complete'">
+                <if condition="previewRow.operationKey == operationKey">
+                    <script>ec.context.putAll(JSON.parse(previewRow.resultJson))</script>
+                    <set field="alreadyApplied" from="true"/>
+                    <return/>
+                </if>
+                <return error="true" message="GATEWAY_PREVIEW_CONSUMED: This gateway review was already confirmed"/>
+            </if>
+            <if condition="inputFingerprint != previewRow.inputFingerprint">
+                <return error="true" message="GATEWAY_PREVIEW_MISMATCH: Confirm the gateway action as reviewed"/>
+            </if>
+            <if condition="Number(previewRow.expiresDate) &lt;= Number(ec.user.nowTimestamp)">
+                <return error="true" message="GATEWAY_PREVIEW_EXPIRED: Review the gateway action again"/>
+            </if>
+            <entity-find-count entity-name="mantle.account.payment.PaymentStatePreview" count-field="keyCount"
+                    disable-authz="true">
+                <econdition field-name="operationKey"/>
+            </entity-find-count>
+            <if condition="keyCount &gt; 0">
+                <return error="true" message="OPERATION_KEY_CONFLICT: The operation key was used for another request"/>
+            </if>
+            <set field="request" from="JSON.parse(previewRow.requestJson)"/>
+            <set field="review" from="JSON.parse(previewRow.payloadJson)"/>
+            <set field="paymentId" from="request.paymentId"/>
+            <set field="action" from="request.action"/>
+            <set field="amount" from="toDecimal(request.amount)"/>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" for-update="true"
+                    disable-authz="true"/>
+            <service-call name="mantle.account.PaymentServices.get#PaymentGatewayActions" out-map="gatewayOut"
+                    in-map="{paymentId:paymentId, organizationPartyId:request.organizationPartyId}"/>
+            <set field="currentFingerprint" from="ec.user.singleUseCodeHash(JSON.stringify({request:request,
+                    statusId:payment.statusId, lastUpdatedStamp:Number(payment.lastUpdatedStamp),
+                    refundSummary:action == 'refund' ? gatewayOut.refundSummary : null}))"/>
+            <if condition="currentFingerprint != previewRow.inputFingerprint || !gatewayOut.actionList.includes(action)">
+                <return error="true"
+                        message="STALE_PREVIEW: The payment or its refunds changed; review the gateway action again"/>
+            </if>
+
+            <set field="refundPaymentId" from="null"/>
+            <if condition="action == 'authorize'">
+                <service-call name="mantle.account.PaymentServices.authorize#SinglePayment" out-map="callOut"
+                        in-map="{paymentId:paymentId, paymentGatewayConfigId:review.paymentGatewayConfigId,
+                            operationKey:operationKey}"/>
+            </if>
+            <if condition="action == 'capture'">
+                <service-call name="mantle.account.PaymentServices.capture#SinglePayment" out-map="callOut"
+                        in-map="{paymentId:paymentId, amount:amount, operationKey:operationKey}"/>
+            </if>
+            <if condition="action == 'release'">
+                <service-call name="mantle.account.PaymentServices.release#SinglePayment" out-map="callOut"
+                        in-map="{paymentId:paymentId, operationKey:operationKey}"/>
+            </if>
+            <if condition="action == 'refund'">
+                <service-call name="mantle.account.PaymentServices.create#RefundPayment" out-map="refundOut"
+                        in-map="{paymentId:paymentId, amount:amount, statusId:'PmntPromised',
+                            paymentMethodId:payment.toPaymentMethodId, toPaymentMethodId:payment.paymentMethodId,
+                            paymentInstrumentEnumId:payment.paymentInstrumentEnumId,
+                            paymentGatewayConfigId:review.paymentGatewayConfigId, comments:request.reason}"/>
+                <set field="refundPaymentId" from="refundOut.paymentId"/>
+                <service-call name="mantle.account.PaymentServices.refund#SinglePayment" out-map="callOut"
+                        in-map="{paymentId:paymentId, refundPaymentId:refundPaymentId, amount:amount,
+                            operationKey:operationKey}"/>
+            </if>
+
+            <set field="paymentGatewayResponseId" from="callOut.paymentGatewayResponseId || null"/>
+            <set field="response" from="null"/>
+            <if condition="paymentGatewayResponseId">
+                <entity-find-one entity-name="mantle.account.method.PaymentGatewayResponse" value-field="response"
+                        disable-authz="true"/>
+            </if>
+            <set field="outcome" from="response == null ? 'none' : response.resultSuccess == 'Y' ? 'accepted'
+                    : response.resultDeclined == 'Y' ? 'declined'
+                    : [response.resultError, response.resultNsf, response.resultBadExpire, response.resultBadCardNumber]
+                        .includes('Y') ? 'failed' : 'pending'"/>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="after" disable-authz="true"/>
+            <set field="refundStatusId" from="null"/>
+            <if condition="refundPaymentId">
+                <entity-find-one entity-name="mantle.account.payment.Payment" value-field="refundAfter" disable-authz="true">
+                    <field-map field-name="paymentId" from="refundPaymentId"/>
+                </entity-find-one>
+                <set field="refundStatusId" from="refundAfter.statusId"/>
+            </if>
+            <set field="result" from="{paymentId:paymentId, action:action, amount:String(amount),
+                    currencyUomId:review.currencyUomId,
+                    paymentGatewayResponseId:paymentGatewayResponseId, outcome:outcome, statusId:after.statusId,
+                    refundPaymentId:refundPaymentId, refundStatusId:refundStatusId, operationKey:operationKey,
+                    reasonCode:'GATEWAY_' + outcome.toUpperCase(), alreadyApplied:false}"/>
+            <service-call name="update#mantle.account.payment.PaymentStatePreview"
+                    in-map="{previewId:previewId, status:'complete', operationKey:operationKey,
+                        resultJson:JSON.stringify(result)}"/>
+            <script>ec.context.putAll(result)</script>
+        </actions>
+    </service>
+    <service verb="lookup" noun="PaymentGatewayDetails" allow-remote="false">
+        <description>Ask the payment's gateway for its transaction details (get#SinglePaymentGatewayDetails through the
+            gateway's detailsServiceName), which update the payment's status when the gateway's differs: a pending capture
+            the gateway approved is delivered, a pending refund delivered and applied to its original. Needs the lookup
+            action of get#PaymentGatewayActions.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentGatewayResponseId"/>
+            <parameter name="previousStatusId"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" for-update="true"
+                    disable-authz="true"/>
+            <service-call name="mantle.account.PaymentServices.get#PaymentGatewayActions" out-map="gatewayOut"
+                    in-map="{paymentId:paymentId, organizationPartyId:organizationPartyId}"/>
+            <if condition="!gatewayOut.actionList.includes('lookup')">
+                <return error="true" message="GATEWAY_ACTION_UNAVAILABLE: Payment ${paymentId} cannot be looked up now"/>
+            </if>
+            <set field="previousStatusId" from="payment.statusId"/>
+            <service-call name="mantle.account.PaymentServices.get#SinglePaymentGatewayDetails" out-map="detailOut"
+                    in-map="{paymentId:paymentId}"/>
+            <set field="paymentGatewayResponseId" from="detailOut.paymentGatewayResponseId"/>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="after" disable-authz="true"/>
+            <set field="statusId" from="after.statusId"/>
+        </actions>
+    </service>
+
+    <service verb="define" noun="PaymentRefundReview" type="interface">
+        <description>A retained manual refund review and, once confirmed, its results.</description>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="previewKind"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="status"><description>review, then complete</description></parameter>
+            <parameter name="operationKey"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId"><description>The original payment</description></parameter>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="reason"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="paymentInstrumentEnumId"/>
+            <parameter name="organizationMethod" type="Map"><description>The masked method the organization pays or is paid
+                from</description></parameter>
+            <parameter name="counterpartyMethod" type="Map"/>
+            <parameter name="refundSummary" type="Map"><description>get#PaymentRefundSummary when reviewed</description>
+            </parameter>
+            <parameter name="results" type="Map"><description>What refund#ReviewedPayment returned</description></parameter>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="PaymentRefundPlan" allow-remote="false">
+        <description>Check a manual refund of a payment the user may refund (get#PaymentRefundSummary): an amount up to what is
+            left to refund in its currency's precision, a reason, and the organization's and counterparty's methods, active
+            on the refund date (find#PaymentMethods), defaulting to the original's methods. Returns the request and its
+            fingerprint, which a change of the original or its refunds changes. Changes nothing.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="amount" type="BigDecimal" required="true"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="reason" required="true"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="paymentInstrumentEnumId"/>
+            <parameter name="organizationPaymentMethodId"/>
+            <parameter name="counterpartyPaymentMethodId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="request" type="Map"/>
+            <parameter name="review" type="Map"/>
+            <parameter name="inputFingerprint"/>
+        </out-parameters>
+        <actions>
+            <service-call name="mantle.account.PaymentServices.get#PaymentRefundSummary" out-map="refundOut"
+                    in-map="{paymentId:paymentId, organizationPartyId:organizationPartyId}"/>
+            <if condition="!refundOut.canRefund">
+                <return error="true" message="${refundOut.reasonCode}: Payment ${paymentId} cannot be refunded now"/>
+            </if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
+                    in-map="{paymentId:paymentId, organizationPartyId:organizationPartyId}"/>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" disable-authz="true"/>
+            <set field="currencyUomId" from="payment.amountUomId"/>
+            <set field="refundableAmount" from="toDecimal(refundOut.refundSummary.refundableAmount)"/>
+            <set field="amount" from="toDecimal(amount)"/>
+            <if condition="amount.compare(0) &lt;= 0 || amount.compare(refundableAmount) &gt; 0
+                    || ec.l10n.roundCurrency(amount, currencyUomId).compare(amount) != 0">
+                <return error="true"
+                        message="REFUND_AMOUNT_INVALID: Enter an amount from 0 to ${refundableAmount} in ${currencyUomId}"/>
+            </if>
+            <set field="reason" from="String(reason || '').trim()"/>
+            <if condition="!reason || reason.length &gt; 255">
+                <return error="true" message="PAYMENT_REASON_REQUIRED: Enter a reason of at most 255 characters"/>
+            </if>
+            <!-- the refund goes back the other way: from the original's payee to its payer -->
+            <set field="organizationPaid" from="payment.toPartyId == access.organizationPartyId"/>
+            <set field="organizationPaymentMethodId" from="organizationPaymentMethodId
+                    || (organizationPaid ? payment.toPaymentMethodId : payment.paymentMethodId)"/>
+            <set field="counterpartyPaymentMethodId" from="counterpartyPaymentMethodId
+                    || (organizationPaid ? payment.paymentMethodId : payment.toPaymentMethodId)"/>
+            <set field="methods" from="{}"/>
+            <iterate list="[['organization', organizationPaymentMethodId], ['counterparty', counterpartyPaymentMethodId]]"
+                    entry="methodEntry">
+                <if condition="methodEntry[1]">
+                    <service-call name="mantle.account.PaymentServices.find#PaymentMethods" out-map="methodOut"
+                            in-map="{organizationPartyId:access.organizationPartyId, methodRole:methodEntry[0],
+                                partyId:access.partyId, currencyUomId:null, effectiveDate:effectiveDate,
+                                selectedPaymentMethodIdList:[methodEntry[1]], pageSize:1}"/>
+                    <if condition="!methodOut.selectedRows.length">
+                        <return error="true"
+                                message="REFUND_METHOD_UNAVAILABLE: Choose an active ${methodEntry[0]} payment method"/>
+                    </if>
+                    <script>methods[methodEntry[0]] = methodOut.selectedRows[0]</script>
+                </if>
+            </iterate>
+            <if condition="!methods.organization">
+                <return error="true" message="REFUND_METHOD_UNAVAILABLE: Choose the organization's payment method"/>
+            </if>
+            <set field="paymentInstrumentEnumId" from="paymentInstrumentEnumId || payment.paymentInstrumentEnumId"/>
+            <set field="accountingDateText" from="ec.l10n.format(effectiveDate, 'yyyy-MM-dd')"/>
+            <set field="request" from="{organizationPartyId:access.organizationPartyId, paymentId:paymentId,
+                    amount:String(amount), effectiveDate:Number(effectiveDate), accountingDateText:accountingDateText,
+                    reason:reason, referenceNumber:referenceNumber || null, paymentInstrumentEnumId:paymentInstrumentEnumId,
+                    paymentMethodId:organizationPaid ? organizationPaymentMethodId : counterpartyPaymentMethodId || null,
+                    toPaymentMethodId:organizationPaid ? counterpartyPaymentMethodId || null : organizationPaymentMethodId}"/>
+            <set field="review" from="{organizationPartyId:access.organizationPartyId, paymentId:paymentId,
+                    amount:String(amount), currencyUomId:currencyUomId, effectiveDate:Number(effectiveDate),
+                    accountingDateText:accountingDateText, reason:reason, referenceNumber:referenceNumber || null,
+                    paymentInstrumentEnumId:paymentInstrumentEnumId, organizationMethod:methods.organization,
+                    counterpartyMethod:methods.counterparty || null, refundSummary:refundOut.refundSummary}"/>
+            <set field="inputFingerprint" from="ec.user.singleUseCodeHash(JSON.stringify({request:request,
+                    statusId:payment.statusId, lastUpdatedStamp:Number(payment.lastUpdatedStamp),
+                    refundSummary:refundOut.refundSummary, methods:methods}))"/>
+        </actions>
+    </service>
+    <service verb="preview" noun="PaymentRefund" allow-remote="false">
+        <description>Review a manual refund of a payment (get#PaymentRefundPlan), retained for ten minutes for its user to
+            confirm with refund#ReviewedPayment; changes no financial record.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentRefundReview"/>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="amount" type="BigDecimal" required="true"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="reason" required="true"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="paymentInstrumentEnumId"/>
+            <parameter name="organizationPaymentMethodId"><description>Defaults to the original's</description></parameter>
+            <parameter name="counterpartyPaymentMethodId"><description>Defaults to the original's</description></parameter>
+        </in-parameters>
+        <actions>
+            <service-call name="mantle.account.PaymentServices.get#PaymentRefundPlan" in-map="context" out-map="plan"/>
+            <set field="expiresDate" from="Number(ec.user.nowTimestamp) + 600000"/>
+            <service-call name="create#mantle.account.payment.PaymentStatePreview" out-map="previewOut"
+                    in-map="{organizationPartyId:plan.request.organizationPartyId, paymentId:paymentId,
+                        userId:ec.user.userId, previewKind:'refund', inputFingerprint:plan.inputFingerprint,
+                        requestJson:JSON.stringify(plan.request), payloadJson:JSON.stringify(plan.review),
+                        createdDate:ec.user.nowTimestamp, expiresDate:expiresDate, status:'review'}"/>
+            <service-call name="mantle.account.PaymentServices.get#PaymentRefundPreview" out-map="context"
+                    in-map="{previewId:previewOut.previewId}"/>
+        </actions>
+    </service>
+    <service verb="get" noun="PaymentRefundPreview" allow-remote="false">
+        <description>Read the user's own retained refund review and its results with the user's current authority; changes
+            nothing.</description>
+        <implements service="mantle.account.PaymentServices.define#PaymentRefundReview"/>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="previewId" required="true"/>
+        </in-parameters>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
+                    disable-authz="true"/>
+            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'refund'
+                    || (organizationPartyId &amp;&amp; organizationPartyId != previewRow.organizationPartyId)">
+                <return error="true" message="REFUND_PREVIEW_UNAVAILABLE: The refund review is unavailable"/>
+            </if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
+                    in-map="{paymentId:previewRow.paymentId, organizationPartyId:previewRow.organizationPartyId}"/>
+            <script>ec.context.putAll(JSON.parse(previewRow.payloadJson))</script>
+            <set field="amount" from="toDecimal(amount)"/>
+            <set field="previewKind" from="previewRow.previewKind"/>
+            <set field="inputFingerprint" from="previewRow.inputFingerprint"/>
+            <set field="status" from="previewRow.status"/>
+            <set field="operationKey" from="previewRow.operationKey"/>
+            <set field="expiresDate" from="previewRow.expiresDate"/>
+            <set field="canApply" from="status == 'review' &amp;&amp; Number(expiresDate) &gt; Number(ec.user.nowTimestamp)
+                    &amp;&amp; access.canChange"/>
+            <set field="results" from="previewRow.resultJson ? JSON.parse(previewRow.resultJson) : null"/>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
+            <if condition="results &amp;&amp; !ec.resource.script(workflow).ledgerRead()">
+                <set field="results.acctgTransIds" from="null"/>
+            </if>
+        </actions>
+    </service>
+    <service verb="refund" noun="ReviewedPayment" allow-remote="false">
+        <description>Confirm a retained manual refund review: with the original locked and unchanged since the review, create
+            the delivered refund through create#RefundPayment on its book day, with the reviewed methods, reference and
+            reason, so the Payment SECAs post it and it is applied to the original. Refuses another user's, an expired,
+            used or changed review and an operation key used for another review; confirming again with the same key
+            returns the first result.</description>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentId"><description>The original payment</description></parameter>
+            <parameter name="refundPaymentId"/>
+            <parameter name="paymentApplicationId"/>
             <parameter name="amount" type="BigDecimal"/>
             <parameter name="currencyUomId"/>
             <parameter name="accountingDateText"/>
-            <parameter name="operationKey"/>
-            <parameter name="applicationResults" type="List"/>
+            <parameter name="statusId"><description>The refund's status</description></parameter>
             <parameter name="acctgTransIds" type="List"/>
-            <parameter name="outputRows" type="List"/>
+            <parameter name="operationKey"/>
             <parameter name="reasonCode"/>
-            <parameter name="errorMessage"/>
             <parameter name="alreadyApplied" type="Boolean"/>
-            <parameter name="capabilities" type="Map"/>
-            <parameter name="paymentSummary" type="Map"/>
-            <parameter name="gatewaySummary" type="Map"/>
-            <parameter name="refundSummary" type="Map"/>
         </out-parameters>
-    </service>
-    <service verb="get" noun="PaymentGatewayAttempt" allow-remote="false">
-        <description>Read one exact provider attempt without lookup, dispatch or financial mutation.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayResult"/>
-        <in-parameters>
-            <parameter name="organizationPartyId"/>
-            <parameter name="attemptId" required="true"/>
-        </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').getAttempt(context))</script>
+            <if condition="operationKey.length &gt; 40">
+                <return error="true" message="OPERATION_KEY_REQUIRED: An operation key of at most 40 characters is required"/>
+            </if>
+            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
+                    for-update="true" disable-authz="true"/>
+            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'refund'">
+                <return error="true" message="REFUND_PREVIEW_UNAVAILABLE: The refund review is unavailable"/>
+            </if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
+                    in-map="{paymentId:previewRow.paymentId, organizationPartyId:previewRow.organizationPartyId}"/>
+            <if condition="!access.canChange">
+                <return error="true" message="PERMISSION_DENIED: Payment editing and payment view authority are required"/>
+            </if>
+            <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
+            <if condition="previewRow.status == 'complete'">
+                <if condition="previewRow.operationKey == operationKey">
+                    <script>ec.context.putAll(JSON.parse(previewRow.resultJson))</script>
+                    <set field="alreadyApplied" from="true"/>
+                    <if condition="!ec.resource.script(workflow).ledgerRead()"><set field="acctgTransIds" from="null"/></if>
+                    <return/>
+                </if>
+                <return error="true" message="REFUND_PREVIEW_CONSUMED: This refund review was already confirmed"/>
+            </if>
+            <if condition="inputFingerprint != previewRow.inputFingerprint">
+                <return error="true" message="REFUND_PREVIEW_MISMATCH: Confirm the refund as reviewed"/>
+            </if>
+            <if condition="Number(previewRow.expiresDate) &lt;= Number(ec.user.nowTimestamp)">
+                <return error="true" message="REFUND_PREVIEW_EXPIRED: Review the refund again"/>
+            </if>
+            <entity-find-count entity-name="mantle.account.payment.PaymentStatePreview" count-field="keyCount"
+                    disable-authz="true">
+                <econdition field-name="operationKey"/>
+            </entity-find-count>
+            <if condition="keyCount &gt; 0">
+                <return error="true" message="OPERATION_KEY_CONFLICT: The operation key was used for another request"/>
+            </if>
+            <set field="request" from="JSON.parse(previewRow.requestJson)"/>
+            <set field="paymentId" from="request.paymentId"/>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="original" for-update="true"
+                    disable-authz="true"/>
+            <set field="review" from="JSON.parse(previewRow.payloadJson)"/>
+            <service-call name="mantle.account.PaymentServices.get#PaymentRefundPlan" out-map="plan"
+                    in-map="{organizationPartyId:request.organizationPartyId, paymentId:paymentId, amount:request.amount,
+                        effectiveDate:request.effectiveDate, reason:request.reason, referenceNumber:request.referenceNumber,
+                        paymentInstrumentEnumId:request.paymentInstrumentEnumId,
+                        organizationPaymentMethodId:review.organizationMethod?.paymentMethodId,
+                        counterpartyPaymentMethodId:review.counterpartyMethod?.paymentMethodId}"/>
+            <if condition="plan.inputFingerprint != previewRow.inputFingerprint">
+                <return error="true" message="STALE_PREVIEW: The payment or its refunds changed; review the refund again"/>
+            </if>
+
+            <service-call name="mantle.account.PaymentServices.create#RefundPayment" out-map="refundOut"
+                    in-map="{paymentId:paymentId, amount:request.amount, statusId:'PmntDelivered',
+                        effectiveDate:request.effectiveDate, accountingDate:request.accountingDateText,
+                        paymentMethodId:request.paymentMethodId, toPaymentMethodId:request.toPaymentMethodId,
+                        paymentInstrumentEnumId:request.paymentInstrumentEnumId, paymentRefNum:request.referenceNumber,
+                        comments:request.reason}"/>
+            <set field="refundPaymentId" from="refundOut.paymentId"/>
+            <entity-find entity-name="mantle.ledger.transaction.AcctgTrans" list="refundTransList" disable-authz="true">
+                <econdition field-name="paymentId" from="refundPaymentId"/>
+                <econdition field-name="isPosted" value="Y"/>
+                <order-by field-name="acctgTransId"/>
+            </entity-find>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="refundPayment" disable-authz="true">
+                <field-map field-name="paymentId" from="refundPaymentId"/>
+            </entity-find-one>
+            <set field="result" from="{paymentId:paymentId, refundPaymentId:refundPaymentId,
+                    paymentApplicationId:refundOut.paymentApplicationId || null, amount:request.amount,
+                    currencyUomId:review.currencyUomId, accountingDateText:request.accountingDateText,
+                    statusId:refundPayment.statusId, acctgTransIds:Array.from(refundTransList).map((row) =&gt; row.acctgTransId),
+                    operationKey:operationKey, reasonCode:'REFUND_COMPLETED', alreadyApplied:false}"/>
+            <service-call name="update#mantle.account.payment.PaymentStatePreview"
+                    in-map="{previewId:previewId, status:'complete', operationKey:operationKey,
+                        resultJson:JSON.stringify(result)}"/>
+            <script>ec.context.putAll(result)</script>
+            <if condition="!ec.resource.script(workflow).ledgerRead()"><set field="acctgTransIds" from="null"/></if>
         </actions>
     </service>
+
     <service verb="find" noun="PaymentGatewayTransactions" allow-remote="false">
-        <description>Search scoped reviewed attempts and safe legacy gateway evidence before exact count and paging.</description>
+        <description>Search the gateway responses of the organization's payments, a page at a time, newest first: by payment
+            (its own responses and those of the refunds that answer for it), party, gateway, action, outcome (accepted,
+            declined, failed or pending), day range and text. Responses of a private party are only for its owner. Needs
+            treasury authority (check#PaymentGatewayAccess).</description>
         <in-parameters>
             <parameter name="organizationPartyId" required="true"/>
             <parameter name="paymentId"/>
             <parameter name="partyId"/>
             <parameter name="paymentGatewayConfigId"/>
-            <parameter name="action"/>
+            <parameter name="action"><description>authorize, capture, release, refund or lookup</description></parameter>
             <parameter name="outcome"/>
             <parameter name="fromDay"/>
             <parameter name="throughDay"/>
             <parameter name="text"/>
-            <parameter name="selectedAttemptIdList" type="List"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageIndex" type="Integer" default="0"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
         </in-parameters>
         <out-parameters>
             <parameter name="rows" type="List"/>
-            <parameter name="selectedRows" type="List"/>
             <parameter name="recordCount" type="Integer"/>
             <parameter name="pageIndex" type="Integer"/>
             <parameter name="pageSize" type="Integer"/>
@@ -3518,348 +4138,139 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="errors" type="List"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').findTransactions(context))</script>
+            <service-call name="mantle.account.PaymentServices.check#PaymentGatewayAccess"
+                    in-map="{organizationPartyId:organizationPartyId}"/>
+            <set field="operationEnums" from="{authorize:'PgoAuthorize', capture:'PgoCapture', release:'PgoRelease',
+                    refund:'PgoRefund', lookup:'PgoTxDetails'}"/>
+            <if condition="action &amp;&amp; !operationEnums[action]">
+                <return error="true" message="GATEWAY_ACTION_UNAVAILABLE: Choose a gateway action"/>
+            </if>
+            <if condition="outcome &amp;&amp; !['accepted', 'declined', 'failed', 'pending'].includes(outcome)">
+                <return error="true" message="GATEWAY_OUTCOME_INVALID: Choose a gateway outcome"/>
+            </if>
+            <if condition="[fromDay, throughDay].some((day) =&gt; day &amp;&amp; !/^\d{4}-\d{2}-\d{2}$/.test(String(day)))">
+                <return error="true" message="DATE_INVALID: Choose a valid gateway date"/>
+            </if>
+            <set field="operationEnumId" from="action ? operationEnums[action] : null"/>
+            <set field="fromDate" from="fromDay ? ec.l10n.parseTimestamp(fromDay + ' 00:00:00.000',
+                    'yyyy-MM-dd HH:mm:ss.SSS') : null"/>
+            <set field="thruDate" from="throughDay ? ec.l10n.parseTimestamp(throughDay + ' 23:59:59.999',
+                    'yyyy-MM-dd HH:mm:ss.SSS') : null"/>
+            <set field="searchLike" from="'%' + String(text || '').trim().slice(0, 200) + '%'"/>
+            <set field="systemAdmin" from="ec.resource.script('component://mr-mantle/service/mantle/product/ProductAccess.js')
+                    .systemAdmin()"/>
+            <entity-find entity-name="mantle.account.method.PaymentGatewayResponseFinance" list="responseList"
+                    disable-authz="true">
+                <search-form-inputs input-fields-map="{pageIndex:pageIndex, pageSize:pageSize}"/>
+                <econditions combine="or">
+                    <econdition field-name="fromPartyId" from="organizationPartyId"/>
+                    <econdition field-name="toPartyId" from="organizationPartyId"/>
+                </econditions>
+                <econdition field-name="fromPrivateOwnerUserId" from="ec.user.userId" or-null="true" ignore="systemAdmin"/>
+                <econdition field-name="toPrivateOwnerUserId" from="ec.user.userId" or-null="true" ignore="systemAdmin"/>
+                <econditions combine="or">
+                    <econdition field-name="paymentId" ignore="!paymentId"/>
+                    <econdition field-name="refundPaymentId" from="paymentId" ignore="!paymentId"/>
+                </econditions>
+                <econditions combine="or">
+                    <econdition field-name="fromPartyId" from="partyId" ignore="!partyId"/>
+                    <econdition field-name="toPartyId" from="partyId" ignore="!partyId"/>
+                </econditions>
+                <econdition field-name="paymentGatewayConfigId" ignore-if-empty="true"/>
+                <econdition field-name="paymentOperationEnumId" from="operationEnumId" ignore-if-empty="true"/>
+                <econdition field-name="resultSuccess" value="Y" ignore="outcome != 'accepted'"/>
+                <econdition field-name="resultDeclined" value="Y" ignore="outcome != 'declined'"/>
+                <econdition field-name="resultError" value="Y" ignore="outcome != 'failed'"/>
+                <econdition field-name="resultSuccess" operator="not-equals" value="Y" or-null="true"
+                        ignore="outcome != 'pending'"/>
+                <econdition field-name="resultDeclined" operator="not-equals" value="Y" or-null="true"
+                        ignore="outcome != 'pending'"/>
+                <econdition field-name="resultError" operator="not-equals" value="Y" or-null="true"
+                        ignore="outcome != 'pending'"/>
+                <econdition field-name="transactionDate" operator="greater-equals" from="fromDate" ignore-if-empty="true"/>
+                <econdition field-name="transactionDate" operator="less-equals" from="thruDate" ignore-if-empty="true"/>
+                <econditions combine="or">
+                    <econdition field-name="paymentGatewayResponseId" operator="like" from="searchLike" ignore-case="true"/>
+                    <econdition field-name="paymentId" operator="like" from="searchLike" ignore-case="true"/>
+                    <econdition field-name="referenceNum" operator="like" from="searchLike" ignore-case="true"/>
+                    <econdition field-name="responseCode" operator="like" from="searchLike" ignore-case="true"/>
+                </econditions>
+                <order-by field-name="-transactionDate"/>
+                <order-by field-name="-paymentGatewayResponseId"/>
+            </entity-find>
+            <set field="actions"
+                    from="Object.fromEntries(Object.entries(operationEnums).map(([key, value]) =&gt; [value, key]))"/>
+            <set field="rows" from="Array.from(responseList).map((row) =&gt; ({
+                    paymentGatewayResponseId:row.paymentGatewayResponseId, paymentId:row.paymentId,
+                    refundPaymentId:row.refundPaymentId, paymentGatewayConfigId:row.paymentGatewayConfigId,
+                    paymentOperationEnumId:row.paymentOperationEnumId, action:actions[row.paymentOperationEnumId] || null,
+                    amount:row.amount, amountUomId:row.amountUomId, transactionDate:row.transactionDate,
+                    referenceNum:row.referenceNum, approvalCode:row.approvalCode, responseCode:row.responseCode,
+                    reasonCode:row.reasonCode, reasonMessage:row.reasonMessage, transactionStatus:row.transactionStatus,
+                    operationKey:row.operationKey, fromPartyId:row.fromPartyId, toPartyId:row.toPartyId,
+                    paymentStatusId:row.paymentStatusId, resultSuccess:row.resultSuccess, resultDeclined:row.resultDeclined,
+                    resultError:row.resultError,
+                    outcome:row.resultSuccess == 'Y' ? 'accepted' : row.resultDeclined == 'Y' ? 'declined'
+                        : [row.resultError, row.resultNsf, row.resultBadExpire, row.resultBadCardNumber].includes('Y')
+                            ? 'failed' : 'pending'}))"/>
+            <set field="recordCount" from="responseListCount"/>
+            <set field="pageIndex" from="responseListPageIndex"/>
+            <set field="pageSize" from="responseListPageSize"/>
+            <set field="pageMaxIndex" from="responseListPageMaxIndex"/>
+            <set field="pageRangeLow" from="recordCount ? responseListPageRangeLow : 0"/>
+            <set field="pageRangeHigh" from="responseListPageRangeHigh"/>
+            <set field="complete" from="true"/>
+            <set field="errors" from="[]"/>
         </actions>
     </service>
     <service verb="find" noun="PaymentGatewayProviders" allow-remote="false">
-        <description>Search provider identities present in currently visible organization transactions without reading executable bindings or credentials.</description>
+        <description>Search the gateways bound to the organization (PaymentGatewayOrganization, enabled and active), with
+            those chosen in selectedIdList, by id or description. Needs treasury authority
+            (check#PaymentGatewayAccess); reads no credentials.</description>
         <in-parameters>
             <parameter name="organizationPartyId" required="true"/>
             <parameter name="text"/>
             <parameter name="selectedIdList" type="List"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageSize" type="Integer" default="20"/>
         </in-parameters>
         <out-parameters>
             <parameter name="rows" type="List"/>
             <parameter name="selectedRows" type="List"/>
-            <parameter name="recordCount" type="Integer"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
-            <parameter name="pageMaxIndex" type="Integer"/>
-            <parameter name="pageRangeLow" type="Integer"/>
-            <parameter name="pageRangeHigh" type="Integer"/>
             <parameter name="complete" type="Boolean"/>
-            <parameter name="errors" type="List"/>
         </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js').findProviders(context))</script>
+            <service-call name="mantle.account.PaymentServices.check#PaymentGatewayAccess"
+                    in-map="{organizationPartyId:organizationPartyId}"/>
+            <entity-find entity-name="mantle.account.method.PaymentGatewayOrganization" list="bindingList"
+                    disable-authz="true">
+                <econdition field-name="organizationPartyId"/>
+                <econdition field-name="isEnabled" operator="not-equals" value="N" or-null="true"/>
+                <date-filter/>
+                <select-field field-name="paymentGatewayConfigId"/>
+            </entity-find>
+            <set field="selectedIdList" from="[...new Set(Array.from(selectedIdList || []).map(String))].slice(0, 200)"/>
+            <set field="configIdList" from="[...new Set(Array.from(bindingList).map((row) =&gt; row.paymentGatewayConfigId)
+                    .concat(selectedIdList))]"/>
+            <set field="searchText" from="String(text || '').trim().toLowerCase()"/>
+            <set field="configList" from="[]"/>
+            <if condition="configIdList.length">
+                <entity-find entity-name="mantle.account.method.PaymentGatewayConfig" list="configList" disable-authz="true">
+                    <econdition field-name="paymentGatewayConfigId" operator="in" from="configIdList"/>
+                    <select-field field-name="paymentGatewayConfigId,description"/>
+                    <order-by field-name="description,paymentGatewayConfigId"/>
+                </entity-find>
+            </if>
+            <set field="bound" from="Array.from(bindingList).map((row) =&gt; row.paymentGatewayConfigId)"/>
+            <set field="configRows" from="Array.from(configList).map((row) =&gt; ({
+                    paymentGatewayConfigId:row.paymentGatewayConfigId, description:row.description || row.paymentGatewayConfigId}))"/>
+            <set field="rows" from="configRows.filter((row) =&gt; bound.includes(row.paymentGatewayConfigId)
+                    &amp;&amp; (row.paymentGatewayConfigId + ' ' + row.description).toLowerCase().includes(searchText))
+                    .slice(0, pageSize)"/>
+            <set field="selectedRows" from="configRows.filter((row) =&gt; selectedIdList.includes(row.paymentGatewayConfigId))"/>
+            <set field="complete" from="true"/>
         </actions>
     </service>
-    <service verb="execute" noun="PaymentGatewayAction" allow-remote="false" transaction="ignore">
-        <description>Reserve exact provider identity and capacity, dispatch once outside financial locks, retain outcome and complete accepted local money atomically.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayResult"/>
-        <in-parameters>
-            <parameter name="previewId" required="true"/>
-            <parameter name="inputFingerprint" required="true"/>
-            <parameter name="operationKey" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').execute(context))</script>
-        </actions>
-    </service>
-    <service verb="refresh" noun="PaymentGatewayAttempt" allow-remote="false" transaction="ignore">
-        <description>Lookup the original provider operation identity without creating a new external operation; retain and finalize its authoritative result.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayResult"/>
-        <in-parameters>
-            <parameter name="organizationPartyId" required="true"/>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="attemptVersion" required="true"/>
-            <parameter name="operationKey" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').refresh(context))</script>
-        </actions>
-    </service>
-    <service verb="preview" noun="PaymentGatewayRecovery" allow-remote="false">
-        <description>Review local completion of an accepted operation using its original SQL day and current financial policy, without another provider request.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayPreviewResult"/>
-        <in-parameters>
-            <parameter name="organizationPartyId" required="true"/>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="attemptVersion" required="true"/>
-            <parameter name="reason" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').previewRecovery(context))</script>
-        </actions>
-    </service>
-    <service verb="complete" noun="PaymentGatewayAttempt" allow-remote="false">
-        <description>Only local financial finalizer: post the exact accepted cash leg and issued outputs once under retained review, locks and current native authority.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayResult"/>
-        <in-parameters>
-            <parameter name="previewId" required="true"/>
-            <parameter name="inputFingerprint" required="true"/>
-            <parameter name="operationKey" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').complete(context))</script>
-        </actions>
-    </service>
-    <service verb="define" noun="PaymentGatewayStageResult" type="interface">
-        <description>Internal stage result; provider claim tokens and typed evidence never enter public gateway result projections.</description>
-        <out-parameters>
-            <parameter name="attemptId"/>
-            <parameter name="token"/>
-            <parameter name="shouldDispatch" type="Boolean"/>
-            <parameter name="shouldLookup" type="Boolean"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
-            <parameter name="savedResultJson"/>
-            <parameter name="providerEvidence" type="Map"/>
-            <parameter name="providerState"/>
-            <parameter name="financialState"/>
-            <parameter name="previewId"/>
-            <parameter name="inputFingerprint"/>
-            <parameter name="result" type="Map"/>
-            <parameter name="adapterServiceName"/>
-            <parameter name="adapterRequest" type="Map"/>
-        </out-parameters>
-    </service>
-    <service verb="reserve" noun="PaymentGatewayAction" allow-remote="false" transaction="force-new">
-        <description>Internal orchestrator-only stage committing operation, exact frozen evidence, capacity hold and placeholder gateway response before I/O.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
-        <in-parameters>
-            <parameter name="previewId" required="true"/>
-            <parameter name="inputFingerprint" required="true"/>
-            <parameter name="operationKey" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').reserve(context))</script>
-        </actions>
-    </service>
-    <service verb="dispatch" noun="PaymentGatewayAttempt" allow-remote="false" transaction="ignore">
-        <description>Provider-isolated nonfinancial frame invoking only the frozen safe adapter and immutable request identity.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
-        <in-parameters>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="token" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').dispatch(context))</script>
-        </actions>
-    </service>
-    <service verb="lookup" noun="PaymentGatewayAttempt" allow-remote="false" transaction="ignore">
-        <description>Provider-isolated exact-identity lookup frame; it cannot issue another charge or write local financial records.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
-        <in-parameters>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="token" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').lookup(context))</script>
-        </actions>
-    </service>
-    <service verb="prepare" noun="PaymentGatewayDispatch" allow-remote="false" transaction="force-new">
-        <description>Private direct-dispatch stage locking and rechecking original reviewed method identity, then returning a by-value credential snapshot before external I/O.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
-        <in-parameters>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="token" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').prepareDispatch(context))</script>
-        </actions>
-    </service>
-    <service verb="record" noun="PaymentGatewayResult" allow-remote="false" transaction="force-new">
-        <description>Persist a nonce-bound typed provider receipt after the isolated I/O frame has exited, retaining ambiguous outcomes and their holds.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
-        <in-parameters>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="token" required="true"/>
-            <parameter name="kind" required="true"/>
-            <parameter name="providerEvidence" type="Map"/>
-            <parameter name="transportFailure" type="Boolean"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').record(context))</script>
-        </actions>
-    </service>
-    <service verb="claim" noun="PaymentGatewayLookup" allow-remote="false" transaction="force-new">
-        <description>Reserve one current lookup lease and operation identity without releasing or spending an unresolved hold.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
-        <in-parameters>
-            <parameter name="organizationPartyId" required="true"/>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="attemptVersion" required="true"/>
-            <parameter name="operationKey" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').claimLookup(context))</script>
-        </actions>
-    </service>
-    <service verb="finish" noun="PaymentGatewayLookup" allow-remote="false" transaction="force-new">
-        <description>Record the exact completed lookup command outcome for replay independently of later provider-state changes.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
-        <in-parameters>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="operationKey" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').finishLookup(context))</script>
-        </actions>
-    </service>
-    <service verb="fail" noun="PaymentGatewayCompletion" allow-remote="false" transaction="force-new">
-        <description>Retain accepted-unposted state after a local finalizer rollback; never reclassify provider acceptance as decline.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
-        <in-parameters>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="reasonCode"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').failCompletion(context))</script>
-        </actions>
-    </service>
-    <service verb="get" noun="FreshPaymentGatewayAttempt" allow-remote="false" transaction="force-new">
-        <description>Internal fresh-stage read and authorized projection independent of an outer caller's retained transaction snapshot.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentGatewayStageResult"/>
-        <in-parameters>
-            <parameter name="attemptId" required="true"/>
-            <parameter name="savedResultJson"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentGatewayExecution.js').freshRead(context))</script>
-        </actions>
-    </service>
-    <service verb="get" noun="PaymentRefundSummary" allow-remote="false">
-        <description>Current Treasury-only original-cash refund capacity, actual backing, masked defaults and named incomplete-history reasons.</description>
-        <in-parameters>
-            <parameter name="organizationPartyId"/>
-            <parameter name="paymentId" required="true"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="refundSummary" type="Map"/>
-            <parameter name="refundDefaults" type="Map"/>
-            <parameter name="capabilities" type="Map"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').summary(context))</script>
-        </actions>
-    </service>
-    <service verb="find" noun="PaymentRefundDrafts" allow-remote="false">
-        <description>Search eligible scoped opposing clean drafts before count/page and retain selected current revisions independently of search.</description>
-        <in-parameters>
-            <parameter name="organizationPartyId" required="true"/>
-            <parameter name="paymentId" required="true"/>
-            <parameter name="effectiveDate" type="Timestamp"/>
-            <parameter name="text"/>
-            <parameter name="selectedPaymentIdList" type="List"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="rows" type="List"/>
-            <parameter name="selectedRows" type="List"/>
-            <parameter name="recordCount" type="Integer"/>
-            <parameter name="pageIndex" type="Integer"/>
-            <parameter name="pageSize" type="Integer"/>
-            <parameter name="pageMaxIndex" type="Integer"/>
-            <parameter name="pageRangeLow" type="Integer"/>
-            <parameter name="pageRangeHigh" type="Integer"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="errors" type="List"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').findDrafts(context))</script>
-        </actions>
-    </service>
-    <service verb="define" noun="PaymentRefundPreviewResult" type="interface">
-        <description>Retained refund review fields, masked reviewed selections and separately authorized financial plans.</description>
-        <out-parameters>
-            <parameter name="previewId"/>
-            <parameter name="inputFingerprint"/>
-            <parameter name="organizationPartyId"/>
-            <parameter name="paymentId"/>
-            <parameter name="originalPaymentId"/>
-            <parameter name="refundPaymentId"/>
-            <parameter name="sourceVersion"/>
-            <parameter name="refundSourceVersion"/>
-            <parameter name="previewKind"/>
-            <parameter name="paymentInstrumentEnumId"/>
-            <parameter name="paymentSummary" type="Map"/>
-            <parameter name="refundSummary" type="Map"/>
-            <parameter name="refundDefaults" type="Map"/>
-            <parameter name="reviewedMethods" type="Map"/>
-            <parameter name="before" type="Map"/>
-            <parameter name="after" type="Map"/>
-            <parameter name="applicationEffects" type="List"/>
-            <parameter name="postingSummary" type="Map"/>
-            <parameter name="ledgerPreview" type="List"/>
-            <parameter name="evidenceRows" type="List"/>
-            <parameter name="capabilities" type="Map"/>
-            <parameter name="blockers" type="List"/>
-            <parameter name="canApply" type="Boolean"/>
-            <parameter name="expiresDate" type="Timestamp"/>
-            <parameter name="effectiveDateText"/>
-            <parameter name="referenceNumber"/>
-            <parameter name="reason"/>
-            <parameter name="status"/>
-            <parameter name="operationKey"/>
-            <parameter name="results" type="Map"/>
-        </out-parameters>
-    </service>
-    <service verb="preview" noun="PaymentRefund" allow-remote="false">
-        <description>Review exact opposite manual cash and consumed original funding without creating cash, applications, outputs or provider requests.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentRefundPreviewResult"/>
-        <in-parameters>
-            <parameter name="organizationPartyId" required="true"/>
-            <parameter name="paymentId" required="true"/>
-            <parameter name="sourceVersion" required="true"/>
-            <parameter name="amount" type="BigDecimal" required="true"/>
-            <parameter name="effectiveDate" type="Timestamp" required="true"/>
-            <parameter name="reason" required="true"/>
-            <parameter name="referenceNumber" required="true"/>
-            <parameter name="refundPaymentId"/>
-            <parameter name="refundSourceVersion"/>
-            <parameter name="paymentInstrumentEnumId"/>
-            <parameter name="organizationPaymentMethodId" required="true"/>
-            <parameter name="organizationMethodVersion" required="true"/>
-            <parameter name="counterpartyPaymentMethodId"/>
-            <parameter name="counterpartyMethodVersion"/>
-            <parameter name="evidenceContentIdList" type="List"/>
-            <parameter name="evidenceVersions" type="Map"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').preview(context))</script>
-        </actions>
-    </service>
-    <service verb="get" noun="PaymentRefundPreview" allow-remote="false">
-        <description>Reload an owner-bound refund review with its exact reviewed selections and current native authority.</description>
-        <implements service="mantle.account.PaymentServices.define#PaymentRefundPreviewResult"/>
-        <in-parameters>
-            <parameter name="organizationPartyId"/>
-            <parameter name="previewId" required="true"/>
-        </in-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').getPreview(context))</script>
-        </actions>
-    </service>
-    <service verb="refund" noun="ReviewedPayment" allow-remote="false">
-        <description>Atomically post exact reviewed opposite cash and original funding application once; refuse stale, incomplete, held or unauthorized funding.</description>
-        <in-parameters>
-            <parameter name="previewId" required="true"/>
-            <parameter name="inputFingerprint" required="true"/>
-            <parameter name="operationKey" required="true"/>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="paymentId"/>
-            <parameter name="originalPaymentId"/>
-            <parameter name="refundPaymentId"/>
-            <parameter name="paymentApplicationId"/>
-            <parameter name="amount"/>
-            <parameter name="currencyUomId"/>
-            <parameter name="accountingDateText"/>
-            <parameter name="statusId"/>
-            <parameter name="paymentLifecycleEventId"/>
-            <parameter name="applicationResults" type="List"/>
-            <parameter name="acctgTransIds" type="List"/>
-            <parameter name="outputRows" type="List"/>
-            <parameter name="reasonCode"/>
-            <parameter name="alreadyApplied" type="Boolean"/>
-        </out-parameters>
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').refund(context))</script>
-        </actions>
-    </service>
+
     <!-- Internal transfers: one PtInternalTransfer payment from the organization to itself, from one of its bank or cash
         methods (paymentMethodId) to another (toPaymentMethodId); post#Payment posts its outgoing and incoming sides
         through the transit account (PaymentTypeGlAccount for PtInternalTransfer). A fee is its own disbursement. -->

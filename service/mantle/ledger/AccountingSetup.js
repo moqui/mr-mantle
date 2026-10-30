@@ -28,7 +28,6 @@ const preferenceFields = [
     "invoiceApprovalRequired",
     "paymentAutoApplicationEnabled",
     "settlementApplicationGuardEnabled",
-    "paymentGatewayWorkflowEnabled",
     "inventoryRevaluationEnabled",
     "invoiceDocumentTemplate",
     "paymentDocumentTemplate",

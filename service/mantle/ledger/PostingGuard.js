@@ -14,7 +14,6 @@ const applicationTypes = [
     "AttPaymentApplied",
     "AttPaymentAdjust"
 ]
-const gatewayPosting = () => ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayPostingGuard.js")
 function fiscal(org, date, lock = false, visited = [], calendarDay = null) {
     if (visited.includes(org))
         return {
@@ -375,9 +374,6 @@ function captureSourceDay(tx) {
 function assertMutable(p) {
     const initial = one(T, {acctgTransId: p.acctgTransId})
     if (!initial) return
-    const gateway = gatewayPosting()
-    gateway.posting(initial, {cashTypes, applicationTypes})
-    gateway.heldCash(initial, cashTypes)
     if (p.operation === "unpost" || initial.isPosted !== "Y") return
     if (!initial.invoiceId && !initial.paymentId && !initial.paymentApplicationId) return
     // The organization first, as the application writers lock it, then the transaction.
@@ -386,7 +382,13 @@ function assertMutable(p) {
     const ownApplication = applicationTypes.includes(tx.acctgTransTypeEnumId) && !tx.reverseOfAcctgTransId
     const linked = ownApplication && tx.paymentApplicationId ? one(A, {paymentApplicationId: tx.paymentApplicationId}) : null
     const consumed = ownApplication ? toDecimal(linked?.amountApplied ?? 0).compare(0) > 0 : positiveApplications(tx).length > 0
-    if (consumed)
+    // A void or cancelled payment's own cash posting may be reversed first: its PaymentCancelledCleanup SECA unapplies the
+    // payment in the same transaction.
+    const voided =
+        !ownApplication &&
+        !!tx.paymentId &&
+        ["PmntVoid", "PmntCancelled"].includes(one("mantle.account.payment.Payment", {paymentId: tx.paymentId})?.statusId)
+    if (consumed && !voided)
         throw new Error("SOURCE_HAS_APPLICATIONS: Unapply the financial application before changing its posting evidence")
 }
 // The net amount the posted entries put on one account and side equals the document amount.
@@ -401,14 +403,9 @@ function controlProof(evidence, account, flag, amount) {
         throw new Error("SOURCE_POSTING_INCOMPLETE: The posted control amount does not match its financial document")
 }
 function check(p) {
-    if (!p.verifyOnly)
-        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const initial = one(T, {acctgTransId: p.acctgTransId})
     if (!initial) throw new Error("Accounting transaction is not available")
-    const legacyPaymentOnly = !p.verifyOnly && gatewayPosting().posting(initial, {cashTypes, applicationTypes})
     const pref = preference(initial.organizationPartyId)
-    if (legacyPaymentOnly && pref.postingGuardEnabled === "Y")
-        throw new Error("PAYMENT_SOURCE_CHANGED: Financial controls changed; retry the operation")
     if (!p.verifyOnly) checkSourceDay(initial)
     const adopted = pref.postingGuardEnabled === "Y"
     if (!p.verifyOnly && !adopted) {
@@ -427,7 +424,7 @@ function check(p) {
             )
         // These controllers retain and recheck the complete application/cash plans before posting corrections.
         const paymentReviewed =
-            /mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment|complete#PaymentGatewayAttempt|create#InternalTransfer)(?:\b|$)/.test(
+            /mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment|create#InternalTransfer)(?:\b|$)/.test(
                 stack
             )
         if (!reviewed && !source && !paymentReviewed) throw new Error("REVIEW_REQUIRED: Use a reviewed posting operation")

@@ -105,18 +105,13 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="invalidFlag" from="['postingGuardEnabled', 'requiredLedgerDimensionsEnabled',
                     'forwardIssuanceRepostEnabled', 'allowAccountingSelfApproval', 'singleCurrencyDocumentsOnly',
                     'invoiceApprovalRequired', 'paymentAutoApplicationEnabled', 'settlementApplicationGuardEnabled',
-                    'paymentGatewayWorkflowEnabled', 'inventoryRevaluationEnabled', 'realTimeGlSummary']
+                    'inventoryRevaluationEnabled', 'realTimeGlSummary']
                     .find(field => preferenceValues[field] != null &amp;&amp; !['Y', 'N'].includes(preferenceValues[field]))"/>
             <if condition="invalidFlag">
                 <return error="true" message="Choose Enabled or Disabled for ${invalidFlag}"/>
             </if>
             <set field="inheritedPreference" from="policy.preference(scope.organizationPartyId)"/>
             <set field="effective" from="Object.assign({}, inheritedPreference, policy.map(oldPreference), preferenceValues)"/>
-            <if condition="effective.paymentGatewayWorkflowEnabled === 'Y' &amp;&amp;
-                    effective.settlementApplicationGuardEnabled !== 'Y'">
-                <return error="true"
-                        message="GATEWAY_SETTLEMENT_REQUIRED: Enable settlement controls before reviewed payment processing"/>
-            </if>
             <iterate list="['baseCurrencyUomId', 'localCurrencyUomId']" entry="currencyField">
                 <if condition="preferenceValues[currencyField]">
                     <script>policy.currency(preferenceValues[currencyField])</script>

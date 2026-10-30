@@ -116,9 +116,104 @@ along with this software (see the LICENSE.md file). If not, see
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
             <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
                     in-map="{paymentGatewayConfigId:paymentGatewayConfigId, paymentOperationEnumId:'PgoRefund',
-                        paymentId:payment.paymentId, paymentMethodId:payment.paymentMethodId, amount:payment.amount,
+                        paymentId:payment.paymentId, paymentMethodId:payment.paymentMethodId, amount:(amount || payment.amount),
                         amountUomId:payment.amountUomId, referenceNum:'TEST', transactionDate:ec.user.nowTimestamp,
                         resultSuccess:'Y', resultDeclined:'N', resultNsf:'N', resultBadExpire:'N', resultBadCardNumber:'N'}"/>
+        </actions>
+    </service>
+
+    <service verb="alwaysPending" noun="PaymentAuthorization">
+        <description>Answers that the gateway has the request but has not decided it yet: neither approved nor declined,
+            with a reference get#PaymentGatewayDetails can look up (alwaysApprove#PaymentDetails approves it).</description>
+        <implements service="mantle.account.PaymentServices.authorize#Payment"/>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
+            <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
+                    in-map="{paymentGatewayConfigId:paymentGatewayConfigId, paymentOperationEnumId:'PgoAuthorize',
+                        paymentId:payment.paymentId, paymentMethodId:payment.paymentMethodId, amount:payment.amount,
+                        amountUomId:payment.amountUomId, referenceNum:'TEST-PENDING', transactionDate:ec.user.nowTimestamp,
+                        transactionStatus:'Pending', resultSuccess:'N', resultDeclined:'N', resultNsf:'N', resultBadExpire:'N',
+                        resultBadCardNumber:'N'}"/>
+        </actions>
+    </service>
+    <service verb="alwaysPending" noun="PaymentCapture">
+        <description>Answers that the gateway has the request but has not decided it yet: neither approved nor declined,
+            with a reference get#PaymentGatewayDetails can look up (alwaysApprove#PaymentDetails approves it).</description>
+        <implements service="mantle.account.PaymentServices.capture#Payment"/>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
+            <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
+                    in-map="{paymentGatewayConfigId:paymentGatewayConfigId, paymentOperationEnumId:'PgoCapture',
+                        paymentId:payment.paymentId, paymentMethodId:payment.paymentMethodId, amount:(amount || payment.amount),
+                        amountUomId:payment.amountUomId, referenceNum:'TEST-PENDING', transactionDate:ec.user.nowTimestamp,
+                        transactionStatus:'Pending', resultSuccess:'N', resultDeclined:'N', resultNsf:'N', resultBadExpire:'N',
+                        resultBadCardNumber:'N'}"/>
+        </actions>
+    </service>
+    <service verb="alwaysDecline" noun="PaymentRelease">
+        <implements service="mantle.account.PaymentServices.release#Payment"/>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
+            <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
+                    in-map="{paymentGatewayConfigId:paymentGatewayConfigId, paymentOperationEnumId:'PgoRelease',
+                        paymentId:payment.paymentId, paymentMethodId:payment.paymentMethodId, amount:payment.amount,
+                        amountUomId:payment.amountUomId, referenceNum:'TEST', transactionDate:ec.user.nowTimestamp,
+                        resultSuccess:'N', resultDeclined:'Y', resultNsf:'N', resultBadExpire:'N', resultBadCardNumber:'N'}"/>
+        </actions>
+    </service>
+    <service verb="alwaysDecline" noun="PaymentRefund">
+        <implements service="mantle.account.PaymentServices.refund#Payment"/>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
+            <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
+                    in-map="{paymentGatewayConfigId:paymentGatewayConfigId, paymentOperationEnumId:'PgoRefund',
+                        paymentId:payment.paymentId, paymentMethodId:payment.paymentMethodId, amount:(amount || payment.amount),
+                        amountUomId:payment.amountUomId, referenceNum:'TEST', transactionDate:ec.user.nowTimestamp,
+                        resultSuccess:'N', resultDeclined:'Y', resultNsf:'N', resultBadExpire:'N', resultBadCardNumber:'N'}"/>
+        </actions>
+    </service>
+    <service verb="alwaysPending" noun="PaymentRefund">
+        <description>Answers that the gateway has the request but has not decided it yet: neither approved nor declined,
+            with a reference get#PaymentGatewayDetails can look up (alwaysApprove#PaymentDetails approves it).</description>
+        <implements service="mantle.account.PaymentServices.refund#Payment"/>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
+            <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
+                    in-map="{paymentGatewayConfigId:paymentGatewayConfigId, paymentOperationEnumId:'PgoRefund',
+                        paymentId:payment.paymentId, paymentMethodId:payment.paymentMethodId, amount:(amount || payment.amount),
+                        amountUomId:payment.amountUomId, referenceNum:'TEST-PENDING', transactionDate:ec.user.nowTimestamp,
+                        transactionStatus:'Pending', resultSuccess:'N', resultDeclined:'N', resultNsf:'N', resultBadExpire:'N',
+                        resultBadCardNumber:'N'}"/>
+        </actions>
+    </service>
+
+    <service verb="alwaysApprove" noun="PaymentDetails">
+        <description>Answers that the payment's latest gateway operation was approved, so a pending answer resolves on
+            lookup: an authorization to Authorized, a capture to Delivered, a release to Promised, and a refund payment
+            (a PgoRefund response linked by refundPaymentId) to Delivered.</description>
+        <implements service="mantle.account.PaymentServices.get#PaymentGatewayDetails"/>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment"/>
+            <entity-find entity-name="mantle.account.method.PaymentGatewayResponse" list="responseList" limit="1">
+                <econditions combine="or">
+                    <econdition field-name="paymentId"/>
+                    <econdition field-name="refundPaymentId" from="paymentId"/>
+                </econditions>
+                <econdition field-name="paymentOperationEnumId" operator="not-equals" value="PgoTxDetails"/>
+                <order-by field-name="-transactionDate"/>
+                <order-by field-name="-paymentGatewayResponseId"/>
+            </entity-find>
+            <set field="operationEnumId" from="responseList.length ? responseList[0].paymentOperationEnumId : null"/>
+            <set field="operationStatusIds" from="{PgoAuthorize:'PmntAuthorized', PgoCapture:'PmntDelivered',
+                    PgoAuthAndCapture:'PmntDelivered', PgoRelease:'PmntPromised', PgoRefund:'PmntDelivered'}"/>
+            <set field="gatewayStatusId" from="operationStatusIds[operationEnumId] || payment.statusId"/>
+            <service-call name="create#mantle.account.method.PaymentGatewayResponse" out-map="context"
+                    in-map="{paymentGatewayConfigId:paymentGatewayConfigId, paymentOperationEnumId:'PgoTxDetails',
+                        paymentId:payment.paymentId, paymentMethodId:payment.paymentMethodId, amount:payment.amount,
+                        amountUomId:payment.amountUomId, referenceNum:payment.paymentRefNum,
+                        transactionDate:ec.user.nowTimestamp, transactionStatus:gatewayStatusId, resultSuccess:'Y',
+                        resultDeclined:'N', resultNsf:'N', resultBadExpire:'N', resultBadCardNumber:'N'}"/>
+            <set field="effectiveDate" from="ec.user.nowTimestamp"/>
         </actions>
     </service>
 </services>

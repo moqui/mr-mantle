@@ -164,12 +164,6 @@ function nativeTransactions(paymentId, org, lock = false) {
 }
 function requireMutable(scope) {
     const r = scope.record
-    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").assertDraftAvailable({
-        organizationPartyId: scope.organizationPartyId,
-        paymentId: r.paymentId,
-        lock: true
-    })
-    ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
     if (!["PmntProposed", "PmntPromised"].includes(r.statusId))
         denied("PAYMENT_STATE_INVALID", "Only a proposed or promised payment can be edited")
     if (r.refundForPaymentId || r.paymentTypeEnumId !== "PtInvoicePayment")
@@ -309,9 +303,6 @@ function storeDraft(p) {
         denied("STALE_REVISION", "The payment changed; reload before editing")
     const methods = methodEvidence(initial, request, request.effectiveDate, true),
         before = initial.record.statusId
-    ec.resource
-        .script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
-        .assertAdoptable(initial.record, true)
     updatePayment(p.paymentId, draftFields(request, methods))
     const result = draftResult(one(P, {paymentId: p.paymentId}))
     const editEvent = event(
@@ -538,12 +529,6 @@ function stateNormalized(p, lock = false) {
     if (p.action === "void") return unapplyNormalized(p, lock, true)
     const scope = paymentScope(p, true, lock),
         r = scope.record
-    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").assertDraftAvailable({
-        organizationPartyId: scope.organizationPartyId,
-        paymentId: r.paymentId,
-        lock
-    })
-    ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
     counterparty({partyId: scope.partyId}, scope.organizationPartyId)
     if (!p.sourceVersion || paymentVersion(r) !== p.sourceVersion)
         denied("STALE_REVISION", "The payment changed; review it again")
@@ -816,9 +801,6 @@ function changeState(p) {
         })
     if (fingerprint !== r.row.inputFingerprint)
         denied("STALE_PREVIEW", "The payment or its posting policy changed; review it again")
-    ec.resource
-        .script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
-        .assertAdoptable(n.scope.record, true)
     const record = n.scope.record,
         paymentId = record.paymentId,
         before = record.statusId,
@@ -952,7 +934,6 @@ function allDocumentApplications(documents, lock = false) {
 function unapplyNormalized(p, lock = false, voidPayment = false) {
     const scope = paymentScope(p, true, lock),
         r = scope.record
-    ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
     counterparty({partyId: scope.partyId}, scope.organizationPartyId)
     if (!p.sourceVersion || p.sourceVersion !== paymentVersion(r))
         denied("STALE_REVISION", "The payment changed; review it again")
@@ -971,18 +952,13 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
         ids = voidPayment
             ? positive.map(row => row.paymentApplicationId).sort()
             : [...new Set(Array.from(p.paymentApplicationIdList || []).map(String))].sort()
-    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").assertCorrection({
-        organizationPartyId: scope.organizationPartyId,
-        paymentId: r.paymentId,
-        voidPayment,
-        paymentApplicationIdList: ids,
-        lock
-    })
     if ((!voidPayment && !ids.length) || ids.length > 200)
         denied("APPLICATION_SELECTION_INVALID", "Select between one and two hundred positive applications")
     const selected = related.filter(row => ids.includes(row.paymentApplicationId))
     if (selected.length !== ids.length || selected.some(row => toDecimal(row.amountApplied || 0).compare(0) <= 0))
         denied("APPLICATION_UNAVAILABLE", "A selected positive application is unavailable")
+    // An application that funds a completed refund stays applied (the rule unapply#PaymentApplication checks).
+    for (const row of selected) settlement.execute("checkUnapply", {paymentApplication: row})
     if (
         !voidPayment &&
         selected.some(
@@ -1213,9 +1189,6 @@ function getUnapplyPreview(p) {
 // reverses its posting (or reposts direct cash unapplied), and for a void then the PmntVoid status change, whose SECAs
 // reverse the cash posting and clear the payment's method transactions. Reversals keep each original's day.
 function executeCorrection(n, op) {
-    ec.resource
-        .script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
-        .assertAdoptable(n.scope.record, true)
     const paymentId = n.scope.record.paymentId,
         before = n.scope.record.statusId,
         originalIds = n.originalTransactions.map(row => row.acctgTransId)

@@ -75,9 +75,7 @@ function privateQuery(query) {
 function query(scope, kind, filters = {}) {
     const invoice = ["invoice", "credit"].includes(kind),
         cf = ec.entity.conditionFactory
-    let q = find(
-        invoice ? "mantle.account.payment.SettlementInvoiceBalance" : "mantle.account.payment.PaymentGatewayAvailableBalance"
-    )
+    let q = find(invoice ? "mantle.account.payment.SettlementInvoiceBalance" : "mantle.account.payment.SettlementPaymentBalance")
     const org = scope.organizationPartyId
     if (invoice)
         q = q.condition(lib.policy.invoiceDirectionCondition(scope.direction === "receivable" ? "invoices" : "bills", [org]))
@@ -157,7 +155,7 @@ function query(scope, kind, filters = {}) {
                 ? ["InvoiceFinalized", "InvoiceSent", "InvoiceAcked", "InvoiceApproved", "InvoicePmtRecvd", "InvoicePmtSent"]
                 : ["PmntDelivered", "PmntConfirmed"]
         )
-        q = q.condition(invoice ? "balanceRemaining" : "availableAmount", "greater", 0)
+        q = q.condition("balanceRemaining", "greater", 0)
         if (filters.asOfDate) {
             const day = ec.l10n.format(filters.asOfDate, "yyyy-MM-dd"),
                 end = ec.l10n.parseTimestamp(day + " 23:59:59.999", "yyyy-MM-dd HH:mm:ss.SSS")
@@ -219,13 +217,7 @@ function project(scope, kind, records, asOfDate = null) {
     const invoice = ["invoice", "credit"].includes(kind),
         applied = applications(records)
     const invoiceTotals = invoice ? lib.totalsMany(records) : {},
-        names = lib.partyNames([scope.partyId]),
-        holdEvidence = invoice
-            ? {}
-            : ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayReservations.js").cashHoldSummaries({
-                  organizationPartyId: scope.organizationPartyId,
-                  paymentIdList: records.map(row => row.paymentId)
-              })
+        names = lib.partyNames([scope.partyId])
     return records.map(record => {
         const id = invoice ? record.invoiceId : record.paymentId
         const evidence = applied.filter(row =>
@@ -235,8 +227,7 @@ function project(scope, kind, records, asOfDate = null) {
         const used = invoice
             ? invoiceTotals[id].appliedPayments
             : evidence.reduce((sum, row) => sum.add(row.amountApplied || 0), toDecimal(0))
-        const held = invoice ? toDecimal(0) : holdEvidence[id].heldAmount,
-            remaining = original.subtract(used).subtract(held),
+        const remaining = original.subtract(used),
             date = invoice ? record.invoiceDate : record.effectiveDate
         const accountingDateText = record.accountingDate
             ? lib.policy.calendarDateText(record.accountingDate)
@@ -259,7 +250,6 @@ function project(scope, kind, records, asOfDate = null) {
             record: lib.map(record),
             original: String(original),
             remaining: String(remaining),
-            holdVersion: invoice ? null : holdEvidence[id].version,
             applications: evidence.map(lib.map)
         })
         return {
@@ -275,7 +265,6 @@ function project(scope, kind, records, asOfDate = null) {
             dueDateText: lib.policy.dateText(record.dueDate),
             original,
             remaining,
-            reservedAmount: held,
             availableAmount: remaining,
             currencyUomId: scope.currencyUomId,
             statusId: record.statusId,
@@ -395,9 +384,6 @@ const paymentFields = [
     "orderPartSeqId",
     "reconcileStatusId",
     "lifecycleManaged",
-    "gatewayInstructionId",
-    "gatewayAttemptId",
-    "gatewayRole",
     "lastUpdatedStamp"
 ]
 const manualInstruments = [
@@ -476,7 +462,7 @@ function paymentQuery(scope, p = {}) {
     const cf = ec.entity.conditionFactory,
         org = scope.organizationPartyId
     let q = privateQuery(
-        find("mantle.account.payment.PaymentGatewayLifecycleBalance").condition(
+        find("mantle.account.payment.PaymentLifecycleBalance").condition(
             cf.makeCondition([cf.makeCondition("fromPartyId", "equals", org), cf.makeCondition("toPartyId", "equals", org)], "or")
         )
     )
@@ -495,21 +481,12 @@ function paymentQuery(scope, p = {}) {
     if (queue === "unapplied")
         q = q
             .condition("statusId", "in", ["PmntDelivered", "PmntConfirmed"])
-            .condition("availableAmount", "greater", 0)
+            .condition("balanceRemaining", "greater", 0)
             .condition(
                 cf.makeCondition(
                     [
                         cf.makeCondition("paymentTypeEnumId", "is-null", null),
                         cf.makeCondition("paymentTypeEnumId", "not-equals", "PtInternalTransfer")
-                    ],
-                    "or"
-                )
-            )
-            .condition(
-                cf.makeCondition(
-                    [
-                        cf.makeCondition("gatewayRole", "is-null", null),
-                        cf.makeCondition("gatewayRole", "not-equals", "authorization")
                     ],
                     "or"
                 )
@@ -664,12 +641,7 @@ function paymentCapabilities(scope, applicationRows = [], posted = false) {
     const r = scope.record,
         draft = r && ["PmntProposed", "PmntPromised"].includes(r.statusId),
         canWrite = scope.broad && has("PAYMENT_EDIT"),
-        supported =
-            r &&
-            !r.refundForPaymentId &&
-            r.gatewayRole !== "authorization" &&
-            r.paymentTypeEnumId === "PtInvoicePayment" &&
-            !scope.tradeExcluded,
+        supported = r && !r.refundForPaymentId && r.paymentTypeEnumId === "PtInvoicePayment" && !scope.tradeExcluded,
         hasApplications = applicationRows.some(row => toDecimal(row.amountApplied || 0).compare(0) > 0),
         sideEdit = has(scope.financeDirection === "receivable" ? "RECEIVABLE_EDIT" : "PAYABLE_EDIT"),
         gateway = Boolean(
@@ -734,7 +706,6 @@ function paymentCapabilities(scope, applicationRows = [], posted = false) {
         canVoid: Boolean(
             canWrite &&
             supported &&
-            !r.gatewayRole &&
             ["PmntDelivered", "PmntConfirmed"].includes(r.statusId) &&
             posted &&
             (!hasApplications || sideEdit) &&
@@ -759,30 +730,14 @@ function paymentCapabilities(scope, applicationRows = [], posted = false) {
         canGatewayCapture: false,
         canGatewayRelease: false,
         canGatewayRefund: false,
+        canGatewayLookup: false,
         canRefund: false,
         canPreviewRefund: false,
         canTransfer: Boolean(scope.broad && has("PAYMENT_EDIT")),
         reasons: [],
         unavailableReason: "PAYMENT_SLICE_UNAVAILABLE"
     }
-    if (r && ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").adoptionRefusal(r)) {
-        Object.assign(capabilities, {
-            canEdit: false,
-            canEditDraft: false,
-            canValidate: false,
-            canDeliver: false,
-            canManualDeliver: false,
-            canConfirm: false,
-            canCancel: false,
-            canVoid: false,
-            canUnapply: false
-        })
-        capabilities.reasons.push("LEGACY_GATEWAY_ADOPTION_REFUSED")
-    }
-    return Object.assign(
-        capabilities,
-        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js").capabilities(scope)
-    )
+    return capabilities
 }
 function paymentProjection(scope, record, appRows, names = {}) {
     if (!scope.labels)
@@ -836,33 +791,14 @@ function paymentProjection(scope, record, appRows, names = {}) {
         statusDescription: scope.labels.statuses[record.statusId] || record.statusId,
         instrumentDescription: scope.labels.instruments[record.paymentInstrumentEnumId] || record.paymentInstrumentEnumId
     })
-    const held =
-        record.reservedAmount != null ? toDecimal(record.reservedAmount) : scope.holdEvidence?.[record.paymentId]?.heldAmount
-    if (held != null) {
-        out.reservedAmount = held
-        out.availableAmount = out.unappliedTotal.subtract(held)
-    }
-    out.isCash = record.gatewayRole !== "authorization"
-    if (record.gatewayRole === "authorization") {
-        out.instructionAmount = out.amount
-        out.appliedTotal = toDecimal(0)
-        out.unappliedTotal = toDecimal(0)
-        out.reservedAmount = toDecimal(0)
-        out.availableAmount = toDecimal(0)
-    }
+    out.availableAmount = out.unappliedTotal
     if (record.paymentTypeEnumId === "PtInternalTransfer") {
         out.transferSummary = transferProjection(record).transferSummary
         Object.assign(out, {
             appliedTotal: toDecimal(0),
             unappliedTotal: toDecimal(0),
-            reservedAmount: toDecimal(0),
             availableAmount: toDecimal(0)
         })
-    }
-    if (record.gatewayInstructionId && record.gatewayRole === "capture") {
-        const instruction = one("mantle.account.payment.PaymentGatewayInstruction", {instructionId: record.gatewayInstructionId})
-        if (instruction?.organizationPartyId === org && instruction.partyId === partyId)
-            out.authorizationPaymentId = instruction.paymentId
     }
     return out
 }
@@ -877,9 +813,6 @@ function payments(p) {
         apps = paymentApplications(records.map(row => row.paymentId)),
         names = lib.partyNames(records.flatMap(row => [row.fromPartyId, row.toPartyId])),
         errors = []
-    scope.holdEvidence = ec.resource
-        .script("component://mr-mantle/service/mantle/account/PaymentGatewayReservations.js")
-        .cashHoldSummaries({organizationPartyId: scope.organizationPartyId, paymentIdList: records.map(row => row.paymentId)})
     scope.versionRecords = records.length
         ? Object.fromEntries(
               Array.from(
@@ -1134,9 +1067,6 @@ function paymentDetailRead(p) {
                   Array.from(find("mantle.account.method.PaymentMethod").condition("paymentMethodId", "in", methodIds).list())
               )
             : []
-    scope.holdEvidence = ec.resource
-        .script("component://mr-mantle/service/mantle/account/PaymentGatewayReservations.js")
-        .cashHoldSummaries({organizationPartyId: scope.organizationPartyId, paymentIdList: [record.paymentId]})
     scope.gatewayManaged = maskedMethodRows.some(row => row.gatewayManaged)
     scope.hasGatewayInstruction = Boolean(
         find("mantle.account.method.PaymentGatewayResponse", {paymentId: p.paymentId}).limit(1).one()
@@ -1171,13 +1101,10 @@ function paymentDetailRead(p) {
             sourceRows: [],
             capabilities,
             reasons: capabilities.reasons,
-            refundableAvailable: false,
-            refundableReason: "PAYMENT_SLICE_UNAVAILABLE",
             complete: transactions.length <= 500,
             errors: []
         }
-    out.totals.reservedAmount = scope.holdEvidence[record.paymentId].heldAmount
-    out.totals.availableAmount = out.totals.unappliedTotal.subtract(out.totals.reservedAmount)
+    out.totals.availableAmount = out.totals.unappliedTotal
     if (visible.restricted) {
         out.complete = false
         out.errors.push({reasonCode: "APPLICATIONS_RESTRICTED", message: "Some application links are unavailable"})
@@ -1200,25 +1127,8 @@ function paymentDetailRead(p) {
         Object.assign(out.totals, {
             appliedTotal: toDecimal(0),
             unappliedTotal: toDecimal(0),
-            reservedAmount: toDecimal(0),
             availableAmount: toDecimal(0)
         })
-    }
-    if (record.gatewayRole === "authorization") {
-        Object.assign(out.totals, {
-            amount: toDecimal(0),
-            appliedTotal: toDecimal(0),
-            unappliedTotal: toDecimal(0),
-            reservedAmount: toDecimal(0),
-            availableAmount: toDecimal(0)
-        })
-        Object.assign(capabilities, {canPrintReceipt: false, canPrintDetail: false, canPrintCheck: false})
-    }
-    if (capabilities.canReadGateway && record.gatewayInstructionId) {
-        const gateway = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js"),
-            instruction = gateway.instructionFor(record)
-        if (instruction?.organizationPartyId === scope.organizationPartyId)
-            out.gatewayInstruction = gateway.instructionSummary(instruction)
     }
     out.contentRows = contentQuery(scope)
         .orderBy("-contentDate,paymentContentId")
@@ -1315,46 +1225,31 @@ function paymentDetailRead(p) {
                 "reasonCode"
             ])
         )
-    if (capabilities.canReadGateway && record.gatewayRole) {
-        out.gatewayRows = ec.resource
-            .script("component://mr-mantle/service/mantle/account/PaymentGatewayWorkflow.js")
-            .findTransactions({organizationPartyId: scope.organizationPartyId, paymentId: record.paymentId, pageSize: 100}).rows
-    }
-    if (
-        capabilities.canReadGateway &&
-        record.paymentTypeEnumId === "PtInvoicePayment" &&
-        !record.refundForPaymentId &&
-        record.gatewayRole !== "authorization" &&
-        ["PmntDelivered", "PmntConfirmed"].includes(record.statusId)
-    ) {
-        const refunds = ec.resource
-            .script("component://mr-mantle/service/mantle/account/PaymentRefunds.js")
-            .summary({organizationPartyId: scope.organizationPartyId, paymentId: record.paymentId})
-        out.refundSummary = refunds.refundSummary
-        out.refundDefaults = refunds.refundDefaults
-        Object.assign(
-            capabilities,
-            lib.policy.pick(refunds.capabilities, [
-                "canPreviewRefund",
-                "canRefund",
-                "canGatewayRefund",
-                "refundUnavailableReason"
-            ])
-        )
-        capabilities.refundReasons = refunds.capabilities.reasons
+    // Gateway actions and refunds through Mantle's gateway services (get#PaymentGatewayActions), for treasury users.
+    if (capabilities.canReadGateway && record.paymentTypeEnumId !== "PtInternalTransfer") {
+        const gateway = lib.call("mantle.account.PaymentServices.get#PaymentGatewayActions", {
+            organizationPartyId: scope.organizationPartyId,
+            paymentId: record.paymentId
+        })
+        const actions = Array.from(gateway.actionList || [])
+        out.gatewayActions = lib.policy.pick(gateway, ["paymentGatewayConfigId", "gatewayDescription", "reasonCode"])
+        out.gatewayActions.actionList = actions
+        out.refundSummary = gateway.refundSummary
+        Object.assign(capabilities, {
+            canGatewayAuthorize: actions.includes("authorize"),
+            canGatewayCapture: actions.includes("capture"),
+            canGatewayRelease: actions.includes("release"),
+            canGatewayRefund: actions.includes("refund"),
+            canGatewayLookup: actions.includes("lookup"),
+            canRefund: gateway.canRefund === true,
+            canPreviewRefund: gateway.canRefund === true,
+            refundUnavailableReason: gateway.refundReasonCode || null
+        })
     }
     if (scope.broad && has("PAYMENT_EDIT")) {
         const evidence = ec.resource
             .script("component://mr-mantle/service/mantle/account/PaymentLifecycle.js")
-            .evidenceOptions(
-                scope,
-                Array.from(
-                    contentQuery(scope)
-                        .orderBy("-contentDate,paymentContentId")
-                        .limit(101)
-                        .list()
-                )
-            )
+            .evidenceOptions(scope, Array.from(contentQuery(scope).orderBy("-contentDate,paymentContentId").limit(101).list()))
         out.evidenceRows = evidence.evidenceRows
         out.evidenceIncomplete = evidence.incomplete
         const byId = Object.fromEntries(evidence.evidenceRows.map(row => [row.paymentContentId, row]))
