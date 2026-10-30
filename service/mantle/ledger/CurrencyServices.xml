@@ -1,54 +1,205 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="define" noun="Parameters" type="interface">
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="store" noun="Rate" allow-remote="false">
+        <description>Store a dated currency rate labelled with its source. The rate in effect at its start ends there, and
+            with no end of its own it ends where the next dated rate starts. The same rate stored again answers
+            alreadyStored. Refuses a user without finance administration, a unit that is not a currency, the same
+            currency twice, a factor that is not positive, a missing start or source, an end not after the start,
+            another rate starting at the same time and an end past the next rate's start.</description>
         <in-parameters>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="uomId" type="String"/>
-            <parameter name="toUomId" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="rateSource" type="String"/>
-            <parameter name="csvText" type="String"/>
-            <parameter name="importId" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="fractionDigits" type="Integer"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="uomId"/>
+            <parameter name="toUomId"/>
             <parameter name="conversionFactor" type="BigDecimal"/>
             <parameter name="fromDate" type="Timestamp"/>
             <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="rateSource"/>
+            <parameter name="changeReason"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="uomConversionId" type="String"/>
+            <parameter name="uomConversionId"/>
             <parameter name="alreadyStored" type="Boolean"/>
-            <parameter name="results" type="List"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="importId" type="String"/>
         </out-parameters>
-    </service>
-    <service verb="store" noun="Rate" allow-remote="false">
-        <description>Store a source-labelled dated currency rate; preserve earlier intervals.</description>
-        <implements service="mantle.ledger.CurrencyServices.define#Parameters"/>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Currencies.js').execute('rate', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <script>policy.organization(context, 'admin')</script>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <script>policy.currency(uomId)</script>
+            <script>policy.currency(toUomId)</script>
+            <set field="factorPositive" from="conversionFactor != null &amp;&amp; toDecimal(conversionFactor).compare(0) &gt; 0"/>
+            <set field="startValid" from="Number.isFinite(policy.ms(fromDate))"/>
+            <if condition="uomId === toUomId || !factorPositive || !startValid || !String(rateSource || '').trim()">
+                <return error="true" message="Choose distinct currencies, a positive factor, an effective date and source"/>
+            </if>
+            <if condition="thruDate &amp;&amp; policy.ms(thruDate) &lt;= policy.ms(fromDate)">
+                <return error="true" message="Rate end must follow its start"/>
+            </if>
+            <!-- lock both currencies in one order, so two writers of a pair wait instead of deadlocking -->
+            <iterate list="[uomId, toUomId].sort()" entry="lockUomId">
+                <entity-find-one entity-name="moqui.basic.Uom" value-field="lockedUom" for-update="true" disable-authz="true">
+                    <field-map field-name="uomId" from="lockUomId"/>
+                </entity-find-one>
+            </iterate>
+            <entity-find entity-name="moqui.basic.UomConversion" list="sameStartRates" limit="1" disable-authz="true">
+                <econdition field-name="uomId"/>
+                <econdition field-name="toUomId"/>
+                <econdition field-name="fromDate"/>
+            </entity-find>
+            <set field="sameStartRate" from="Array.from(sameStartRates)[0]"/>
+            <if condition="sameStartRate">
+                <set field="sameRate" from="toDecimal(sameStartRate.conversionFactor).eq(conversionFactor) &amp;&amp;
+                        sameStartRate.rateSource === rateSource &amp;&amp;
+                        policy.ms(sameStartRate.thruDate) === policy.ms(thruDate)"/>
+                <if condition="!sameRate">
+                    <return error="true" message="A rate already starts at this time; preserve it and choose a later date"/>
+                </if>
+                <set field="uomConversionId" from="sameStartRate.uomConversionId"/>
+                <set field="alreadyStored" from="true"/>
+                <return/>
+            </if>
+            <entity-find entity-name="moqui.basic.UomConversion" list="laterRates" limit="1" disable-authz="true">
+                <econdition field-name="uomId"/>
+                <econdition field-name="toUomId"/>
+                <econdition field-name="fromDate" operator="greater" from="fromDate"/>
+                <order-by field-name="fromDate"/>
+            </entity-find>
+            <set field="nextRate" from="Array.from(laterRates)[0]"/>
+            <if condition="nextRate &amp;&amp; thruDate &amp;&amp; policy.ms(thruDate) &gt; policy.ms(nextRate.fromDate)">
+                <return error="true" message="Rate overlaps a future dated rate"/>
+            </if>
+            <!-- no rate starts at fromDate (checked above), so the one in effect then started before it -->
+            <entity-find entity-name="moqui.basic.UomConversion" list="currentRates" limit="1" disable-authz="true">
+                <econdition field-name="uomId"/>
+                <econdition field-name="toUomId"/>
+                <date-filter valid-date="fromDate"/>
+            </entity-find>
+            <set field="currentRate" from="Array.from(currentRates)[0]"/>
+            <script>policy.audit(['fromDate', 'thruDate', 'conversionFactor', 'rateSource'], changeReason)</script>
+            <if condition="currentRate">
+                <service-call name="update#moqui.basic.UomConversion" disable-authz="true"
+                        in-map="{uomConversionId:currentRate.uomConversionId, thruDate:fromDate}"/>
+            </if>
+            <service-call name="create#moqui.basic.UomConversion" out-map="context" disable-authz="true"
+                    in-map="{uomId:uomId, toUomId:toUomId, conversionFactor:conversionFactor, conversionOffset:0,
+                        fromDate:fromDate, thruDate:thruDate || nextRate?.fromDate, rateSource:rateSource}"/>
         </actions>
     </service>
     <service verb="store" noun="Currency" allow-remote="false">
-        <description>Create or edit currency units without rewriting posted precision.</description>
-        <implements service="mantle.ledger.CurrencyServices.define#Parameters"/>
+        <description>Create a currency unit or change its name and decimals. Refuses a user without finance
+            administration, a code that is not three capital letters, a missing name, decimals outside 0 to 6, a unit
+            that is not a currency, a stale revision and a change of decimals of a currency with posted
+            entries.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="uomId"/>
+            <parameter name="description"/>
+            <parameter name="fractionDigits" type="Integer"/>
+            <parameter name="changeReason"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Currencies.js').execute('currency', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <script>policy.organization(context, 'admin')</script>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <set field="digits" from="Number(fractionDigits)"/>
+            <set field="digitsValid" from="Number.isInteger(digits) &amp;&amp; digits &gt;= 0 &amp;&amp; digits &lt;= 6"/>
+            <if condition="!/^[A-Z]{3}$/.test(uomId || '') || !description || !digitsValid">
+                <return error="true" message="Supply a three-letter currency code, name and 0–6 decimals"/>
+            </if>
+            <entity-find-one entity-name="moqui.basic.Uom" value-field="oldUom" for-update="true" disable-authz="true">
+                <field-map field-name="uomId"/>
+            </entity-find-one>
+            <if condition="oldUom">
+                <script>policy.currency(uomId)</script>
+                <script>policy.revision(oldUom, lastUpdatedStamp)</script>
+                <if condition="Number(oldUom.fractionDigits) !== digits">
+                    <entity-find-count entity-name="mantle.ledger.transaction.AcctgTrans" count-field="postedCount"
+                            disable-authz="true">
+                        <econdition field-name="amountUomId" from="uomId"/>
+                        <econdition field-name="isPosted" value="Y"/>
+                    </entity-find-count>
+                    <if condition="postedCount &gt; 0">
+                        <return error="true" message="Posted currency precision requires a migration"/>
+                    </if>
+                </if>
+            </if>
+            <script>policy.audit(['description', 'fractionDigits'], changeReason)</script>
+            <set field="uomValues" from="{uomId:uomId, uomTypeEnumId:'UT_CURRENCY_MEASURE', description:description,
+                    abbreviation:uomId, fractionDigits:digits}"/>
+            <if condition="oldUom">
+                <then>
+                    <service-call name="update#moqui.basic.Uom" in-map="uomValues" disable-authz="true"/>
+                </then>
+                <else>
+                    <service-call name="create#moqui.basic.Uom" in-map="uomValues" disable-authz="true"/>
+                </else>
+            </if>
+            <set field="complete" from="true"/>
         </actions>
     </service>
     <service verb="import" noun="Rates" allow-remote="false">
-        <description>Import independent CSV rows with native validation and per-row outcomes.</description>
-        <implements service="mantle.ledger.CurrencyServices.define#Parameters"/>
+        <description>Import a CSV of rates (uomId, toUomId, fromDate, thruDate, conversionFactor, rateSource), each row
+            stored by store#Rate in its own transaction; a failed row is named in the results and the others go on.
+            Refuses a user without finance administration, a file over 2 MiB or 5,000 rows and unknown, missing or
+            repeated headers.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="csvText"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="importId"/>
+            <parameter name="results" type="List"/>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Currencies.js').execute('importRates', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Currencies.js')
+                .execute('importRates', context))</script>
         </actions>
     </service>
     <service verb="get" noun="ImportResult" allow-remote="false">
-        <description>Read the actor's organization-scoped currency import outcomes.</description>
-        <implements service="mantle.ledger.CurrencyServices.define#Parameters"/>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Currencies.js').execute('importResult',context))</script></actions>
+        <description>Read the results of the user's own currency rate import. Refuses a user without finance
+            administration and an import of another user or organization.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="importId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="importId"/>
+            <parameter name="results" type="List"/>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <set field="scope" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                    .organization(context, 'admin')"/>
+            <entity-find-one entity-name="mantle.ledger.config.CurrencyRateImport" value-field="rateImport"
+                    disable-authz="true">
+                <field-map field-name="importId"/>
+            </entity-find-one>
+            <set field="ownImport" from="rateImport?.organizationPartyId === scope.organizationPartyId &amp;&amp;
+                    rateImport?.userId === ec.user.userId"/>
+            <if condition="!ownImport">
+                <return error="true" message="Open your own rate import result"/>
+            </if>
+            <set field="results" from="JSON.parse(rateImport.resultJson)"/>
+            <set field="complete" from="results.every(result => result.success)"/>
+        </actions>
     </service>
 </services>

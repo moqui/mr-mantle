@@ -1,138 +1,512 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="define" noun="Parameters" type="interface">
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="Preferences" allow-remote="false">
+        <description>The organization's finance preferences, its own or inherited, and what its setup is missing (base
+            currency, fiscal periods, error journal). With no organization chosen, a finding asking for one. Refuses a
+            user without finance administration.</description>
         <in-parameters>
-            <parameter name="organizationPartyId" type="String" />
-            <parameter name="sourceOrganizationPartyId" type="String" />
-            <parameter name="mappingKind" type="String" />
-            <parameter name="inputFingerprint" type="String" />
-            <parameter name="changeReason" type="String" />
-            <parameter name="settlementTermId" type="String" />
-            <parameter name="description" type="String" />
-            <parameter name="termValueUomId" type="String" />
-            <parameter name="paymentMethodId" type="String" />
-            <parameter name="paymentGatewayConfigId" type="String" />
-            <parameter name="currencyUomId" type="String" />
-            <parameter name="fromDate" type="Timestamp" />
-            <parameter name="settings" type="Map" />
-            <parameter name="mapping" type="Map" />
-            <parameter name="mappingKinds" type="List" />
-            <parameter name="apply" type="Boolean" />
-            <parameter name="lastUpdatedStamp" type="Timestamp" />
-            <parameter name="termValue" type="BigDecimal" />
-            <parameter name="thruDate" type="Timestamp" />
-            <parameter name="mappingToken" type="String" />
-            <parameter name="pageIndex" type="Integer" />
-            <parameter name="pageSize" type="Integer" />
+            <parameter name="organizationPartyId"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="settings" type="Map" />
-            <parameter name="findings" type="List" />
-            <parameter name="organizationPartyId" type="String" />
-            <parameter name="inherited" type="Boolean" />
-            <parameter name="costingMessage" type="String" />
-            <parameter name="mappingRows" type="List" />
-            <parameter name="missingMappings" type="List" />
-            <parameter name="errorTransactions" type="List" />
-            <parameter name="mappingKind" type="String" />
-            <parameter name="mappingKindOptions" type="List" />
-            <parameter name="mappingKeyFields" type="List" />
-            <parameter name="mappingFields" type="List" />
-            <parameter name="mappingRowsPageIndex" type="Integer" />
-            <parameter name="mappingRowsPageSize" type="Integer" />
-            <parameter name="mappingRowsPageMaxIndex" type="Integer" />
-            <parameter name="mappingRowsPageRangeLow" type="Integer" />
-            <parameter name="mappingRowsPageRangeHigh" type="Integer" />
-            <parameter name="inputFingerprint" type="String" />
-            <parameter name="conflicts" type="List" />
-            <parameter name="copyCount" type="Integer" />
-            <parameter name="complete" type="Boolean" />
-            <parameter name="settlementTermId" type="String" />
-            <parameter name="terms" type="List" />
-            <parameter name="currencies" type="List" />
-            <parameter name="rates" type="List" />
-            <parameter name="methods" type="List" />
-            <parameter name="gateways" type="List" />
-            <parameter name="paymentMethodId" type="String" />
-            <parameter name="mappingRowsCount" type="Integer" />
-            <parameter name="selectedMapping" type="Map" />
-            <parameter name="currenciesCount" type="Integer" />
-            <parameter name="currenciesPageIndex" type="Integer" />
-            <parameter name="currenciesPageSize" type="Integer" />
-            <parameter name="currenciesPageMaxIndex" type="Integer" />
-            <parameter name="currenciesPageRangeLow" type="Integer" />
-            <parameter name="currenciesPageRangeHigh" type="Integer" />
+            <parameter name="settings" type="Map"/>
+            <parameter name="findings" type="List"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="inherited" type="Boolean"/>
+            <parameter name="costingMessage"/>
         </out-parameters>
-    </service>
-    <service verb="get" noun="Preferences" allow-remote="false">
-        <description>Read organization finance preferences and readiness without restricted configuration.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('preferences', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="scope" from="policy.scope(context, 'admin')"/>
+            <if condition="!scope.organizationPartyId">
+                <set field="settings" from="{}"/>
+                <set field="organizationPartyId" from="null"/>
+                <set field="findings" from="[{code:'ORGANIZATION', message:'Choose an organization'}]"/>
+                <set field="costingMessage" value="Inventory postings use actual asset acquire cost."/>
+                <return/>
+            </if>
+            <set field="organizationPartyId" from="scope.organizationPartyId"/>
+            <entity-find-one entity-name="mantle.ledger.config.PartyAcctgPreference" value-field="ownPreference"
+                    disable-authz="true">
+                <field-map field-name="organizationPartyId"/>
+            </entity-find-one>
+            <set field="preference" from="ownPreference || policy.preference(organizationPartyId)"/>
+            <set field="findings" from="[]"/>
+            <if condition="!preference.baseCurrencyUomId">
+                <set field="findings" from="findings.concat([{code:'BASE_CURRENCY', message:'Choose a base currency'}])"/>
+            </if>
+            <entity-find-count entity-name="mantle.party.time.TimePeriod" count-field="periodCount" disable-authz="true">
+                <econdition field-name="partyId" from="organizationPartyId"/>
+            </entity-find-count>
+            <if condition="!periodCount">
+                <set field="findings" from="findings.concat([{code:'FISCAL_PERIODS',
+                        message:'Configure fiscal periods or inherited fiscal periods'}])"/>
+            </if>
+            <if condition="!preference.errorGlJournalId">
+                <set field="findings" from="findings.concat([{code:'ERROR_JOURNAL', message:'Choose the error journal'}])"/>
+            </if>
+            <set field="preferenceFields"
+                    from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').preferenceFields"/>
+            <set field="settings" from="policy.pick(policy.map(preference),
+                    preferenceFields.concat(['organizationPartyId', 'lastUpdatedStamp']))"/>
+            <set field="inherited" from="!ownPreference"/>
+            <set field="costingMessage"
+                    value="Inventory postings use actual asset acquire cost regardless of the COGS preference."/>
         </actions>
     </service>
     <service verb="store" noun="Preferences" allow-remote="false">
-        <description>Save audited finance preferences; protect the basis of posted history.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <description>Save the organization's finance preferences from settings (the preference fields only), audit logged,
+            making an error journal when it has none of its own; answers as get#Preferences. Refuses a user without
+            finance administration, a stale revision, a flag that is not Y or N, reviewed gateway payments without
+            settlement controls, a unit that is not a currency, a change of base currency, costing or fiscal year start
+            once entries are posted, an invalid fiscal year start, an error journal of another organization or type and
+            a document template that is not approved.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="settings" type="Map"/>
+            <parameter name="changeReason"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settings" type="Map"/>
+            <parameter name="findings" type="List"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="inherited" type="Boolean"/>
+            <parameter name="costingMessage"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('storePreferences', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="scope" from="policy.organization(context, 'admin')"/>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <entity-find-one entity-name="mantle.party.Party" value-field="organization" for-update="true" disable-authz="true">
+                <field-map field-name="partyId" from="scope.organizationPartyId"/>
+            </entity-find-one>
+            <entity-find-one entity-name="mantle.ledger.config.PartyAcctgPreference" value-field="oldPreference"
+                    for-update="true" disable-authz="true">
+                <field-map field-name="organizationPartyId" from="scope.organizationPartyId"/>
+            </entity-find-one>
+            <script>policy.revision(oldPreference, lastUpdatedStamp)</script>
+            <set field="preferenceFields"
+                    from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').preferenceFields"/>
+            <set field="preferenceValues" from="policy.pick(settings || {}, preferenceFields)"/>
+            <set field="invalidFlag" from="['postingGuardEnabled', 'requiredLedgerDimensionsEnabled',
+                    'forwardIssuanceRepostEnabled', 'allowAccountingSelfApproval', 'singleCurrencyDocumentsOnly',
+                    'invoiceApprovalRequired', 'paymentAutoApplicationEnabled', 'settlementApplicationGuardEnabled',
+                    'paymentGatewayWorkflowEnabled', 'inventoryRevaluationEnabled', 'realTimeGlSummary']
+                    .find(field => preferenceValues[field] != null &amp;&amp; !['Y', 'N'].includes(preferenceValues[field]))"/>
+            <if condition="invalidFlag">
+                <return error="true" message="Choose Enabled or Disabled for ${invalidFlag}"/>
+            </if>
+            <set field="inheritedPreference" from="policy.preference(scope.organizationPartyId)"/>
+            <set field="effective" from="Object.assign({}, inheritedPreference, policy.map(oldPreference), preferenceValues)"/>
+            <if condition="effective.paymentGatewayWorkflowEnabled === 'Y' &amp;&amp;
+                    effective.settlementApplicationGuardEnabled !== 'Y'">
+                <return error="true"
+                        message="GATEWAY_SETTLEMENT_REQUIRED: Enable settlement controls before reviewed payment processing"/>
+            </if>
+            <iterate list="['baseCurrencyUomId', 'localCurrencyUomId']" entry="currencyField">
+                <if condition="preferenceValues[currencyField]">
+                    <script>policy.currency(preferenceValues[currencyField])</script>
+                </if>
+            </iterate>
+            <entity-find-count entity-name="mantle.ledger.transaction.AcctgTrans" count-field="postedCount" disable-authz="true">
+                <econdition field-name="organizationPartyId" from="scope.organizationPartyId"/>
+                <econdition field-name="isPosted" value="Y"/>
+            </entity-find-count>
+            <set field="basisPreference" from="oldPreference || inheritedPreference"/>
+            <set field="basisChanged"
+                    from="['baseCurrencyUomId', 'cogsMethodEnumId', 'fiscalYearStartMonth', 'fiscalYearStartDay']
+                        .some(field => preferenceValues[field] !== undefined &amp;&amp;
+                            String(preferenceValues[field] ?? '') !== String(basisPreference[field] ?? ''))"/>
+            <if condition="postedCount &gt; 0 &amp;&amp; basisChanged">
+                <return error="true"
+                        message="Posted history requires a migration before changing currency, costing or fiscal basis"/>
+            </if>
+            <set field="startMonth"
+                    from="Number(preferenceValues.fiscalYearStartMonth || oldPreference?.fiscalYearStartMonth || 1)"/>
+            <set field="startDay"
+                    from="Number(preferenceValues.fiscalYearStartDay || oldPreference?.fiscalYearStartDay || 1)"/>
+            <if condition="!Number.isInteger(startMonth) || startMonth &lt; 1 || startMonth &gt; 12 ||
+                    !Number.isInteger(startDay) || startDay &lt; 1 || startDay &gt; 31">
+                <return error="true" message="Choose a valid fiscal year start"/>
+            </if>
+            <!-- an organization with no error journal of its own (none chosen, or the inherited one) gets a new one -->
+            <set field="ownErrorJournalMissing"
+                    from="!preferenceValues.errorGlJournalId &amp;&amp; !oldPreference?.errorGlJournalId"/>
+            <set field="inheritsErrorJournal" from="!oldPreference &amp;&amp;
+                    preferenceValues.errorGlJournalId === inheritedPreference.errorGlJournalId"/>
+            <if condition="ownErrorJournalMissing || inheritsErrorJournal">
+                <service-call name="mantle.ledger.LedgerServices.create#GlJournal" out-map="createdJournal" disable-authz="true"
+                        in-map="{organizationPartyId:scope.organizationPartyId, glJournalName:'Error journal',
+                            glJournalTypeEnumId:'GLJRNL_ERROR'}"/>
+                <set field="preferenceValues.errorGlJournalId" from="createdJournal.glJournalId"/>
+            </if>
+            <if condition="preferenceValues.errorGlJournalId">
+                <set field="errorJournal" from="policy.record({kind:'batches', recordId:preferenceValues.errorGlJournalId,
+                        organizationPartyId:scope.organizationPartyId})"/>
+                <if condition="errorJournal.glJournalTypeEnumId !== 'GLJRNL_ERROR'">
+                    <return error="true" message="Choose an error journal in this organization"/>
+                </if>
+            </if>
+            <iterate list="['invoiceDocumentTemplate', 'paymentDocumentTemplate']" entry="templateField">
+                <if condition="preferenceValues[templateField] &amp;&amp; preferenceValues[templateField] !== 'standard'">
+                    <return error="true" message="Choose an approved document template"/>
+                </if>
+            </iterate>
+            <script>policy.audit(Object.keys(preferenceValues), changeReason)</script>
+            <set field="preferenceValues.organizationPartyId" from="scope.organizationPartyId"/>
+            <if condition="oldPreference">
+                <then>
+                    <service-call name="update#mantle.ledger.config.PartyAcctgPreference" in-map="preferenceValues"
+                            disable-authz="true"/>
+                </then>
+                <else>
+                    <service-call name="create#mantle.ledger.config.PartyAcctgPreference" in-map="preferenceValues"
+                            disable-authz="true"/>
+                </else>
+            </if>
+            <service-call name="mantle.ledger.SetupServices.get#Preferences" out-map="context" disable-authz="true"
+                    in-map="{organizationPartyId:scope.organizationPartyId}"/>
         </actions>
     </service>
     <service verb="get" noun="PostingDefaults" allow-remote="false">
-        <description>Read mapping precedence, missing account types and failed postings.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <description>A page of the organization's posting mappings of a kind (account types, item types, invoice and
+            payment types, instruments, assets, financial account types and reasons, variance reasons, products,
+            categories, party defaults) with their readable keys, the kind's fields for the mapping form, the account
+            types and invoice item types with no default account, and the unposted transactions in the error journal.
+            Refuses a user without finance administration, an unknown kind and a selected mapping that changed.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="mappingKind"/>
+            <parameter name="mappingToken"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="mappingKind"/>
+            <parameter name="mappingKindOptions" type="List"/>
+            <parameter name="mappingKeyFields" type="List"/>
+            <parameter name="mappingFields" type="List"/>
+            <parameter name="mappingRows" type="List"/>
+            <parameter name="mappingRowsCount" type="Integer"/>
+            <parameter name="mappingRowsPageIndex" type="Integer"/>
+            <parameter name="mappingRowsPageSize" type="Integer"/>
+            <parameter name="mappingRowsPageMaxIndex" type="Integer"/>
+            <parameter name="mappingRowsPageRangeLow" type="Integer"/>
+            <parameter name="mappingRowsPageRangeHigh" type="Integer"/>
+            <parameter name="selectedMapping" type="Map"/>
+            <parameter name="missingMappings" type="List"/>
+            <parameter name="errorTransactions" type="List"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('mappingList', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js')
+                .execute('mappingList', context))</script>
         </actions>
     </service>
     <service verb="store" noun="PostingDefault" allow-remote="false">
-        <description>Validate an organization posting mapping against active assigned accounts.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <description>Save one posting mapping of a kind for the organization from mapping, audit logged. Refuses a user
+            without finance administration, an unknown kind, a missing key, an account that is not an active posting
+            account assigned to the organization, an invalid assignment, an asset, product, category or party outside
+            the organization and a stale revision.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="mappingKind"/>
+            <parameter name="mapping" type="Map"/>
+            <parameter name="changeReason"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('storeMapping', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js')
+                .execute('storeMapping', context))</script>
         </actions>
     </service>
     <service verb="clone" noun="Preferences" allow-remote="false">
-        <description>Preview configuration conflicts; copy only missing configuration after fingerprint confirmation.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <description>Preview copying another organization's preferences and posting mappings, naming each conflict and
+            each mapping the destination cannot use, with a fingerprint of the inputs; with apply and that fingerprint,
+            copy only what the destination is missing. Refuses a user without finance administration in both
+            organizations, the same organization twice, a source with no preferences, inputs changed since the preview
+            and a different accounting basis for a destination with posted entries.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="sourceOrganizationPartyId"/>
+            <parameter name="mappingKinds" type="List"/>
+            <parameter name="apply" type="Boolean"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="inputFingerprint"/>
+            <parameter name="conflicts" type="List"/>
+            <parameter name="copyCount" type="Integer"/>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('clone', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js')
+                .execute('clone', context))</script>
         </actions>
     </service>
     <service verb="store" noun="SettlementTerm" allow-remote="false">
-        <description>Save a due term for future documents; no issued invoice is recomputed.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <description>Create or change a due term in days, weeks or another time unit for future documents; no issued
+            invoice is recomputed. Refuses a user without finance administration, a stale revision, a missing
+            description, a negative value and a unit that is not a time unit.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="settlementTermId"/>
+            <parameter name="description"/>
+            <parameter name="termValue" type="BigDecimal"/>
+            <parameter name="termValueUomId"/>
+            <parameter name="changeReason"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settlementTermId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('term', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <script>policy.organization(context, 'admin')</script>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <if condition="settlementTermId">
+                <entity-find-one entity-name="mantle.account.invoice.SettlementTerm" value-field="oldTerm" for-update="true"
+                        disable-authz="true">
+                    <field-map field-name="settlementTermId"/>
+                </entity-find-one>
+                <script>policy.revision(oldTerm, lastUpdatedStamp)</script>
+            </if>
+            <if condition="!description || termValue == null || toDecimal(termValue).compare(0) &lt; 0">
+                <return error="true" message="Give a due-term description and nonnegative value"/>
+            </if>
+            <entity-find-one entity-name="moqui.basic.Uom" value-field="termUnit" disable-authz="true">
+                <field-map field-name="uomId" from="termValueUomId"/>
+            </entity-find-one>
+            <if condition="termUnit?.uomTypeEnumId !== 'UT_TIME_FREQ_MEASURE'">
+                <return error="true" message="Choose a time unit for the due term"/>
+            </if>
+            <script>policy.audit(['description', 'termValue', 'termValueUomId'], changeReason)</script>
+            <set field="termValues" from="{description:description, termTypeEnumId:'TtFinPaymentDays', termValue:termValue,
+                    termValueUomId:termValueUomId}"/>
+            <if condition="oldTerm">
+                <then>
+                    <service-call name="update#mantle.account.invoice.SettlementTerm" disable-authz="true"
+                            in-map="Object.assign({settlementTermId:oldTerm.settlementTermId}, termValues)"/>
+                </then>
+                <else>
+                    <service-call name="create#mantle.account.invoice.SettlementTerm" in-map="termValues" out-map="context"
+                            disable-authz="true"/>
+                </else>
+            </if>
         </actions>
     </service>
     <service verb="get" noun="PaymentMethods" allow-remote="false">
-        <description>Return permitted method metadata only; no bank/card numbers or gateway secrets.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <description>The organization's own payment methods with masked identifiers (no bank or card numbers), and the
+            gateways enabled for it. Refuses a user without finance administration.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="methods" type="List"/>
+            <parameter name="gateways" type="List"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('methods', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="scope" from="policy.scope(context, 'admin')"/>
+            <if condition="!scope.organizationPartyId">
+                <set field="methods" from="[]"/>
+                <set field="gateways" from="[]"/>
+                <return/>
+            </if>
+            <entity-find entity-name="mantle.account.method.PaymentMethod" list="ownedMethods" disable-authz="true">
+                <econdition field-name="ownerPartyId" from="scope.organizationPartyId"/>
+            </entity-find>
+            <set field="masked" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js')
+                    .execute('maskedIdentifiers',
+                        {paymentMethodIds:Array.from(ownedMethods).map(method => method.paymentMethodId)})"/>
+            <set field="methodFields" from="['paymentMethodId', 'ownerPartyId', 'paymentMethodTypeEnumId', 'currencyUomId',
+                    'description', 'fromDate', 'fromDateText', 'thruDate', 'thruDateText', 'paymentGatewayConfigId',
+                    'lastUpdatedStamp']"/>
+            <set field="methods" from="Array.from(ownedMethods).map(method => Object.assign(
+                    policy.pick(policy.display(method), methodFields), {maskedIdentifier:
+                    masked.maskedIdentifiers[method.paymentMethodId] || 'Tokenized / no local identifier'}))"/>
+            <entity-find entity-name="mantle.account.method.PaymentGatewayOrganization" list="enabledGateways"
+                    disable-authz="true">
+                <econdition field-name="organizationPartyId" from="scope.organizationPartyId"/>
+                <econdition field-name="isEnabled" value="Y"/>
+                <date-filter/>
+            </entity-find>
+            <entity-find entity-name="mantle.account.method.PaymentGatewayConfig" list="gatewayConfigs" disable-authz="true">
+                <econdition field-name="paymentGatewayConfigId" operator="in"
+                        from="Array.from(enabledGateways).map(gateway => gateway.paymentGatewayConfigId)"/>
+                <select-field field-name="paymentGatewayConfigId"/>
+                <select-field field-name="description"/>
+            </entity-find>
+            <set field="gateways" from="Array.from(gatewayConfigs).map(policy.map)"/>
         </actions>
     </service>
     <service verb="store" noun="PaymentMethod" allow-remote="false">
-        <description>Change only the description and expiry of an organization payment method.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <description>Create an organization payment method (type other) or change one's name, dates, currency and gateway;
+            no numbers or credentials are accepted. Refuses a user without finance administration, a method of another
+            owner, a stale revision, a gateway not enabled for the organization, a missing name, an end before the start
+            and a unit that is not a currency.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentMethodId"/>
+            <parameter name="description"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="paymentGatewayConfigId"/>
+            <parameter name="changeReason"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="paymentMethodId"/>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('storeMethod', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="scope" from="policy.organization(context, 'admin')"/>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <if condition="paymentMethodId">
+                <entity-find-one entity-name="mantle.account.method.PaymentMethod" value-field="paymentMethod"
+                        for-update="true" disable-authz="true">
+                    <field-map field-name="paymentMethodId"/>
+                </entity-find-one>
+                <if condition="paymentMethod?.ownerPartyId !== scope.organizationPartyId">
+                    <return error="true" message="Payment method is not available"/>
+                </if>
+                <script>policy.revision(paymentMethod, lastUpdatedStamp)</script>
+            </if>
+            <if condition="paymentGatewayConfigId &amp;&amp; paymentGatewayConfigId !== paymentMethod?.paymentGatewayConfigId">
+                <entity-find-count entity-name="mantle.account.method.PaymentGatewayOrganization" count-field="permittedCount"
+                        disable-authz="true">
+                    <econdition field-name="organizationPartyId" from="scope.organizationPartyId"/>
+                    <econdition field-name="paymentGatewayConfigId"/>
+                    <econdition field-name="isEnabled" value="Y"/>
+                    <date-filter/>
+                </entity-find-count>
+                <if condition="!permittedCount">
+                    <return error="true" message="Choose a permitted gateway binding for this organization"/>
+                </if>
+            </if>
+            <if condition="!description">
+                <return error="true" message="Give the method a display name"/>
+            </if>
+            <if condition="fromDate &amp;&amp; thruDate &amp;&amp; policy.ms(fromDate) &gt;= policy.ms(thruDate)">
+                <return error="true" message="Method expiry must follow its start"/>
+            </if>
+            <if condition="currencyUomId">
+                <script>policy.currency(currencyUomId)</script>
+            </if>
+            <!-- a method keeps its gateway when none is given -->
+            <set field="methodFields" from="paymentMethod &amp;&amp; !paymentGatewayConfigId ?
+                    ['description', 'fromDate', 'thruDate'] : ['description', 'fromDate', 'thruDate', 'paymentGatewayConfigId']"/>
+            <set field="methodValues" from="Object.assign({ownerPartyId:scope.organizationPartyId},
+                    policy.pick(context, methodFields), currencyUomId ? {currencyUomId:currencyUomId} : {},
+                    paymentMethod ? {paymentMethodId:paymentMethod.paymentMethodId} : {paymentMethodTypeEnumId:'PmtOther'})"/>
+            <script>policy.audit(Object.keys(methodValues), changeReason)</script>
+            <if condition="paymentMethod">
+                <then>
+                    <service-call name="update#mantle.account.method.PaymentMethod" in-map="methodValues" disable-authz="true"/>
+                </then>
+                <else>
+                    <service-call name="create#mantle.account.method.PaymentMethod" in-map="methodValues" out-map="context"
+                            disable-authz="true"/>
+                </else>
+            </if>
+            <set field="complete" from="true"/>
         </actions>
     </service>
     <service verb="get" noun="Context" allow-remote="false">
-        <description>Read the finance-admin settings forms and closed choice lists.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+        <description>The finance settings screens' data: get#Preferences, the due terms, a page of 25 currencies and the
+            latest 100 currency rates. Refuses a user without finance administration.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="pageIndex" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settings" type="Map"/>
+            <parameter name="findings" type="List"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="inherited" type="Boolean"/>
+            <parameter name="costingMessage"/>
+            <parameter name="terms" type="List"/>
+            <parameter name="currencies" type="List"/>
+            <parameter name="currenciesCount" type="Integer"/>
+            <parameter name="currenciesPageIndex" type="Integer"/>
+            <parameter name="currenciesPageSize" type="Integer"/>
+            <parameter name="currenciesPageMaxIndex" type="Integer"/>
+            <parameter name="currenciesPageRangeLow" type="Integer"/>
+            <parameter name="currenciesPageRangeHigh" type="Integer"/>
+            <parameter name="rates" type="List"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('context', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="scope" from="policy.scope(context, 'admin')"/>
+            <service-call name="mantle.ledger.SetupServices.get#Preferences" out-map="context" disable-authz="true"
+                    in-map="{organizationPartyId:organizationPartyId}"/>
+            <if condition="!scope.organizationPartyId">
+                <set field="terms" from="[]"/>
+                <set field="currencies" from="[]"/>
+                <set field="currenciesCount" from="0"/>
+                <set field="rates" from="[]"/>
+                <return/>
+            </if>
+            <entity-find entity-name="mantle.account.invoice.SettlementTerm" list="settlementTerms" disable-authz="true"/>
+            <set field="terms" from="Array.from(settlementTerms).map(policy.map)"/>
+            <entity-find-count entity-name="moqui.basic.Uom" count-field="currenciesCount" disable-authz="true">
+                <econdition field-name="uomTypeEnumId" value="UT_CURRENCY_MEASURE"/>
+            </entity-find-count>
+            <set field="currenciesPageSize" from="25"/>
+            <set field="currenciesPageIndex" from="Math.max(0, Number(pageIndex || 0))"/>
+            <set field="currenciesPageMaxIndex" from="Math.max(0, Math.ceil(currenciesCount / currenciesPageSize) - 1)"/>
+            <set field="currenciesPageRangeLow" from="currenciesCount ? currenciesPageIndex * currenciesPageSize + 1 : 0"/>
+            <set field="currenciesPageRangeHigh"
+                    from="Math.min(currenciesCount, (currenciesPageIndex + 1) * currenciesPageSize)"/>
+            <entity-find entity-name="moqui.basic.Uom" list="currencyPage" offset="currenciesPageIndex * currenciesPageSize"
+                    limit="currenciesPageSize" disable-authz="true">
+                <econdition field-name="uomTypeEnumId" value="UT_CURRENCY_MEASURE"/>
+                <order-by field-name="uomId"/>
+            </entity-find>
+            <set field="currencies" from="Array.from(currencyPage).map(policy.map)"/>
+            <entity-find entity-name="moqui.basic.Uom" list="allCurrencies" disable-authz="true">
+                <econdition field-name="uomTypeEnumId" value="UT_CURRENCY_MEASURE"/>
+                <select-field field-name="uomId"/>
+            </entity-find>
+            <entity-find entity-name="moqui.basic.UomConversion" list="latestRates" limit="100" disable-authz="true">
+                <econdition field-name="uomId" operator="in" from="Array.from(allCurrencies).map(currency => currency.uomId)"/>
+                <order-by field-name="-fromDate"/>
+            </entity-find>
+            <set field="rates" from="Array.from(latestRates).map(policy.display)"/>
         </actions>
     </service>
-    <service allow-remote="false" verb="get" noun="Readiness">
-        <description>Check authorized accounting setup health without exposing administration settings; name independent failures.</description>
-        <implements service="mantle.ledger.SetupServices.define#Parameters" />
+    <service verb="get" noun="Readiness" allow-remote="false">
+        <description>Check the organization's accounting setup (preferences, fiscal periods, chart of accounts) for any
+            finance reader without showing administration settings; each failed check is named in findings and the others
+            go on.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="findings" type="List"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js').execute('readiness',context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingSetup.js')
+                .execute('readiness', context))</script>
         </actions>
     </service>
 </services>

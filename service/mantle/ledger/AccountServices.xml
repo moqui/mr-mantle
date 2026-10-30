@@ -1,63 +1,304 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="define" noun="Parameters" type="interface">
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="store" noun="Account" allow-remote="false">
+        <description>Create a chart account assigned to the organization, or edit one the organization may post to. Refuses
+            a user without GL posting, a stale revision, a missing name or a code that is not digits, a parent outside
+            the organization or one that would make a cycle, a change of a shared account without finance administration,
+            and a change of class or type after posting.</description>
         <in-parameters>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="glAccountId" type="String"/>
-            <parameter name="glAccountCategoryId" type="String"/>
-            <parameter name="glAccountGroupId" type="String"/>
-            <parameter name="accountCode" type="String"/>
-            <parameter name="accountName" type="String"/>
-            <parameter name="parentGlAccountId" type="String"/>
-            <parameter name="glAccountClassEnumId" type="String"/>
-            <parameter name="glAccountTypeEnumId" type="String"/>
-            <parameter name="description" type="String"/>
-            <parameter name="disallowPosting" type="String"/>
-            <parameter name="facilityRequired" type="String"/>
-            <parameter name="costCenterRequired" type="String"/>
-            <parameter name="changeReason" type="String"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="glAccountId"/>
+            <parameter name="accountCode"/>
+            <parameter name="accountName"/>
+            <parameter name="parentGlAccountId"/>
+            <parameter name="glAccountClassEnumId"/>
+            <parameter name="glAccountTypeEnumId"/>
+            <parameter name="description"/>
+            <parameter name="disallowPosting"/>
+            <parameter name="changeReason"/>
             <parameter name="lastUpdatedStamp" type="Timestamp"/>
-            <parameter name="fromDate" type="Timestamp"/>
-            <parameter name="thruDate" type="Timestamp"/>
-            <parameter name="basisDate" type="Date"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="glAccountId" type="String"/>
-            <parameter name="complete" type="Boolean"/>
-            <parameter name="categoryRows" type="List"/>
-            <parameter name="groupRows" type="List"/>
+            <parameter name="glAccountId"/>
         </out-parameters>
-    </service>
-    <service verb="store" noun="Account" allow-remote="false">
-        <description>Create or edit a scoped chart account, protecting cycles and posted meaning.</description>
-        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('account', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="scope" from="policy.organization(context, 'glPost')"/>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <entity-find-one entity-name="mantle.party.Party" value-field="organization" for-update="true" disable-authz="true">
+                <field-map field-name="partyId" from="scope.organizationPartyId"/>
+            </entity-find-one>
+            <if condition="glAccountId">
+                <entity-find-one entity-name="mantle.ledger.account.GlAccount" value-field="oldAccount" disable-authz="true">
+                    <field-map field-name="glAccountId"/>
+                </entity-find-one>
+            </if>
+            <if condition="oldAccount">
+                <script>policy.record({kind:'accounts', recordId:glAccountId, organizationPartyId:scope.organizationPartyId},
+                    'glPost', true)</script>
+                <script>policy.revision(oldAccount, lastUpdatedStamp)</script>
+                <entity-find-count entity-name="mantle.ledger.account.GlAccountOrganization" count-field="assignmentCount"
+                        disable-authz="true">
+                    <econdition field-name="glAccountId"/>
+                </entity-find-count>
+                <if condition="!scope.capabilities.admin &amp;&amp; assignmentCount &gt; 1">
+                    <return error="true" message="Changing a shared chart account requires finance administration"/>
+                </if>
+            </if>
+            <set field="accountValues" from="policy.pick(context, ['accountCode', 'accountName', 'parentGlAccountId',
+                    'glAccountClassEnumId', 'glAccountTypeEnumId', 'description', 'disallowPosting'])"/>
+            <if condition="!accountName || !/^\d+$/.test(accountCode || oldAccount?.accountCode || '')">
+                <return error="true" message="Give an account name and digits-only code"/>
+            </if>
+            <if condition="accountValues.parentGlAccountId">
+                <if condition="accountValues.parentGlAccountId !== oldAccount?.parentGlAccountId">
+                    <script>policy.record({kind:'accounts', recordId:accountValues.parentGlAccountId,
+                        organizationPartyId:scope.organizationPartyId})</script>
+                </if>
+                <!-- walk up from the new parent: reaching this account or any account twice is a cycle -->
+                <set field="visitedIds" from="[glAccountId]"/>
+                <set field="ancestorId" from="accountValues.parentGlAccountId"/>
+                <while condition="ancestorId">
+                    <if condition="visitedIds.includes(ancestorId)">
+                        <return error="true" message="Account hierarchy would contain a cycle"/>
+                    </if>
+                    <set field="visitedIds" from="visitedIds.concat([ancestorId])"/>
+                    <entity-find-one entity-name="mantle.ledger.account.GlAccount" value-field="ancestor" disable-authz="true">
+                        <field-map field-name="glAccountId" from="ancestorId"/>
+                    </entity-find-one>
+                    <if condition="ancestor == null">
+                        <return error="true" message="Parent account is not available"/>
+                    </if>
+                    <set field="ancestorId" from="ancestor.parentGlAccountId"/>
+                </while>
+            </if>
+            <if condition="oldAccount">
+                <entity-find-count entity-name="mantle.ledger.transaction.AcctgTransAndEntry" count-field="postedCount"
+                        disable-authz="true">
+                    <econdition field-name="glAccountId" from="oldAccount.glAccountId"/>
+                    <econdition field-name="isPosted" value="Y"/>
+                </entity-find-count>
+                <set field="meaningChanged" from="['glAccountClassEnumId', 'glAccountTypeEnumId']
+                        .some(field => accountValues[field] !== undefined &amp;&amp;
+                            accountValues[field] !== oldAccount[field])"/>
+                <if condition="postedCount &gt; 0 &amp;&amp; meaningChanged">
+                    <return error="true" message="Account meaning cannot change after posting"/>
+                </if>
+            </if>
+            <script>policy.audit(Object.keys(accountValues), changeReason)</script>
+            <if condition="oldAccount">
+                <then>
+                    <service-call name="update#mantle.ledger.account.GlAccount" disable-authz="true"
+                            in-map="Object.assign({glAccountId:oldAccount.glAccountId}, accountValues)"/>
+                </then>
+                <else>
+                    <service-call name="mantle.ledger.LedgerServices.create#GlAccount" in-map="accountValues"
+                            out-map="createdAccount" disable-authz="true"/>
+                    <set field="glAccountId" from="createdAccount.glAccountId"/>
+                </else>
+            </if>
+            <!-- isDebit and isTemporary follow the class through the GlAccount EECA (set#GlAccountFlags) -->
+            <if condition="!oldAccount">
+                <service-call name="create#mantle.ledger.account.GlAccountOrganization" disable-authz="true"
+                        in-map="{glAccountId:glAccountId, organizationPartyId:scope.organizationPartyId,
+                            fromDate:ec.user.nowTimestamp}"/>
+            </if>
         </actions>
     </service>
     <service verb="store" noun="Assignment" allow-remote="false">
-        <description>Save dated organization account assignment and required dimensions.</description>
-        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
+        <description>Create or change the organization's dated assignment of a chart account and the dimensions its lines
+            require. Refuses a user without GL posting, an unknown account, a stale revision and an end before the
+            start.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="glAccountId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="facilityRequired"/>
+            <parameter name="costCenterRequired"/>
+            <parameter name="changeReason"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="glAccountId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('assignment', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="scope" from="policy.organization(context, 'glPost')"/>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <entity-find-one entity-name="mantle.party.Party" value-field="organization" for-update="true" disable-authz="true">
+                <field-map field-name="partyId" from="scope.organizationPartyId"/>
+            </entity-find-one>
+            <entity-find-one entity-name="mantle.ledger.account.GlAccount" value-field="account" disable-authz="true">
+                <field-map field-name="glAccountId"/>
+            </entity-find-one>
+            <if condition="account == null">
+                <return error="true" message="Account ${glAccountId || '(missing)'} is not available"/>
+            </if>
+            <entity-find-one entity-name="mantle.ledger.account.GlAccountOrganization" value-field="oldAssignment"
+                    for-update="true" disable-authz="true">
+                <field-map field-name="glAccountId"/>
+                <field-map field-name="organizationPartyId" from="scope.organizationPartyId"/>
+            </entity-find-one>
+            <script>policy.revision(oldAssignment, lastUpdatedStamp)</script>
+            <if condition="fromDate &amp;&amp; thruDate &amp;&amp; policy.ms(fromDate) &gt;= policy.ms(thruDate)">
+                <return error="true" message="Account assignment end must follow start"/>
+            </if>
+            <set field="assignmentValues"
+                    from="policy.pick(context, ['fromDate', 'thruDate', 'facilityRequired', 'costCenterRequired'])"/>
+            <script>policy.audit(Object.keys(assignmentValues), changeReason)</script>
+            <set field="assignmentValues"
+                    from="Object.assign({glAccountId:glAccountId, organizationPartyId:scope.organizationPartyId},
+                        assignmentValues)"/>
+            <if condition="oldAssignment">
+                <then>
+                    <service-call name="update#mantle.ledger.account.GlAccountOrganization" in-map="assignmentValues"
+                            disable-authz="true"/>
+                </then>
+                <else>
+                    <service-call name="create#mantle.ledger.account.GlAccountOrganization" in-map="assignmentValues"
+                            disable-authz="true"/>
+                </else>
+            </if>
         </actions>
     </service>
     <service verb="ensure" noun="Periods" allow-remote="false">
-        <description>Ensure configured fiscal periods for an authorized GL user.</description>
-        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
+        <description>Generate the organization's missing fiscal periods through the next year (check#NextFiscalTimePeriods).
+            Refuses a user without GL posting in the organization.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="basisDate" type="Date"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('periods', context))</script>
+            <set field="scope" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                    .organization(context, 'glPost')"/>
+            <service-call name="mantle.ledger.LedgerServices.check#NextFiscalTimePeriods" disable-authz="true"
+                    in-map="{organizationPartyId:scope.organizationPartyId, basisDate:basisDate}"/>
+            <set field="complete" from="true"/>
         </actions>
     </service>
     <service verb="get" noun="Classifications" allow-remote="false">
-        <description>Read only the scoped account's category history and report groups.</description>
-        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('classifications',context))</script></actions>
+        <description>Read a chart account's category history (latest 100) and its report groups. Refuses an account the
+            user may not read in the organization.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="glAccountId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="categoryRows" type="List"/>
+            <parameter name="groupRows" type="List"/>
+        </out-parameters>
+        <actions>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <script>policy.record({kind:'accounts', recordId:glAccountId, organizationPartyId:organizationPartyId})</script>
+            <entity-find entity-name="mantle.ledger.account.GlAccountCategoryMember" list="categoryMembers" limit="100"
+                    disable-authz="true">
+                <econdition field-name="glAccountId"/>
+                <order-by field-name="-fromDate"/>
+            </entity-find>
+            <set field="categoryRows" from="Array.from(categoryMembers).map(policy.display)"/>
+            <entity-find entity-name="mantle.ledger.account.GlAccountGroupMember" list="groupMembers" disable-authz="true">
+                <econdition field-name="glAccountId"/>
+            </entity-find>
+            <set field="groupRows" from="Array.from(groupMembers).map(policy.map)"/>
+        </actions>
     </service>
     <service verb="store" noun="Classification" allow-remote="false">
-        <description>Finance-admin changes to global chart classifications are dated or audit logged.</description>
-        <implements service="mantle.ledger.AccountServices.define#Parameters"/>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/LedgerConfiguration.js').execute('classification',context))</script></actions>
+        <description>Put a chart account in a category from a date, ending its current membership there, or in a report
+            group of a group type, replacing its group of that type; the changes are audit logged. Refuses a user without
+            finance administration, an account the user may not read, an unknown category or group, a category date not
+            after the current membership's start and a stale group revision.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="glAccountId"/>
+            <parameter name="glAccountCategoryId"/>
+            <parameter name="glAccountGroupId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="changeReason"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="glAccountId"/>
+        </out-parameters>
+        <actions>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <script>policy.organization(context, 'admin')</script>
+            <script>policy.record({kind:'accounts', recordId:glAccountId, organizationPartyId:organizationPartyId})</script>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <script>policy.audit(['fromDate', 'thruDate', 'glAccountGroupId'], changeReason)</script>
+            <if condition="glAccountCategoryId">
+                <entity-find-one entity-name="mantle.ledger.account.GlAccountCategory" value-field="category"
+                        disable-authz="true">
+                    <field-map field-name="glAccountCategoryId"/>
+                </entity-find-one>
+                <if condition="category == null">
+                    <return error="true" message="Choose an account category"/>
+                </if>
+                <set field="effectiveFrom" from="fromDate || ec.user.nowTimestamp"/>
+                <entity-find entity-name="mantle.ledger.account.GlAccountCategoryMember" list="currentMembers"
+                        disable-authz="true">
+                    <econdition field-name="glAccountId"/>
+                    <econdition field-name="glAccountCategoryId"/>
+                    <date-filter valid-date="effectiveFrom"/>
+                </entity-find>
+                <iterate list="currentMembers" entry="currentMember">
+                    <if condition="policy.ms(currentMember.fromDate) &gt;= policy.ms(effectiveFrom)">
+                        <return error="true" message="Choose a later category effective date"/>
+                    </if>
+                    <service-call name="update#mantle.ledger.account.GlAccountCategoryMember" disable-authz="true"
+                            in-map="{glAccountId:glAccountId, glAccountCategoryId:glAccountCategoryId,
+                                fromDate:currentMember.fromDate, thruDate:effectiveFrom}"/>
+                </iterate>
+                <service-call name="create#mantle.ledger.account.GlAccountCategoryMember" disable-authz="true"
+                        in-map="{glAccountId:glAccountId, glAccountCategoryId:glAccountCategoryId, fromDate:effectiveFrom,
+                            thruDate:thruDate}"/>
+                <return/>
+            </if>
+            <if condition="!glAccountGroupId">
+                <return error="true" message="Choose a category or group"/>
+            </if>
+            <entity-find-one entity-name="mantle.ledger.account.GlAccountGroup" value-field="group" disable-authz="true">
+                <field-map field-name="glAccountGroupId"/>
+            </entity-find-one>
+            <if condition="group == null">
+                <return error="true" message="Choose an account group"/>
+            </if>
+            <entity-find-one entity-name="mantle.ledger.account.GlAccountGroupMember" value-field="oldMember"
+                    disable-authz="true">
+                <field-map field-name="glAccountId"/>
+                <field-map field-name="groupTypeEnumId" from="group.groupTypeEnumId"/>
+            </entity-find-one>
+            <script>policy.revision(oldMember, lastUpdatedStamp)</script>
+            <set field="memberValues" from="{glAccountId:glAccountId, groupTypeEnumId:group.groupTypeEnumId,
+                    glAccountGroupId:group.glAccountGroupId}"/>
+            <if condition="oldMember">
+                <then>
+                    <service-call name="update#mantle.ledger.account.GlAccountGroupMember" in-map="memberValues"
+                            disable-authz="true"/>
+                </then>
+                <else>
+                    <service-call name="create#mantle.ledger.account.GlAccountGroupMember" in-map="memberValues"
+                            disable-authz="true"/>
+                </else>
+            </if>
+        </actions>
     </service>
 </services>

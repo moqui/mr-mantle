@@ -1,5 +1,7 @@
+// Lists of finance records of every kind, paged in the database, and the display values of document rows. The other
+// record services (get#Access, get#Record, create#DraftDocument) are inline XML Actions in AccountingServices.xml.
 const lib = ec.resource.script("component://mr-mantle/service/mantle/ledger/AccountingPolicy.js")
-const {call, map, pick, display} = lib
+const {call, display} = lib
 // Names of the parties a user may see, by party id, read in one query.
 function partyNames(ids) {
     const names = {}
@@ -39,35 +41,6 @@ function nameDocuments(rows, organizationPartyIds) {
         row.documentDateText = row.invoiceDateText || row.effectiveDateText || ""
         row.documentAmount = row.invoiceId ? row.invoiceTotal : row.amount
         row.documentCurrencyUomId = row.currencyUomId || row.amountUomId || null
-    }
-    return rows
-}
-// The audit of a journal entry: its header and its lines, newest first, with who changed them.
-function journalAudit(acctgTransId) {
-    const rows = Array.from(
-        lib
-            .find("moqui.entity.EntityAuditLog")
-            .condition("changedEntityName", "in", [
-                "mantle.ledger.transaction.AcctgTrans",
-                "mantle.ledger.transaction.AcctgTransEntry"
-            ])
-            .condition("pkPrimaryValue", acctgTransId)
-            .orderBy("-changedDate")
-            .limit(200)
-            .list()
-    ).map(display)
-    const userIds = [...new Set(rows.map(row => row.changedByUserId).filter(Boolean))]
-    const users = userIds.length
-        ? Object.fromEntries(
-              Array.from(lib.find("moqui.security.UserAccount").condition("userId", "in", userIds).list()).map(user => [
-                  user.userId,
-                  user.userFullName || user.username || user.userId
-              ])
-          )
-        : {}
-    for (const row of rows) {
-        row.changedByName = users[row.changedByUserId] || row.changedByUserId || ""
-        row.lineText = row.changedEntityName.endsWith("AcctgTransEntry") ? "Line " + (row.pkSecondaryValue || "") : "Entry"
     }
     return rows
 }
@@ -131,100 +104,11 @@ function list(p) {
         recordsPageRangeHigh: Math.min(count, (pageIndex + 1) * pageSize)
     }
 }
-function read(p) {
-    const row = lib.record(p)
-    const out = {record: display(row)}
-    if (["invoices", "bills", "payments"].includes(p.kind)) nameDocuments([out.record], lib.organizationIds(lib.scope(p)))
-    if (p.kind === "accounts") {
-        const scope = lib.scope(p),
-            org =
-                p.organizationPartyId || scope.allowedOrganizationPartyIds.find(id => lib.accountAssignment(id, row.glAccountId))
-        const assignment = org ? lib.accountAssignment(org, row.glAccountId) : null
-        const account = lib.one("mantle.ledger.account.GlAccount", {
-            glAccountId: row.glAccountId
-        })
-        out.record = Object.assign(
-            display(account),
-            assignment ? pick(map(assignment), ["fromDate", "thruDate", "facilityRequired", "costCenterRequired"]) : {},
-            {
-                organizationPartyId: org,
-                assignmentOrganizationPartyId: assignment?.organizationPartyId,
-                assignmentLastUpdatedStamp: assignment?.organizationPartyId === org ? assignment.lastUpdatedStamp : null
-            }
-        )
-    }
-    if (p.kind === "journals") {
-        out.lines = lib
-            .rows("mantle.ledger.transaction.AcctgTransEntry", {
-                acctgTransId: row.acctgTransId
-            })
-            .map(display)
-        out.auditRows = journalAudit(row.acctgTransId)
-        Object.assign(
-            out,
-            call("mantle.ledger.LedgerServices.calculate#AcctgTransTrialBalance", {
-                acctgTransId: row.acctgTransId
-            })
-        )
-    }
-    if (p.kind === "templates")
-        out.lines = lib
-            .rows("mantle.ledger.transaction.AcctgTransTemplateEntry", {
-                acctgTransTemplateId: row.acctgTransTemplateId
-            })
-            .map(display)
-    return out
+// Display values of invoice, bill or payment rows read elsewhere (get#Record): the rows with their names added.
+function documents(p) {
+    return {records: nameDocuments(Array.from(p.records || []), Array.from(p.organizationPartyIds || []))}
 }
-function draft(p) {
-    if (!["invoices", "bills", "payments"].includes(p.kind)) throw new Error("Unknown document kind")
-    const need = {
-        invoices: "arEdit",
-        bills: "apEdit",
-        payments: "paymentEdit"
-    }[p.kind]
-    const s = lib.organization(p, need),
-        organizationPartyId = s.organizationPartyId
-    const currency = p.currencyUomId || lib.preference(organizationPartyId).baseCurrencyUomId
-    lib.currency(currency)
-    const otherParty = p.otherPartyId && lib.one("mantle.party.Party", {partyId: p.otherPartyId})
-    if (!otherParty || (otherParty.privateOwnerUserId && otherParty.privateOwnerUserId !== ec.user.userId))
-        throw new Error("Choose an available counterparty")
-    const base = {
-        fromPartyId: p.kind === "bills" ? p.otherPartyId : organizationPartyId,
-        toPartyId: p.kind === "bills" ? organizationPartyId : p.otherPartyId,
-        currencyUomId: currency,
-        description: p.description
-    }
-    let result
-    if (p.kind === "payments") {
-        if (p.amount == null || toDecimal(p.amount).compare(0) <= 0) throw new Error("Enter a positive payment amount")
-        const amount = ec.l10n.roundCurrency(toDecimal(p.amount), currency)
-        if (amount.compare(0) <= 0) throw new Error("Enter a positive payment amount in the selected currency")
-        result = call(
-            "mantle.account.PaymentServices.create#Payment",
-            Object.assign(base, {
-                // a payment keeps its description as its comments
-                comments: p.description,
-                paymentTypeEnumId: "PtDisbursement",
-                paymentInstrumentEnumId: "PiOther",
-                amountUomId: currency,
-                amount,
-                statusId: "PmntProposed"
-            })
-        )
-        return {recordId: result.paymentId}
-    }
-    result = call(
-        "mantle.account.InvoiceServices.create#Invoice",
-        Object.assign(base, {
-            invoiceTypeEnumId: "InvoiceSales",
-            statusId: "InvoiceInProcess",
-            invoiceDate: p.invoiceDate || ec.user.nowTimestamp
-        })
-    )
-    return {recordId: result.invoiceId}
-}
-const operations = {access: lib.access, list, read, draft}
+const operations = {list, documents}
 ;({
     execute: (op, p) => {
         if (!operations[op]) throw new Error("Unknown accounting record operation " + op)

@@ -1,38 +1,134 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="define" noun="Parameters" type="interface">
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="store" noun="Lock" allow-remote="false">
+        <description>Create or change an organization posting lock of a scope (all, sales, purchases or tax) through a
+            date. Refuses a user without finance administration, a lock of another organization, a stale revision and
+            relaxing a hard lock (softening it, changing its scope or moving its date back).</description>
         <in-parameters>
-            <parameter name="organizationPartyId" type="String"/>
-            <parameter name="accountingLockId" type="String"/>
-            <parameter name="accountingLockExceptionId" type="String"/>
-            <parameter name="lockScope" type="String"/>
-            <parameter name="isHard" type="String"/>
-            <parameter name="changeReason" type="String"/>
-            <parameter name="userId" type="String"/>
-            <parameter name="userGroupId" type="String"/>
-            <parameter name="acctgTransId" type="String"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="accountingLockId"/>
+            <parameter name="lockScope"/>
             <parameter name="lockThroughDate" type="Date"/>
-            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="isHard"/>
+            <parameter name="changeReason"/>
             <parameter name="lastUpdatedStamp" type="Timestamp"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="accountingLockId" type="String"/>
-            <parameter name="accountingLockExceptionId" type="String"/>
+            <parameter name="accountingLockId"/>
         </out-parameters>
-    </service>
-    <service verb="store" noun="Lock" allow-remote="false">
-        <description>Set a typed organization posting lock; hard locks cannot be relaxed.</description>
-        <implements service="mantle.ledger.CloseServices.define#Parameters"/>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/CloseControls.js').execute('lock', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="scope" from="policy.organization(context, 'admin')"/>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <set field="lockDateValid" from="Number.isFinite(policy.ms(lockThroughDate))"/>
+            <if condition="!['all', 'sales', 'purchases', 'tax'].includes(lockScope) || !lockDateValid">
+                <return error="true" message="Choose a lock scope and date"/>
+            </if>
+            <entity-find-one entity-name="mantle.party.Party" value-field="organization" for-update="true" disable-authz="true">
+                <field-map field-name="partyId" from="scope.organizationPartyId"/>
+            </entity-find-one>
+            <if condition="accountingLockId">
+                <entity-find-one entity-name="mantle.ledger.config.AccountingLock" value-field="oldLock" for-update="true"
+                        disable-authz="true">
+                    <field-map field-name="accountingLockId"/>
+                </entity-find-one>
+                <if condition="oldLock?.organizationPartyId !== scope.organizationPartyId">
+                    <return error="true" message="Posting lock is not available"/>
+                </if>
+                <script>policy.revision(oldLock, lastUpdatedStamp)</script>
+                <set field="relaxed" from="isHard !== 'Y' || oldLock.lockScope !== lockScope ||
+                        policy.ms(lockThroughDate) &lt; policy.ms(oldLock.lockThroughDate)"/>
+                <if condition="oldLock.isHard === 'Y' &amp;&amp; relaxed">
+                    <return error="true" message="A hard lock cannot be relaxed"/>
+                </if>
+            </if>
+            <set field="lockValues" from="{organizationPartyId:scope.organizationPartyId, lockScope:lockScope,
+                    lockThroughDate:lockThroughDate, isHard:isHard === 'Y' ? 'Y' : 'N', changeReason:changeReason,
+                    changedByUserId:ec.user.userId}"/>
+            <script>policy.audit(Object.keys(lockValues), changeReason)</script>
+            <if condition="oldLock">
+                <then>
+                    <service-call name="update#mantle.ledger.config.AccountingLock" disable-authz="true"
+                            in-map="Object.assign({accountingLockId:oldLock.accountingLockId}, lockValues)"/>
+                </then>
+                <else>
+                    <service-call name="create#mantle.ledger.config.AccountingLock" in-map="lockValues" out-map="context"
+                            disable-authz="true"/>
+                </else>
+            </if>
         </actions>
     </service>
     <service verb="grant" noun="Exception" allow-remote="false">
-        <description>Grant a named, expiring soft-lock exception; never overrides a closed fiscal period.</description>
-        <implements service="mantle.ledger.CloseServices.define#Parameters"/>
+        <description>Grant one user or group a named, expiring exception to a soft lock, optionally for one journal entry.
+            Refuses a user without finance administration, a hard lock or one of another organization, both or neither
+            of user and group, an expiry not in the future, and an unknown user, group or journal entry. An exception
+            never opens a closed fiscal period.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="accountingLockId"/>
+            <parameter name="userId"/>
+            <parameter name="userGroupId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="accountingLockExceptionId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/CloseControls.js').execute('exception', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="scope" from="policy.organization(context, 'admin')"/>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <entity-find-one entity-name="mantle.party.Party" value-field="organization" for-update="true" disable-authz="true">
+                <field-map field-name="partyId" from="scope.organizationPartyId"/>
+            </entity-find-one>
+            <entity-find-one entity-name="mantle.ledger.config.AccountingLock" value-field="softLock" for-update="true"
+                    disable-authz="true">
+                <field-map field-name="accountingLockId"/>
+            </entity-find-one>
+            <if condition="softLock?.organizationPartyId !== scope.organizationPartyId || softLock.isHard === 'Y'">
+                <return error="true" message="Choose a soft lock in this organization"/>
+            </if>
+            <set field="expiryPassed" from="!thruDate || policy.ms(thruDate) &lt;= policy.ms(ec.user.nowTimestamp)"/>
+            <if condition="!!userId === !!userGroupId || expiryPassed">
+                <return error="true" message="Choose one user or group and a future expiry"/>
+            </if>
+            <if condition="userId">
+                <entity-find-one entity-name="moqui.security.UserAccount" value-field="actor" disable-authz="true">
+                    <field-map field-name="userId"/>
+                </entity-find-one>
+            </if>
+            <if condition="userGroupId">
+                <entity-find-one entity-name="moqui.security.UserGroup" value-field="actor" disable-authz="true">
+                    <field-map field-name="userGroupId"/>
+                </entity-find-one>
+            </if>
+            <if condition="actor == null">
+                <return error="true" message="Exception actor is not available"/>
+            </if>
+            <if condition="acctgTransId">
+                <script>policy.record({kind:'journals', recordId:acctgTransId,
+                    organizationPartyId:scope.organizationPartyId})</script>
+            </if>
+            <service-call name="create#mantle.ledger.config.AccountingLockException" out-map="context" disable-authz="true"
+                    in-map="{accountingLockId:softLock.accountingLockId, organizationPartyId:scope.organizationPartyId,
+                        userId:userId, userGroupId:userGroupId, acctgTransId:acctgTransId, lockScope:softLock.lockScope,
+                        fromDate:ec.user.nowTimestamp, thruDate:thruDate, changeReason:changeReason,
+                        approvedByUserId:ec.user.userId}"/>
         </actions>
     </service>
 </services>

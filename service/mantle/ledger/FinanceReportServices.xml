@@ -1,39 +1,69 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="define" noun="Parameters" type="interface">
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="define" noun="ReportOptions" type="interface">
+        <description>The scope of a finance report: the organization, an account, currency and dimensions, the dates (a
+            fiscal period's, or from and thru) and the dates to compare with.</description>
         <in-parameters>
-            <parameter name="organizationPartyId" type="String" />
-            <parameter name="glAccountId" type="String" />
-            <parameter name="amountUomId" type="String" />
-            <parameter name="facilityId" type="String" />
-            <parameter name="costCenterId" type="String" />
-            <parameter name="timePeriodId" type="String" />
-            <parameter name="fromDate" type="Timestamp" />
-            <parameter name="thruDate" type="Timestamp" />
-            <parameter name="compareFromDate" type="Timestamp" />
-            <parameter name="compareThruDate" type="Timestamp" />
+            <parameter name="organizationPartyId"/>
+            <parameter name="glAccountId"/>
+            <parameter name="amountUomId"/>
+            <parameter name="facilityId"/>
+            <parameter name="costCenterId"/>
+            <parameter name="timePeriodId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="compareFromDate" type="Timestamp"/>
+            <parameter name="compareThruDate" type="Timestamp"/>
         </in-parameters>
-        <out-parameters>
-            <parameter name="reportRows" type="List" />
-            <parameter name="asOf" type="String" />
-            <parameter name="organizationPartyId" type="String" />
-            <parameter name="complete" type="Boolean" />
-            <parameter name="comparisonRows" type="List" />
-        </out-parameters>
     </service>
     <service verb="run" noun="TrialBalance" allow-remote="false">
-        <description>Scoped currency-separated trial balance, with stored closed-period summaries.</description>
-        <implements service="mantle.ledger.FinanceReportServices.define#Parameters" />
+        <description>The organization's trial balance by account and currency, posted entries only, from stored summaries
+            of closed periods; with comparison dates, each row's change. Refuses a user without report read, an account,
+            facility or cost centre outside the organization, a unit that is not a currency and a date range that does not
+            increase.</description>
+        <implements service="mantle.ledger.FinanceReportServices.define#ReportOptions"/>
+        <out-parameters>
+            <parameter name="reportRows" type="List"/>
+            <parameter name="comparisonRows" type="List"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="asOf"/>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/FinanceReports.js').execute('trial', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/FinanceReports.js')
+                .execute('trial', context))</script>
         </actions>
     </service>
     <service verb="run" noun="GeneralLedger" allow-remote="false">
-        <description>Scoped posted ledger with opening and running balances; bounded to 10,000 lines.</description>
-        <implements service="mantle.ledger.FinanceReportServices.define#Parameters" />
+        <description>The organization's posted ledger lines by account and book day with opening and running balances, at
+            most 10,000 lines. Refuses a user without report read, an account, facility or cost centre outside the
+            organization, a unit that is not a currency, a date range that does not increase and a ledger over 10,000
+            lines.</description>
+        <implements service="mantle.ledger.FinanceReportServices.define#ReportOptions"/>
+        <out-parameters>
+            <parameter name="reportRows" type="List"/>
+            <parameter name="comparisonRows" type="List"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="asOf"/>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/FinanceReports.js').execute('ledger', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/FinanceReports.js')
+                .execute('ledger', context))</script>
         </actions>
     </service>
 </services>

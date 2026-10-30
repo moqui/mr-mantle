@@ -464,8 +464,13 @@ feature("currency CSV continues after an independent invalid row", {
         const result = native("CurrencyServices.import#Rates", {
             organizationPartyId: org,
             changeReason: "CSV rate test",
-            csvText:
-                "uomId,toUomId,fromDate,conversionFactor,rateSource\nUSD,EUR,2026-02-01T00:00:00Z,0.92,CSV\nUSD,EUR,2026-03-01T00:00:00Z,-1,CSV\nUSD,EUR,2026-04-01T00:00:00Z,0.93,CSV\n",
+            csvText: [
+                "uomId,toUomId,fromDate,conversionFactor,rateSource",
+                "USD,EUR,2026-02-01T00:00:00Z,0.92,CSV",
+                "USD,EUR,2026-03-01T00:00:00Z,-1,CSV",
+                "USD,EUR,2026-04-01T00:00:00Z,0.93,CSV",
+                "",
+            ].join("\n"),
         })
         return { result }
     },
@@ -1438,5 +1443,316 @@ feature("record reads give screens date text and the audit of header and lines",
         read.auditRows.every((row) => row.lineText == "Entry" || row.lineText.startsWith("Line "))
         expected.dayText == undefined
         expected.stampDateText == ec.l10n.format(ec.user.nowTimestamp, "yyyy-MM-dd HH:mm").replace(/ 00:00$/, "")
+    },
+})
+feature("chart accounts, assignments, classifications and periods are kept through the ledger services", {
+    when() {
+        const like = lib().one("mantle.ledger.account.GlAccount", { glAccountId: cash })
+        // as the account form does, a change sends every field: one left out is cleared
+        const fields = {
+            organizationPartyId: org,
+            accountCode: "199901",
+            glAccountClassEnumId: like.glAccountClassEnumId,
+            glAccountTypeEnumId: like.glAccountTypeEnumId,
+        }
+        const created = native("AccountServices.store#Account", {
+            ...fields,
+            accountName: "Native spec account",
+            changeReason: "Spec account",
+        }).glAccountId
+        const stamp = () => lib().one("mantle.ledger.account.GlAccount", { glAccountId: created }).lastUpdatedStamp
+        const renamed = native("AccountServices.store#Account", {
+            ...fields,
+            glAccountId: created,
+            accountName: "Native spec account renamed",
+            lastUpdatedStamp: stamp(),
+            changeReason: "Spec rename",
+        })
+        const cycle = rejected("AccountServices.store#Account", {
+            ...fields,
+            glAccountId: created,
+            accountName: "Native spec account renamed",
+            parentGlAccountId: created,
+            lastUpdatedStamp: stamp(),
+            changeReason: "Spec cycle",
+        })
+        const badCode = rejected("AccountServices.store#Account", {
+            organizationPartyId: org,
+            accountCode: "19A",
+            accountName: "Letters in code",
+            changeReason: "Spec code",
+        })
+        const assignmentKey = { glAccountId: created, organizationPartyId: org }
+        const assigned = native("AccountServices.store#Assignment", {
+            organizationPartyId: org,
+            glAccountId: created,
+            facilityRequired: "N",
+            costCenterRequired: "Y",
+            lastUpdatedStamp: lib().one("mantle.ledger.account.GlAccountOrganization", assignmentKey).lastUpdatedStamp,
+            changeReason: "Spec dimensions",
+        })
+        const backwards = rejected("AccountServices.store#Assignment", {
+            organizationPartyId: org,
+            glAccountId: created,
+            fromDate: ec.user.nowTimestamp,
+            thruDate: new Date(Number(ec.user.nowTimestamp) - 86400000),
+            lastUpdatedStamp: lib().one("mantle.ledger.account.GlAccountOrganization", assignmentKey).lastUpdatedStamp,
+            changeReason: "Spec backwards",
+        })
+        lib().call("create#mantle.ledger.account.GlAccountCategory", {
+            glAccountCategoryId: "FIN_SPEC_CATEGORY",
+            description: "Native spec category",
+        })
+        lib().call("create#moqui.basic.EnumerationType", {
+            enumTypeId: "FinSpecGroupType",
+            description: "Native spec report group type",
+        })
+        lib().call("create#moqui.basic.Enumeration", {
+            enumId: "FIN_SPEC_GROUP_TYPE",
+            enumTypeId: "FinSpecGroupType",
+            description: "Native spec group type",
+        })
+        lib().call("create#mantle.ledger.account.GlAccountGroup", {
+            glAccountGroupId: "FIN_SPEC_GROUP",
+            groupTypeEnumId: "FIN_SPEC_GROUP_TYPE",
+            description: "Native spec group",
+        })
+        const categoryStart = new Date(Number(ec.user.nowTimestamp) - 86400000)
+        native("AccountServices.store#Classification", {
+            organizationPartyId: org,
+            glAccountId: created,
+            glAccountCategoryId: "FIN_SPEC_CATEGORY",
+            fromDate: categoryStart,
+            changeReason: "Spec category",
+        })
+        native("AccountServices.store#Classification", {
+            organizationPartyId: org,
+            glAccountId: created,
+            glAccountCategoryId: "FIN_SPEC_CATEGORY",
+            changeReason: "Spec category again",
+        })
+        native("AccountServices.store#Classification", {
+            organizationPartyId: org,
+            glAccountId: created,
+            glAccountGroupId: "FIN_SPEC_GROUP",
+            changeReason: "Spec group",
+        })
+        const neither = rejected("AccountServices.store#Classification", {
+            organizationPartyId: org,
+            glAccountId: created,
+            changeReason: "Spec neither",
+        })
+        const classes = native("AccountServices.get#Classifications", { organizationPartyId: org, glAccountId: created })
+        const periods = native("AccountServices.ensure#Periods", { organizationPartyId: org })
+        const read = native("AccountingServices.get#Record", { kind: "accounts", recordId: created, organizationPartyId: org })
+        return { created, renamed, cycle, badCode, assigned, backwards, neither, classes, periods, read }
+    },
+    then({ created, renamed, cycle, badCode, assigned, backwards, neither, classes, periods, read }) {
+        renamed.glAccountId == created
+        assigned.glAccountId == created
+        cycle.includes("cycle")
+        badCode.includes("digits-only")
+        backwards.includes("end must follow start")
+        neither.includes("Choose a category or group")
+        classes.categoryRows.length == 2
+        classes.categoryRows.filter((row) => !row.thruDate).length == 1
+        classes.groupRows.map((row) => row.glAccountGroupId) == ["FIN_SPEC_GROUP"]
+        periods.complete == true
+        read.record.accountName == "Native spec account renamed"
+        read.record.costCenterRequired == "Y"
+        read.record.assignmentOrganizationPartyId == org
+    },
+})
+feature("currencies, rate imports and finance settings are read and kept through the ledger services", {
+    when() {
+        const currency = native("CurrencyServices.store#Currency", {
+            organizationPartyId: org,
+            uomId: "XQZ",
+            description: "Native spec currency",
+            fractionDigits: 3,
+            changeReason: "Spec currency",
+        })
+        const precision = native("CurrencyServices.store#Currency", {
+            organizationPartyId: org,
+            uomId: "XQZ",
+            description: "Native spec currency",
+            fractionDigits: 2,
+            lastUpdatedStamp: lib().one("moqui.basic.Uom", { uomId: "XQZ" }).lastUpdatedStamp,
+            changeReason: "Spec precision",
+        })
+        const badCode = rejected("CurrencyServices.store#Currency", {
+            organizationPartyId: org,
+            uomId: "xq",
+            description: "Lower case",
+            fractionDigits: 2,
+            changeReason: "Spec code",
+        })
+        const imported = native("CurrencyServices.import#Rates", {
+            organizationPartyId: org,
+            changeReason: "Spec import",
+            csvText: "uomId,toUomId,fromDate,conversionFactor,rateSource\nXQZ,USD,2026-01-01,1.5,Spec\n",
+        })
+        const result = native("CurrencyServices.get#ImportResult", { organizationPartyId: org, importId: imported.importId })
+        const preferences = native("SetupServices.get#Preferences", { organizationPartyId: org })
+        const stored = native("SetupServices.store#Preferences", {
+            organizationPartyId: org,
+            settings: { invoiceIdPrefix: "NFC" },
+            lastUpdatedStamp: preferences.settings.lastUpdatedStamp,
+            changeReason: "Spec prefix",
+        })
+        const badFlag = rejected("SetupServices.store#Preferences", {
+            organizationPartyId: org,
+            settings: { realTimeGlSummary: "X" },
+            lastUpdatedStamp: stored.settings.lastUpdatedStamp,
+            changeReason: "Spec flag",
+        })
+        const setup = native("SetupServices.get#Context", { organizationPartyId: org })
+        const term = native("SetupServices.store#SettlementTerm", {
+            organizationPartyId: org,
+            description: "Native spec 45 days",
+            termValue: 45,
+            termValueUomId: "TF_day",
+            changeReason: "Spec term",
+        })
+        return { currency, precision, badCode, imported, result, preferences, stored, badFlag, setup, term }
+    },
+    then({ currency, precision, badCode, imported, result, preferences, stored, badFlag, setup, term }) {
+        currency.complete == true
+        precision.complete == true
+        lib().one("moqui.basic.Uom", { uomId: "XQZ" }).fractionDigits == 2
+        badCode.includes("three-letter")
+        result.importId == imported.importId
+        result.complete == true
+        result.results.length == 1
+        preferences.organizationPartyId == org
+        preferences.inherited == false
+        preferences.settings.baseCurrencyUomId == "USD"
+        stored.settings.invoiceIdPrefix == "NFC"
+        badFlag.includes("Enabled or Disabled")
+        setup.currenciesCount > 0
+        setup.currencies.length == Math.min(25, setup.currenciesCount)
+        setup.currenciesPageMaxIndex == Math.ceil(setup.currenciesCount / 25) - 1
+        setup.rates.some((row) => row.uomId == "XQZ" && row.rateSource == "Spec")
+        !!term.settlementTermId
+    },
+})
+feature("draft documents, journal previews, corrections and deletes go through the ledger services", {
+    when() {
+        lib().call("create#mantle.party.Party", { partyId: "FIN_CONTROL_CUSTOMER", partyTypeEnumId: "PtyOrganization" })
+        lib().call("create#mantle.party.Organization", { partyId: "FIN_CONTROL_CUSTOMER", organizationName: "Spec customer" })
+        const access = native("AccountingServices.get#Access")
+        const invoiceId = native("AccountingServices.create#DraftDocument", {
+            kind: "invoices",
+            organizationPartyId: org,
+            otherPartyId: "FIN_CONTROL_CUSTOMER",
+            description: "Spec draft invoice",
+        }).recordId
+        const paymentId = native("AccountingServices.create#DraftDocument", {
+            kind: "payments",
+            organizationPartyId: org,
+            otherPartyId: "FIN_CONTROL_CUSTOMER",
+            amount: "10.005",
+            description: "Spec proposed payment",
+        }).recordId
+        const unknownParty = rejected("AccountingServices.create#DraftDocument", {
+            kind: "invoices",
+            organizationPartyId: org,
+            otherPartyId: "FIN_NO_SUCH_PARTY",
+        })
+        const read = (kind, recordId) => native("AccountingServices.get#Record", { kind, recordId, organizationPartyId: org })
+        const invoice = read("invoices", invoiceId)
+        const payment = read("payments", paymentId)
+
+        const draftId = native("JournalServices.store#DraftEntry", { organizationPartyId: org, description: "Spec deletes" })
+            .acctgTransId
+        for (const side of ["D", "C"])
+            native("JournalServices.store#DraftLine", {
+                acctgTransId: draftId,
+                glAccountId: side == "D" ? cash : expense,
+                debitCreditFlag: side,
+                amount: "7",
+            })
+        const reviewed = native("JournalServices.preview#Entry", { organizationPartyId: org, acctgTransId: draftId })
+        const preview = native("JournalServices.get#Preview", {
+            organizationPartyId: org,
+            acctgTransId: draftId,
+            previewId: reviewed.previewId,
+        })
+        const batch = native("JournalServices.validate#Batch", { organizationPartyId: org, acctgTransIds: [draftId] })
+        const batchPreview = native("JournalServices.get#BatchPreview", { organizationPartyId: org, previewId: batch.previewId })
+        const line = lib().rows("mantle.ledger.transaction.AcctgTransEntry", { acctgTransId: draftId })[0]
+        native("JournalServices.delete#DraftLine", {
+            organizationPartyId: org,
+            acctgTransId: draftId,
+            acctgTransEntrySeqId: line.acctgTransEntrySeqId,
+            lastUpdatedStamp: line.lastUpdatedStamp,
+        })
+        const linesLeft = lib().rows("mantle.ledger.transaction.AcctgTransEntry", { acctgTransId: draftId }).length
+        native("JournalServices.delete#DraftEntry", {
+            organizationPartyId: org,
+            acctgTransId: draftId,
+            lastUpdatedStamp: lib().one("mantle.ledger.transaction.AcctgTrans", { acctgTransId: draftId }).lastUpdatedStamp,
+        })
+        const posted = lib().one("mantle.ledger.transaction.AcctgTrans", { acctgTransId: txId })
+        const corrected = native("JournalServices.update#PostedMetadata", {
+            organizationPartyId: org,
+            acctgTransId: txId,
+            description: "Guarded manual journal, corrected",
+            lastUpdatedStamp: posted.lastUpdatedStamp,
+            changeReason: "Spec description",
+        })
+
+        const templateId = native("JournalServices.store#Template", { organizationPartyId: org, templateName: "Spec deletes" })
+            .acctgTransTemplateId
+        native("JournalServices.store#TemplateLine", {
+            organizationPartyId: org,
+            acctgTransTemplateId: templateId,
+            glAccountId: cash,
+            debitCreditFlag: "D",
+            amount: 3,
+        })
+        const templateLine = lib().rows("mantle.ledger.transaction.AcctgTransTemplateEntry", {
+            acctgTransTemplateId: templateId,
+        })[0]
+        native("JournalServices.delete#TemplateLine", {
+            organizationPartyId: org,
+            acctgTransTemplateId: templateId,
+            entrySeqId: templateLine.entrySeqId,
+            lastUpdatedStamp: templateLine.lastUpdatedStamp,
+        })
+        const templateLinesLeft = lib().rows("mantle.ledger.transaction.AcctgTransTemplateEntry", {
+            acctgTransTemplateId: templateId,
+        }).length
+        return {
+            access,
+            invoice,
+            payment,
+            unknownParty,
+            preview,
+            batchPreview,
+            linesLeft,
+            draftId,
+            corrected,
+            templateLinesLeft,
+        }
+    },
+    then({ access, invoice, payment, unknownParty, preview, batchPreview, linesLeft, draftId, corrected, templateLinesLeft }) {
+        access.capabilities.read == true
+        access.organizationPartyIds.includes(org)
+        invoice.record.statusId == "InvoiceInProcess"
+        invoice.record.toPartyId == "FIN_CONTROL_CUSTOMER"
+        invoice.record.counterpartyName == "Spec customer"
+        payment.record.statusId == "PmntProposed"
+        payment.record.documentAmount.eq("10.01")
+        unknownParty.includes("counterparty")
+        preview.valid == true
+        preview.debitTotal.eq("7")
+        batchPreview.results.map((row) => row.acctgTransId) == [draftId]
+        linesLeft == 1
+        lib().one("mantle.ledger.transaction.AcctgTrans", { acctgTransId: draftId }) == null
+        corrected.acctgTransId == txId
+        lib().one("mantle.ledger.transaction.AcctgTrans", { acctgTransId: txId }).description ==
+            "Guarded manual journal, corrected"
+        templateLinesLeft == 0
     },
 })

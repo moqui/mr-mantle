@@ -1,4 +1,7 @@
-// Native finance configuration writers. Only explicit business fields are accepted; credentials and services are absent.
+// Finance setup that XML Actions do not express well: the readiness checks, posting mappings and their clone, and
+// masked method identifiers. Only explicit business fields are accepted; credentials and services are absent. The
+// preference, due term and payment method services are inline XML Actions in SetupServices.xml, which read
+// preferenceFields from here.
 const lib = ec.resource.script("component://mr-mantle/service/mantle/ledger/AccountingPolicy.js")
 const {one, rows, find, map, call, pick, ms, hash} = lib
 const C = "mantle.ledger.config.",
@@ -160,109 +163,6 @@ function readiness(p) {
         }
     }
     return {findings}
-}
-function preferences(p) {
-    const s = lib.scope(p, "admin"),
-        org = s.organizationPartyId
-    if (!org)
-        return {
-            settings: {},
-            organizationPartyId: null,
-            findings: [{code: "ORGANIZATION", message: "Choose an organization"}],
-            costingMessage: "Inventory postings use actual asset acquire cost."
-        }
-    const own = one(PREF, {organizationPartyId: org}),
-        pref = own || lib.preference(org)
-    const findings = []
-    if (!pref.baseCurrencyUomId)
-        findings.push({
-            code: "BASE_CURRENCY",
-            message: "Choose a base currency"
-        })
-    if (!find("mantle.party.time.TimePeriod", {partyId: org}).count())
-        findings.push({
-            code: "FISCAL_PERIODS",
-            message: "Configure fiscal periods or inherited fiscal periods"
-        })
-    if (!pref.errorGlJournalId)
-        findings.push({
-            code: "ERROR_JOURNAL",
-            message: "Choose the error journal"
-        })
-    return {
-        settings: pick(map(pref), [...preferenceFields, "organizationPartyId", "lastUpdatedStamp"]),
-        findings,
-        organizationPartyId: org,
-        inherited: !own,
-        costingMessage: "Inventory postings use actual asset acquire cost regardless of the COGS preference."
-    }
-}
-function storePreferences(p) {
-    const s = lib.organization(p, "admin"),
-        why = lib.reason(p),
-        org = s.organizationPartyId
-    find("mantle.party.Party", {partyId: org}).forUpdate(true).one()
-    const old = find(PREF, {organizationPartyId: org}).forUpdate(true).one()
-    if (old) lib.revision(old, p.lastUpdatedStamp)
-    const values = pick(p.settings || {}, preferenceFields)
-    for (const field of [
-        "postingGuardEnabled",
-        "requiredLedgerDimensionsEnabled",
-        "forwardIssuanceRepostEnabled",
-        "allowAccountingSelfApproval",
-        "singleCurrencyDocumentsOnly",
-        "invoiceApprovalRequired",
-        "paymentAutoApplicationEnabled",
-        "settlementApplicationGuardEnabled",
-        "paymentGatewayWorkflowEnabled",
-        "inventoryRevaluationEnabled",
-        "realTimeGlSummary"
-    ]) {
-        if (values[field] != null && !["Y", "N"].includes(values[field]))
-            throw new Error("Choose Enabled or Disabled for " + field)
-    }
-    const effective = Object.assign({}, lib.preference(org), map(old), values)
-    if (effective.paymentGatewayWorkflowEnabled === "Y" && effective.settlementApplicationGuardEnabled !== "Y")
-        throw new Error("GATEWAY_SETTLEMENT_REQUIRED: Enable settlement controls before reviewed payment processing")
-    for (const field of ["baseCurrencyUomId", "localCurrencyUomId"]) if (values[field]) lib.currency(values[field])
-    const hasHistory =
-        find("mantle.ledger.transaction.AcctgTrans", {
-            organizationPartyId: org,
-            isPosted: "Y"
-        }).count() > 0
-    if (
-        hasHistory &&
-        ["baseCurrencyUomId", "cogsMethodEnumId", "fiscalYearStartMonth", "fiscalYearStartDay"].some(
-            f => values[f] !== undefined && String(values[f] ?? "") !== String((old || lib.preference(org))[f] ?? "")
-        )
-    )
-        throw new Error("Posted history requires a migration before changing currency, costing or fiscal basis")
-    const month = Number(values.fiscalYearStartMonth || old?.fiscalYearStartMonth || 1),
-        day = Number(values.fiscalYearStartDay || old?.fiscalYearStartDay || 1)
-    if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || day < 1 || day > 31)
-        throw new Error("Choose a valid fiscal year start")
-    const inheritedError = !old && lib.preference(org).errorGlJournalId
-    if ((!values.errorGlJournalId && !old?.errorGlJournalId) || (!old && values.errorGlJournalId === inheritedError)) {
-        values.errorGlJournalId = call("mantle.ledger.LedgerServices.create#GlJournal", {
-            organizationPartyId: org,
-            glJournalName: "Error journal",
-            glJournalTypeEnumId: "GLJRNL_ERROR"
-        }).glJournalId
-    }
-    if (
-        values.errorGlJournalId &&
-        lib.record({
-            kind: "batches",
-            recordId: values.errorGlJournalId,
-            organizationPartyId: org
-        }).glJournalTypeEnumId !== "GLJRNL_ERROR"
-    )
-        throw new Error("Choose an error journal in this organization")
-    for (const field of ["invoiceDocumentTemplate", "paymentDocumentTemplate"])
-        if (values[field] && !["standard"].includes(values[field])) throw new Error("Choose an approved document template")
-    lib.audit(Object.keys(values), why)
-    call((old ? "update#" : "create#") + PREF, Object.assign(values, {organizationPartyId: org}))
-    return preferences(p)
 }
 function mappingList(p) {
     const s = lib.scope(p, "admin"),
@@ -543,187 +443,27 @@ function clone(p) {
         complete: p.apply === true
     }
 }
-function term(p) {
-    lib.organization(p, "admin")
-    const why = lib.reason(p)
-    const entity = "mantle.account.invoice.SettlementTerm",
-        old = p.settlementTermId ? find(entity, {settlementTermId: p.settlementTermId}).forUpdate(true).one() : null
-    if (old) lib.revision(old, p.lastUpdatedStamp)
-    if (!p.description || p.termValue == null || toDecimal(p.termValue).compare(0) < 0)
-        throw new Error("Give a due-term description and nonnegative value")
-    const unit = one("moqui.basic.Uom", {uomId: p.termValueUomId})
-    if (!unit || unit.uomTypeEnumId !== "UT_TIME_FREQ_MEASURE") throw new Error("Choose a time unit for the due term")
-    lib.audit(["description", "termValue", "termValueUomId"], why)
-    return call((old ? "update#" : "create#") + entity, {
-        settlementTermId: old?.settlementTermId,
-        description: p.description,
-        termTypeEnumId: "TtFinPaymentDays",
-        termValue: p.termValue,
-        termValueUomId: p.termValueUomId
-    })
-}
-function gatewayIds(org) {
-    return rows("mantle.account.method.PaymentGatewayOrganization", {
-        organizationPartyId: org,
-        isEnabled: "Y"
-    })
-        .filter(row => lib.active(row))
-        .map(row => row.paymentGatewayConfigId)
-}
-function methods(p) {
-    const s = lib.scope(p, "admin")
-    if (!s.organizationPartyId) return {methods: [], gateways: []}
-    const source = rows("mantle.account.method.PaymentMethod", {
-            ownerPartyId: s.organizationPartyId
-        }),
-        ids = source.map(r => r.paymentMethodId)
+// Masked identifiers of payment methods by id: the last four digits of a bank account or card number. Each number is
+// read alone, so one that will not decrypt is named and the others go on.
+function maskedIdentifiers(p) {
     const masked = {}
-    for (const [entity, field] of [
-        ["BankAccount", "accountNumber"],
-        ["CreditCard", "cardNumber"]
-    ]) {
-        if (!ids.length) continue
-        // Each decryptable row is independent; an unreadable number must not fail the other methods.
-        for (const initial of source) {
+    for (const paymentMethodId of Array.from(p.paymentMethodIds || [])) {
+        for (const [entity, field] of [
+            ["BankAccount", "accountNumber"],
+            ["CreditCard", "cardNumber"]
+        ]) {
             try {
-                const row = one("mantle.account.method." + entity, {
-                    paymentMethodId: initial.paymentMethodId
-                })
-                if (row?.[field]) masked[initial.paymentMethodId] = "•••• " + String(row[field]).slice(-4)
+                const row = one("mantle.account.method." + entity, {paymentMethodId})
+                if (row?.[field]) masked[paymentMethodId] = "•••• " + String(row[field]).slice(-4)
             } catch (error) {
-                ec.logger.error("Masked method " + initial.paymentMethodId + ": " + error.message)
-                masked[initial.paymentMethodId] = "Identifier unavailable"
+                ec.logger.error("Masked method " + paymentMethodId + ": " + error.message)
+                masked[paymentMethodId] = "Identifier unavailable"
             }
         }
     }
-    const methods = source.map(r =>
-        Object.assign(
-            pick(lib.display(r), [
-                "paymentMethodId",
-                "ownerPartyId",
-                "paymentMethodTypeEnumId",
-                "currencyUomId",
-                "description",
-                "fromDate",
-                "fromDateText",
-                "thruDate",
-                "thruDateText",
-                "paymentGatewayConfigId",
-                "lastUpdatedStamp"
-            ]),
-            {
-                maskedIdentifier: masked[r.paymentMethodId] || "Tokenized / no local identifier"
-            }
-        )
-    )
-    const allowed = gatewayIds(s.organizationPartyId)
-    const gateways = allowed.length
-        ? Array.from(
-              find("mantle.account.method.PaymentGatewayConfig")
-                  .condition("paymentGatewayConfigId", "in", allowed)
-                  .selectField("paymentGatewayConfigId")
-                  .selectField("description")
-                  .list()
-          ).map(map)
-        : []
-    return {methods, gateways}
+    return {maskedIdentifiers: masked}
 }
-function storeMethod(p) {
-    const s = lib.organization(p, "admin"),
-        why = lib.reason(p)
-    const method = p.paymentMethodId
-        ? find("mantle.account.method.PaymentMethod", {
-              paymentMethodId: p.paymentMethodId,
-              ownerPartyId: s.organizationPartyId
-          })
-              .forUpdate(true)
-              .one()
-        : null
-    if (p.paymentMethodId && !method) throw new Error("Payment method is not available")
-    if (method) lib.revision(method, p.lastUpdatedStamp)
-    if (
-        p.paymentGatewayConfigId &&
-        p.paymentGatewayConfigId !== method?.paymentGatewayConfigId &&
-        !gatewayIds(s.organizationPartyId).includes(p.paymentGatewayConfigId)
-    )
-        throw new Error("Choose a permitted gateway binding for this organization")
-    if (!p.description) throw new Error("Give the method a display name")
-    if (p.fromDate && p.thruDate && ms(p.fromDate) >= ms(p.thruDate)) throw new Error("Method expiry must follow its start")
-    const values = Object.assign(
-        {ownerPartyId: s.organizationPartyId},
-        pick(p, ["description", "fromDate", "thruDate", "paymentGatewayConfigId"])
-    )
-    if (p.currencyUomId) {
-        lib.currency(p.currencyUomId)
-        values.currencyUomId = p.currencyUomId
-    }
-    if (method && !p.paymentGatewayConfigId) delete values.paymentGatewayConfigId
-    if (method) values.paymentMethodId = method.paymentMethodId
-    else values.paymentMethodTypeEnumId = "PmtOther"
-    lib.audit(Object.keys(values), why)
-    const out = call((method ? "update#" : "create#") + "mantle.account.method.PaymentMethod", values)
-    return {
-        complete: true,
-        paymentMethodId: method?.paymentMethodId || out.paymentMethodId
-    }
-}
-function context(p) {
-    const pref = preferences(p),
-        s = lib.scope(p, "admin")
-    if (!s.organizationPartyId)
-        return Object.assign(pref, {
-            terms: [],
-            currencies: [],
-            currenciesCount: 0,
-            rates: []
-        })
-    const currenciesCount = find("moqui.basic.Uom", {
-            uomTypeEnumId: "UT_CURRENCY_MEASURE"
-        }).count(),
-        pageSize = 25,
-        pageIndex = Math.max(0, Number(p.pageIndex || 0))
-    return Object.assign(pref, {
-        terms: rows("mantle.account.invoice.SettlementTerm", {}).map(map),
-        currenciesCount,
-        currenciesPageIndex: pageIndex,
-        currenciesPageSize: pageSize,
-        currenciesPageMaxIndex: Math.max(0, Math.ceil(currenciesCount / pageSize) - 1),
-        currenciesPageRangeLow: currenciesCount ? pageIndex * pageSize + 1 : 0,
-        currenciesPageRangeHigh: Math.min(currenciesCount, (pageIndex + 1) * pageSize),
-        currencies: Array.from(
-            find("moqui.basic.Uom", {uomTypeEnumId: "UT_CURRENCY_MEASURE"})
-                .orderBy("uomId")
-                .offset(pageIndex * pageSize)
-                .limit(pageSize)
-                .list()
-        ).map(map),
-        rates: Array.from(
-            find("moqui.basic.UomConversion")
-                .condition(
-                    "uomId",
-                    "in",
-                    rows("moqui.basic.Uom", {
-                        uomTypeEnumId: "UT_CURRENCY_MEASURE"
-                    }).map(r => r.uomId)
-                )
-                .orderBy("-fromDate")
-                .limit(100)
-                .list()
-        ).map(lib.display)
-    })
-}
-const operations = {
-    readiness,
-    preferences,
-    storePreferences,
-    mappingList,
-    storeMapping,
-    clone,
-    term,
-    methods,
-    storeMethod,
-    context
-}
+const operations = {readiness, mappingList, storeMapping, clone, maskedIdentifiers}
 ;({
     mappings,
     preferenceFields,

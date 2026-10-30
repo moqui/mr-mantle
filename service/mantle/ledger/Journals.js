@@ -1,4 +1,5 @@
-// Authorized journal authoring and reviewed posting. Each batch constituent owns its transaction.
+// Authorized journal authoring and reviewed posting. Each batch constituent owns its transaction. The preview reads,
+// deletes and the posted metadata correction are inline XML Actions in JournalServices.xml.
 const lib = ec.resource.script("component://mr-mantle/service/mantle/ledger/AccountingPolicy.js")
 const guard = ec.resource.script("component://mr-mantle/service/mantle/ledger/PostingGuard.js")
 const {call, find, one, rows, map, pick, ms, hash} = lib
@@ -18,6 +19,8 @@ const transaction = (p, lock = true) =>
         "glPost",
         lock
     )
+// A reviewed preview may be posted for ten minutes.
+const previewExpiry = () => new Date(ms(ec.user.nowTimestamp) + 600000)
 function draft(p) {
     const s = lib.organization(p, "glPost")
     const old = p.acctgTransId ? transaction(p) : null
@@ -47,7 +50,6 @@ function draft(p) {
     )
         throw new Error("Project is outside the posting organization")
     if (old) values.acctgTransId = old.acctgTransId
-    if (!values.acctgTransTypeEnumId && !old) values.acctgTransTypeEnumId = "AttInternal"
     return call("mantle.ledger.LedgerServices." + (old ? "update#AcctgTrans" : "create#AcctgTrans"), values)
 }
 function line(p) {
@@ -90,36 +92,6 @@ function line(p) {
     values.amount = ec.l10n.roundCurrency(toDecimal(p.amount), tx.amountUomId)
     if (old) values.acctgTransEntrySeqId = old.acctgTransEntrySeqId
     return call("mantle.ledger.LedgerServices." + (old ? "update#AcctgTransEntry" : "create#AcctgTransEntry"), values)
-}
-function removeLine(p) {
-    const tx = transaction(p)
-    if (tx.isPosted === "Y") throw new Error("Posted entries are read only")
-    const row = one(E, {
-        acctgTransId: tx.acctgTransId,
-        acctgTransEntrySeqId: p.acctgTransEntrySeqId
-    })
-    if (!row) throw new Error("Draft line is not available")
-    lib.revision(row, p.lastUpdatedStamp)
-    call("mantle.ledger.LedgerServices.delete#AcctgTransEntry", {
-        acctgTransId: tx.acctgTransId,
-        acctgTransEntrySeqId: row.acctgTransEntrySeqId
-    })
-    return {}
-}
-function remove(p) {
-    const tx = transaction(p)
-    if (tx.isPosted === "Y") throw new Error("Only a draft may be deleted")
-    lib.revision(tx, p.lastUpdatedStamp)
-    if (
-        find("mantle.ledger.transaction.AcctgTransContent", {
-            acctgTransId: tx.acctgTransId
-        }).count()
-    )
-        throw new Error("Remove attached files before deleting this draft")
-    call("mantle.ledger.LedgerServices.delete#AcctgTrans", {
-        acctgTransId: tx.acctgTransId
-    })
-    return {}
 }
 function move(p) {
     const why = lib.reason(p),
@@ -169,14 +141,12 @@ function move(p) {
 function preview(p) {
     const tx = transaction(p, false),
         out = guard.validate({acctgTransId: tx.acctgTransId})
-    const previewId = "journal-" + ec.user.randomString(24)
-    call("create#" + P, {
-        previewId,
+    const {previewId} = call("create#" + P, {
         organizationPartyId: tx.organizationPartyId,
         acctgTransId: tx.acctgTransId,
         userId: ec.user.userId,
         inputFingerprint: out.inputFingerprint,
-        expiresDate: new Date(ms(ec.user.nowTimestamp) + 600000).toISOString()
+        expiresDate: previewExpiry()
     })
     return {
         previewId,
@@ -307,19 +277,6 @@ function reverse(p) {
     })
     return result
 }
-function metadata(p) {
-    const tx = transaction(p),
-        why = lib.reason(p)
-    if (tx.isPosted !== "Y") throw new Error("Use the draft editor before posting")
-    lib.revision(tx, p.lastUpdatedStamp)
-    lib.audit(["description", "changeReason"], why)
-    call("update#" + T, {
-        acctgTransId: tx.acctgTransId,
-        description: p.description,
-        changeReason: why
-    })
-    return {acctgTransId: tx.acctgTransId}
-}
 function batch(p) {
     const s = lib.organization(p, "glPost")
     const old = p.glJournalId
@@ -405,15 +362,13 @@ function validateBatch(p) {
             ec.message.popErrors()
         }
     }
-    const previewId = "batch-" + ec.user.randomString(24)
-    call("create#" + P, {
-        previewId,
+    const {previewId} = call("create#" + P, {
         organizationPartyId: s.organizationPartyId,
         userId: ec.user.userId,
         glJournalId: journal?.glJournalId,
         requestJson: JSON.stringify(results),
         inputFingerprint: hash(results),
-        expiresDate: new Date(ms(ec.user.nowTimestamp) + 600000).toISOString()
+        expiresDate: previewExpiry()
     })
     return {previewId, results, valid: results.every(r => r.valid)}
 }
@@ -701,35 +656,6 @@ function instantiate(p) {
     }
     return out
 }
-function getPreview(p) {
-    const tx = transaction(p, false),
-        reviewed = one(P, {previewId: p.previewId})
-    if (!reviewed || reviewed.acctgTransId !== tx.acctgTransId || reviewed.userId !== ec.user.userId)
-        throw new Error("Posting preview is not available")
-    const current = guard.validate({acctgTransId: tx.acctgTransId})
-    return {
-        previewId: reviewed.previewId,
-        inputFingerprint: reviewed.inputFingerprint,
-        valid:
-            current.valid &&
-            current.inputFingerprint === reviewed.inputFingerprint &&
-            ms(reviewed.expiresDate) > ms(ec.user.nowTimestamp),
-        findings: current.findings,
-        debitTotal: current.debitTotal,
-        creditTotal: current.creditTotal
-    }
-}
-function getBatchPreview(p) {
-    const s = lib.organization(p, "glPost"),
-        reviewed = one(P, {previewId: p.previewId})
-    if (!reviewed || reviewed.organizationPartyId !== s.organizationPartyId || reviewed.userId !== ec.user.userId)
-        throw new Error("Batch preview is not available")
-    return {
-        previewId: reviewed.previewId,
-        results: JSON.parse(reviewed.resultJson || reviewed.requestJson),
-        glJournalId: reviewed.glJournalId
-    }
-}
 function templateLine(p) {
     const header = lib.record(
         {
@@ -775,29 +701,6 @@ function templateLine(p) {
     })
     return {acctgTransTemplateId: header.acctgTransTemplateId}
 }
-function removeTemplateLine(p) {
-    const header = lib.record(
-        {
-            kind: "templates",
-            recordId: p.acctgTransTemplateId,
-            organizationPartyId: p.organizationPartyId
-        },
-        "glPost",
-        true
-    )
-    if (header.isPublished === "Y") throw new Error("Published template lines are immutable; create a new version")
-    const row = one(L, {
-        acctgTransTemplateId: header.acctgTransTemplateId,
-        entrySeqId: p.entrySeqId
-    })
-    if (!row) throw new Error("Template line is not available")
-    lib.revision(row, p.lastUpdatedStamp)
-    call("delete#" + L, {
-        acctgTransTemplateId: header.acctgTransTemplateId,
-        entrySeqId: row.entrySeqId
-    })
-    return {acctgTransTemplateId: header.acctgTransTemplateId}
-}
 function publishTemplate(p) {
     const header = lib.record(
         {
@@ -820,25 +723,19 @@ function publishTemplate(p) {
     )
 }
 const operations = {
-    removeTemplateLine,
-    templateLine,
-    publishTemplate,
-    getBatchPreview,
-    getPreview,
     draft,
     line,
-    removeLine,
-    remove,
     move,
     preview,
     post,
     reverse,
-    metadata,
     batch,
     validateBatch,
     postBatch,
     template,
+    templateLine,
     templateLines,
+    publishTemplate,
     instantiate
 }
 ;({

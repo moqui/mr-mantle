@@ -1,74 +1,209 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="define" noun="Parameters" type="interface">
-        <in-parameters>
-            <parameter name="kind" type="String" />
-            <parameter name="organizationPartyId" type="String" />
-            <parameter name="recordId" type="String" />
-            <parameter name="text" type="String" />
-            <parameter name="acctgTransId" type="String" />
-            <parameter name="glAccountId" type="String" />
-            <parameter name="parentGlAccountId" type="String" />
-            <parameter name="glJournalId" type="String" />
-            <parameter name="isPosted" type="String" />
-            <parameter name="otherPartyId" type="String" />
-            <parameter name="currencyUomId" type="String" />
-            <parameter name="description" type="String" />
-            <parameter name="pageIndex" type="Integer" />
-            <parameter name="pageSize" type="Integer" />
-            <parameter name="amount" type="BigDecimal" />
-            <parameter name="invoiceDate" type="Timestamp" />
-        </in-parameters>
-        <out-parameters>
-            <parameter name="capabilities" type="Map" />
-            <parameter name="record" type="Map" />
-            <parameter name="organizationPartyIds" type="List" />
-            <parameter name="allowedOrganizationPartyIds" type="List" />
-            <parameter name="activeOrganizationPartyId" type="String" />
-            <parameter name="records" type="List" />
-            <parameter name="recordCount" type="Long" />
-            <parameter name="pageIndex" type="Integer" />
-            <parameter name="pageSize" type="Integer" />
-            <parameter name="lines" type="List" />
-            <parameter name="auditRows" type="List" />
-            <parameter name="recordId" type="String" />
-            <parameter name="debitTotal" type="BigDecimal" />
-            <parameter name="creditTotal" type="BigDecimal" />
-            <parameter name="debitCreditDifference" type="BigDecimal" />
-            <parameter name="recordsCount" type="Integer" />
-            <parameter name="recordsPageSize" type="Integer" />
-            <parameter name="recordsPageIndex" type="Integer" />
-            <parameter name="recordsPageMaxIndex" type="Integer" />
-            <parameter name="recordsPageRangeLow" type="Integer" />
-            <parameter name="recordsPageRangeHigh" type="Integer" />
-        </out-parameters>
-    </service>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="get" noun="Access" allow-remote="false">
-        <description>Resolve native finance permissions and authenticated organization scope.</description>
-        <implements service="mantle.ledger.AccountingServices.define#Parameters" />
+        <description>The user's finance capabilities from their permissions and the internal organizations they may work
+            in, with the active one. Refuses a user with no finance read.</description>
+        <out-parameters>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="organizationPartyIds" type="List"/>
+            <parameter name="activeOrganizationPartyId"/>
+            <parameter name="allowedOrganizationPartyIds" type="List"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingRecords.js').execute('access', context))</script>
+            <set field="access"
+                    from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js').access()"/>
+            <set field="capabilities" from="access.capabilities"/>
+            <set field="organizationPartyIds" from="access.organizationPartyIds"/>
+            <set field="activeOrganizationPartyId" from="access.activeOrganizationPartyId"/>
+            <set field="allowedOrganizationPartyIds" from="access.allowedOrganizationPartyIds"/>
         </actions>
     </service>
     <service verb="find" noun="Records" allow-remote="false">
-        <description>Find only authorized finance records, with database pagination.</description>
-        <implements service="mantle.ledger.AccountingServices.define#Parameters" />
+        <description>A page of finance records of a kind (AccountingPolicy kinds: invoices, bills, payments, accounts,
+            journals, entries, periods, batches, templates, locks, exceptions) in the user's organizations, searched by
+            id and name ignoring case. Refuses a user who may not read the kind and an organization not theirs.</description>
+        <in-parameters>
+            <parameter name="kind"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="recordId"/>
+            <parameter name="text"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="glAccountId"/>
+            <parameter name="parentGlAccountId"/>
+            <parameter name="glJournalId"/>
+            <parameter name="isPosted"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="records" type="List"/>
+            <parameter name="recordCount" type="Long"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="recordsCount" type="Integer"/>
+            <parameter name="recordsPageSize" type="Integer"/>
+            <parameter name="recordsPageIndex" type="Integer"/>
+            <parameter name="recordsPageMaxIndex" type="Integer"/>
+            <parameter name="recordsPageRangeLow" type="Integer"/>
+            <parameter name="recordsPageRangeHigh" type="Integer"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingRecords.js').execute('list', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingRecords.js')
+                .execute('list', context))</script>
         </actions>
     </service>
     <service verb="get" noun="Record" allow-remote="false">
-        <description>Read an authorized finance record and its permitted child lines.</description>
-        <implements service="mantle.ledger.AccountingServices.define#Parameters" />
+        <description>One finance record for display, with its kind's details: a document's names, an account's
+            assignment to the organization, a journal entry's lines, audit and totals, a template's lines. Refuses a
+            record the user may not read.</description>
+        <in-parameters>
+            <parameter name="kind"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="recordId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="record" type="Map"/>
+            <parameter name="lines" type="List"/>
+            <parameter name="auditRows" type="List"/>
+            <parameter name="debitTotal" type="BigDecimal"/>
+            <parameter name="creditTotal" type="BigDecimal"/>
+            <parameter name="debitCreditDifference" type="BigDecimal"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingRecords.js').execute('read', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="recordValue" from="policy.record(context)"/>
+            <set field="record" from="policy.display(recordValue)"/>
+            <if condition="['invoices', 'bills', 'payments'].includes(kind)">
+                <set field="named" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingRecords.js')
+                        .execute('documents', {records:[record],
+                            organizationPartyIds:policy.organizationIds(policy.scope(context))})"/>
+                <set field="record" from="named.records[0]"/>
+            </if>
+            <if condition="kind === 'accounts'">
+                <!-- the organization asked for, else the first of the user's that has the account assigned -->
+                <set field="accountOrganizationId" from="organizationPartyId || policy.scope(context).allowedOrganizationPartyIds
+                        .find(orgId => policy.accountAssignment(orgId, recordValue.glAccountId))"/>
+                <set field="assignment" from="accountOrganizationId ?
+                        policy.accountAssignment(accountOrganizationId, recordValue.glAccountId) : null"/>
+                <entity-find-one entity-name="mantle.ledger.account.GlAccount" value-field="account" disable-authz="true">
+                    <field-map field-name="glAccountId" from="recordValue.glAccountId"/>
+                </entity-find-one>
+                <set field="assignmentFields" from="assignment ? policy.pick(policy.map(assignment),
+                        ['fromDate', 'thruDate', 'facilityRequired', 'costCenterRequired']) : {}"/>
+                <set field="record" from="Object.assign(policy.display(account), assignmentFields,
+                        {organizationPartyId:accountOrganizationId, assignmentOrganizationPartyId:assignment?.organizationPartyId,
+                        assignmentLastUpdatedStamp:assignment?.organizationPartyId === accountOrganizationId ?
+                            assignment.lastUpdatedStamp : null})"/>
+            </if>
+            <if condition="kind === 'journals'">
+                <entity-find entity-name="mantle.ledger.transaction.AcctgTransEntry" list="entryList" disable-authz="true">
+                    <econdition field-name="acctgTransId" from="recordValue.acctgTransId"/>
+                </entity-find>
+                <set field="lines" from="Array.from(entryList).map(policy.display)"/>
+                <!-- the audit of the header and its lines, newest first, with who changed them -->
+                <entity-find entity-name="moqui.entity.EntityAuditLog" list="auditList" limit="200" disable-authz="true">
+                    <econdition field-name="changedEntityName" operator="in"
+                            from="['mantle.ledger.transaction.AcctgTrans', 'mantle.ledger.transaction.AcctgTransEntry']"/>
+                    <econdition field-name="pkPrimaryValue" from="recordValue.acctgTransId"/>
+                    <order-by field-name="-changedDate"/>
+                </entity-find>
+                <entity-find entity-name="moqui.security.UserAccount" list="auditUsers" disable-authz="true">
+                    <econdition field-name="userId" operator="in"
+                            from="[...new Set(Array.from(auditList).map(audit => audit.changedByUserId).filter(Boolean))]"/>
+                </entity-find>
+                <set field="auditUserNames" from="Object.fromEntries(Array.from(auditUsers)
+                        .map(user => [user.userId, user.userFullName || user.username || user.userId]))"/>
+                <set field="auditRows" from="Array.from(auditList).map(audit => Object.assign(policy.display(audit), {
+                        changedByName:auditUserNames[audit.changedByUserId] || audit.changedByUserId || '',
+                        lineText:audit.changedEntityName.endsWith('AcctgTransEntry') ? 'Line ' + (audit.pkSecondaryValue || '') :
+                            'Entry'}))"/>
+                <service-call name="mantle.ledger.LedgerServices.calculate#AcctgTransTrialBalance" out-map="context"
+                        in-map="{acctgTransId:recordValue.acctgTransId}" disable-authz="true"/>
+            </if>
+            <if condition="kind === 'templates'">
+                <entity-find entity-name="mantle.ledger.transaction.AcctgTransTemplateEntry" list="templateEntries"
+                        disable-authz="true">
+                    <econdition field-name="acctgTransTemplateId" from="recordValue.acctgTransTemplateId"/>
+                </entity-find>
+                <set field="lines" from="Array.from(templateEntries).map(policy.display)"/>
+            </if>
         </actions>
     </service>
     <service verb="create" noun="DraftDocument" allow-remote="false">
-        <description>Create an authorized draft invoice, bill or proposed payment; never finalizes or settles.</description>
-        <implements service="mantle.ledger.AccountingServices.define#Parameters" />
+        <description>Create a draft invoice (in process) or bill, or a proposed disbursement with its amount rounded to the
+            currency, between the organization and a counterparty; it never finalizes or settles. The currency defaults to
+            the organization's base currency. Refuses an unknown kind, a user without receivable, payable or payment edit
+            for the kind, a unit that is not a currency, a counterparty the user may not see and an amount that is not
+            positive in the currency.</description>
+        <in-parameters>
+            <parameter name="kind"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="otherPartyId"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="description"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="invoiceDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recordId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingRecords.js').execute('draft', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="editCapability" from="{invoices:'arEdit', bills:'apEdit', payments:'paymentEdit'}[kind]"/>
+            <if condition="!['invoices', 'bills', 'payments'].includes(kind)">
+                <return error="true" message="Unknown document kind"/>
+            </if>
+            <set field="scope" from="policy.organization(context, editCapability)"/>
+            <set field="currencyUomId" from="currencyUomId || policy.preference(scope.organizationPartyId).baseCurrencyUomId"/>
+            <script>policy.currency(currencyUomId)</script>
+            <if condition="otherPartyId">
+                <entity-find-one entity-name="mantle.party.Party" value-field="otherParty" disable-authz="true">
+                    <field-map field-name="partyId" from="otherPartyId"/>
+                </entity-find-one>
+            </if>
+            <set field="privateParty" from="otherParty?.privateOwnerUserId &amp;&amp;
+                    otherParty.privateOwnerUserId !== ec.user.userId"/>
+            <if condition="!otherParty || privateParty">
+                <return error="true" message="Choose an available counterparty"/>
+            </if>
+            <set field="documentParties" from="kind === 'bills' ?
+                    {fromPartyId:otherPartyId, toPartyId:scope.organizationPartyId} :
+                    {fromPartyId:scope.organizationPartyId, toPartyId:otherPartyId}"/>
+            <if condition="kind === 'payments'">
+                <if condition="amount == null || toDecimal(amount).compare(0) &lt;= 0">
+                    <return error="true" message="Enter a positive payment amount"/>
+                </if>
+                <set field="amount" from="ec.l10n.roundCurrency(toDecimal(amount), currencyUomId)"/>
+                <if condition="amount.compare(0) &lt;= 0">
+                    <return error="true" message="Enter a positive payment amount in the selected currency"/>
+                </if>
+                <!-- a payment keeps its description as its comments -->
+                <service-call name="mantle.account.PaymentServices.create#Payment" out-map="payment" disable-authz="true"
+                        in-map="Object.assign({paymentTypeEnumId:'PtDisbursement', paymentInstrumentEnumId:'PiOther',
+                            statusId:'PmntProposed', amount:amount, amountUomId:currencyUomId, currencyUomId:currencyUomId,
+                            description:description, comments:description}, documentParties)"/>
+                <set field="recordId" from="payment.paymentId"/>
+                <return/>
+            </if>
+            <service-call name="mantle.account.InvoiceServices.create#Invoice" out-map="invoice" disable-authz="true"
+                    in-map="Object.assign({invoiceTypeEnumId:'InvoiceSales', statusId:'InvoiceInProcess',
+                        invoiceDate:invoiceDate || ec.user.nowTimestamp, currencyUomId:currencyUomId,
+                        description:description}, documentParties)"/>
+            <set field="recordId" from="invoice.invoiceId"/>
         </actions>
     </service>
 </services>

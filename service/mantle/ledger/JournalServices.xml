@@ -1,197 +1,499 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="define" noun="Parameters" type="interface">
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="define" noun="EntryLine" type="interface">
+        <description>The amount and dimensions of a draft journal line or a template line.</description>
         <in-parameters>
-            <parameter name="organizationPartyId" type="String" />
-            <parameter name="acctgTransId" type="String" />
-            <parameter name="acctgTransEntrySeqId" type="String" />
-            <parameter name="destinationAcctgTransId" type="String" />
-            <parameter name="glAccountId" type="String" />
-            <parameter name="debitCreditFlag" type="String" />
-            <parameter name="description" type="String" />
-            <parameter name="acctgTransTypeEnumId" type="String" />
-            <parameter name="amountUomId" type="String" />
-            <parameter name="glJournalId" type="String" />
-            <parameter name="glJournalName" type="String" />
-            <parameter name="otherPartyId" type="String" />
-            <parameter name="workEffortId" type="String" />
-            <parameter name="productId" type="String" />
-            <parameter name="assetId" type="String" />
-            <parameter name="facilityId" type="String" />
-            <parameter name="costCenterId" type="String" />
-            <parameter name="previewId" type="String" />
-            <parameter name="inputFingerprint" type="String" />
-            <parameter name="operationKey" type="String" />
-            <parameter name="changeReason" type="String" />
-            <parameter name="acctgTransTemplateId" type="String" />
-            <parameter name="templateName" type="String" />
-            <parameter name="entrySeqId" type="String" />
-            <parameter name="amountParameter" type="String" />
-            <parameter name="transactionDate" type="Timestamp" />
-            <parameter name="reversalDate" type="Timestamp" />
-            <parameter name="lastUpdatedStamp" type="Timestamp" />
-            <parameter name="fromDate" type="Timestamp" />
-            <parameter name="thruDate" type="Timestamp" />
-            <parameter name="amount" type="BigDecimal" />
-            <parameter name="lines" type="List" />
-            <parameter name="acctgTransIds" type="List" />
-            <parameter name="amounts" type="Map" />
+            <parameter name="glAccountId"/>
+            <parameter name="debitCreditFlag"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="description"/>
+            <parameter name="facilityId"/>
+            <parameter name="costCenterId"/>
+        </in-parameters>
+    </service>
+
+    <service verb="store" noun="DraftEntry" allow-remote="false">
+        <description>Create or change a draft journal entry's header; the currency defaults to the organization's base
+            currency and the type to internal. Refuses a user without GL posting, a posted entry, a stale revision, a unit
+            that is not a currency, a batch, project or counterparty outside the organization and an invalid
+            date.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="acctgTransTypeEnumId"/>
+            <parameter name="transactionDate" type="Timestamp"/>
+            <parameter name="amountUomId"/>
+            <parameter name="description"/>
+            <parameter name="glJournalId"/>
+            <parameter name="otherPartyId"/>
+            <parameter name="workEffortId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="acctgTransId" type="String" />
-            <parameter name="acctgTransEntrySeqId" type="String" />
-            <parameter name="glJournalId" type="String" />
-            <parameter name="acctgTransTemplateId" type="String" />
-            <parameter name="previewId" type="String" />
-            <parameter name="inputFingerprint" type="String" />
-            <parameter name="valid" type="Boolean" />
-            <parameter name="alreadyPosted" type="Boolean" />
-            <parameter name="findings" type="List" />
-            <parameter name="results" type="List" />
-            <parameter name="complete" type="Boolean" />
-            <parameter name="debitTotal" type="BigDecimal" />
-            <parameter name="creditTotal" type="BigDecimal" />
+            <parameter name="acctgTransId"/>
         </out-parameters>
-    </service>
-    <service verb="store" noun="DraftEntry" allow-remote="false">
-        <description>Create or update an authorized draft header with optimistic concurrency.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('draft', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('draft', context))</script>
         </actions>
     </service>
     <service verb="store" noun="DraftLine" allow-remote="false">
-        <description>Save a draft debit or credit line; posted lines are immutable.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Add or change a debit or credit line of a draft entry, its amount rounded to the entry's currency.
+            Refuses a posted entry, a stale revision, an account not open for posting in the organization, a facility,
+            cost centre, asset or product outside it, and a missing side or a negative amount.</description>
+        <implements service="mantle.ledger.JournalServices.define#EntryLine"/>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="acctgTransEntrySeqId"/>
+            <parameter name="productId"/>
+            <parameter name="assetId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransId"/>
+            <parameter name="acctgTransEntrySeqId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('line', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('line', context))</script>
         </actions>
     </service>
     <service verb="delete" noun="DraftLine" allow-remote="false">
-        <description>Delete a current draft line.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Delete a line of a draft entry. Refuses a user without GL posting, a posted entry, an unknown line and
+            a stale revision.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="acctgTransEntrySeqId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('removeLine', context))</script>
+            <set field="journalEntry" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                    .record({kind:'journals', recordId:acctgTransId, organizationPartyId:organizationPartyId}, 'glPost', true)"/>
+            <if condition="journalEntry.isPosted === 'Y'">
+                <return error="true" message="Posted entries are read only"/>
+            </if>
+            <entity-find-one entity-name="mantle.ledger.transaction.AcctgTransEntry" value-field="entryLine" disable-authz="true">
+                <field-map field-name="acctgTransId" from="journalEntry.acctgTransId"/>
+                <field-map field-name="acctgTransEntrySeqId"/>
+            </entity-find-one>
+            <if condition="entryLine == null">
+                <return error="true" message="Draft line is not available"/>
+            </if>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                .revision(entryLine, lastUpdatedStamp)</script>
+            <service-call name="mantle.ledger.LedgerServices.delete#AcctgTransEntry" disable-authz="true"
+                    in-map="{acctgTransId:entryLine.acctgTransId, acctgTransEntrySeqId:entryLine.acctgTransEntrySeqId}"/>
         </actions>
     </service>
     <service verb="delete" noun="DraftEntry" allow-remote="false">
-        <description>Delete only an authorized current draft.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Delete a draft entry and its lines. Refuses a user without GL posting, a posted entry, a stale
+            revision and an entry with attached files.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('remove', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="journalEntry" from="policy.record({kind:'journals', recordId:acctgTransId,
+                    organizationPartyId:organizationPartyId}, 'glPost', true)"/>
+            <if condition="journalEntry.isPosted === 'Y'">
+                <return error="true" message="Only a draft may be deleted"/>
+            </if>
+            <script>policy.revision(journalEntry, lastUpdatedStamp)</script>
+            <entity-find-count entity-name="mantle.ledger.transaction.AcctgTransContent" count-field="contentCount"
+                    disable-authz="true">
+                <econdition field-name="acctgTransId" from="journalEntry.acctgTransId"/>
+            </entity-find-count>
+            <if condition="contentCount &gt; 0">
+                <return error="true" message="Remove attached files before deleting this draft"/>
+            </if>
+            <service-call name="mantle.ledger.LedgerServices.delete#AcctgTrans" disable-authz="true"
+                    in-map="{acctgTransId:journalEntry.acctgTransId}"/>
         </actions>
     </service>
     <service verb="move" noun="DraftLine" allow-remote="false">
-        <description>Atomically move a line between two drafts in the same organization and currency.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Move a line from one draft entry to another of the same organization and currency in one transaction,
+            audit logged. Refuses a user without GL posting, the same entry, a posted entry, an unknown line and a stale
+            revision.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="acctgTransEntrySeqId"/>
+            <parameter name="destinationAcctgTransId"/>
+            <parameter name="changeReason"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransId"/>
+            <parameter name="acctgTransEntrySeqId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('move', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('move', context))</script>
         </actions>
     </service>
     <service verb="preview" noun="Entry" allow-remote="false">
-        <description>Read authoritative posting checks and persist the reviewed fingerprint.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Check a journal entry as posting would (balance, accounts, dimensions, periods and locks) and keep the
+            reviewed fingerprint as a preview the user may post for ten minutes. Refuses an entry the user may not
+            post.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransId"/>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="findings" type="List"/>
+            <parameter name="debitTotal" type="BigDecimal"/>
+            <parameter name="creditTotal" type="BigDecimal"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('preview', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('preview', context))</script>
         </actions>
     </service>
     <service verb="post" noun="Entry" allow-remote="false">
-        <description>Revalidate a reviewed entry under lock and post once per operation key.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Post a reviewed journal entry once per operation key, checking it again under lock; the same key and
+            request again answers alreadyPosted. Refuses a missing preview or key, a key used for another request, a
+            preview of another user or entry or one expired, inputs changed since the preview and an entry that fails
+            the checks.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="operationKey"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransId"/>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="alreadyPosted" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('post', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('post', context))</script>
         </actions>
     </service>
     <service verb="reverse" noun="Entry" allow-remote="false">
-        <description>Post a linked dated reversal once; preserve the original.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Post a dated reversal linked to a posted entry once per operation key; the original is kept. Refuses a
+            user without GL posting, a missing date or key, a key used for another request and a reversal that does not
+            post.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="reversalDate" type="Timestamp"/>
+            <parameter name="operationKey"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransId"/>
+            <parameter name="alreadyPosted" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('reverse', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('reverse', context))</script>
         </actions>
     </service>
     <service verb="update" noun="PostedMetadata" allow-remote="false">
-        <description>Audited description-only correction with a mandatory reason; no financial fields accepted.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Correct a posted entry's description, audit logged with the reason; no financial field is accepted.
+            Refuses a user without GL posting, a draft (edited in the draft editor) and a stale revision.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="description"/>
+            <parameter name="changeReason"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('metadata', context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="journalEntry" from="policy.record({kind:'journals', recordId:acctgTransId,
+                    organizationPartyId:organizationPartyId}, 'glPost', true)"/>
+            <set field="changeReason" from="policy.reason(context)"/>
+            <if condition="journalEntry.isPosted !== 'Y'">
+                <return error="true" message="Use the draft editor before posting"/>
+            </if>
+            <script>policy.revision(journalEntry, lastUpdatedStamp)</script>
+            <script>policy.audit(['description', 'changeReason'], changeReason)</script>
+            <service-call name="update#mantle.ledger.transaction.AcctgTrans" disable-authz="true"
+                    in-map="{acctgTransId:journalEntry.acctgTransId, description:description, changeReason:changeReason}"/>
+            <set field="acctgTransId" from="journalEntry.acctgTransId"/>
         </actions>
     </service>
+
     <service verb="store" noun="Batch" allow-remote="false">
-        <description>Create or amend an unposted organization journal batch.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Create or rename an unposted journal batch of the organization. Refuses a user without GL posting, a
+            posted batch and a stale revision.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="glJournalId"/>
+            <parameter name="glJournalName"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="glJournalId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('batch', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('batch', context))</script>
         </actions>
     </service>
     <service verb="validate" noun="Batch" allow-remote="false">
-        <description>Preview each unposted constituent of an authorized batch.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Preview each unposted entry of a batch, or 1 to 100 chosen entries, each in its own transaction; a
+            failed preview is named in the results and the others go on. Keeps the results as a batch preview. Refuses a
+            user without GL posting, a batch or entry outside the organization and a choice of no or over 100
+            entries.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="glJournalId"/>
+            <parameter name="acctgTransIds" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="results" type="List"/>
+            <parameter name="valid" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('validateBatch', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('validateBatch', context))</script>
         </actions>
     </service>
     <service verb="post" noun="Batch" allow-remote="false">
-        <description>Post independent batch transactions atomically, report each failure and continue.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Post each entry of a reviewed batch preview in its own transaction, report each failure and go on;
+            the batch is posted when all its entries are. Refuses a user without GL posting, a preview of another user,
+            organization or batch or one expired, a missing key and a batch whose entries changed since the
+            preview.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="glJournalId"/>
+            <parameter name="previewId"/>
+            <parameter name="operationKey"/>
+            <parameter name="changeReason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="complete" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('postBatch', context))</script>
-        </actions>
-    </service>
-    <service verb="store" noun="Template" allow-remote="false">
-        <description>Save an organization journal template header as unpublished.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('template', context))</script>
-        </actions>
-    </service>
-    <service verb="store" noun="TemplateLines" allow-remote="false">
-        <description>Validate balanced fixed and parameterized lines and publish the template.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('templateLines', context))</script>
-        </actions>
-    </service>
-    <service verb="create" noun="FromTemplate" allow-remote="false">
-        <description>Create an independent unposted draft from an effective published template.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
-        <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('instantiate', context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('postBatch', context))</script>
         </actions>
     </service>
     <service verb="get" noun="Preview" allow-remote="false">
-        <description>Read the current actor's reviewed journal preview and recheck its validity.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>The user's posting preview of a journal entry, checked again: valid only while the entry passes, its
+            inputs are those reviewed and the preview has not expired. Refuses an entry the user may not post and a
+            preview of another user or entry.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransId"/>
+            <parameter name="previewId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="findings" type="List"/>
+            <parameter name="debitTotal" type="BigDecimal"/>
+            <parameter name="creditTotal" type="BigDecimal"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('getPreview',context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="journalEntry" from="policy.record({kind:'journals', recordId:acctgTransId,
+                    organizationPartyId:organizationPartyId}, 'glPost', false)"/>
+            <entity-find-one entity-name="mantle.ledger.transaction.JournalPreview" value-field="reviewed" disable-authz="true">
+                <field-map field-name="previewId"/>
+            </entity-find-one>
+            <if condition="reviewed?.acctgTransId !== journalEntry.acctgTransId || reviewed.userId !== ec.user.userId">
+                <return error="true" message="Posting preview is not available"/>
+            </if>
+            <set field="guard" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/PostingGuard.js')"/>
+            <set field="current" from="policy.pick(guard.validate({acctgTransId:journalEntry.acctgTransId}),
+                    ['valid', 'inputFingerprint', 'findings', 'debitTotal', 'creditTotal'])"/>
+            <set field="inputFingerprint" from="reviewed.inputFingerprint"/>
+            <set field="valid" from="current.valid &amp;&amp; current.inputFingerprint === reviewed.inputFingerprint &amp;&amp;
+                    policy.ms(reviewed.expiresDate) &gt; policy.ms(ec.user.nowTimestamp)"/>
+            <set field="findings" from="current.findings"/>
+            <set field="debitTotal" from="current.debitTotal"/>
+            <set field="creditTotal" from="current.creditTotal"/>
         </actions>
     </service>
     <service verb="get" noun="BatchPreview" allow-remote="false">
-        <description>Read the actor's batch preview and per-transaction posting outcomes.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>The user's batch preview with its results, or the posting outcome of each entry once posted. Refuses a
+            user without GL posting and a preview of another user or organization.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="previewId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="results" type="List"/>
+            <parameter name="glJournalId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('getBatchPreview',context))</script>
+            <set field="scope" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                    .organization(context, 'glPost')"/>
+            <entity-find-one entity-name="mantle.ledger.transaction.JournalPreview" value-field="reviewed" disable-authz="true">
+                <field-map field-name="previewId"/>
+            </entity-find-one>
+            <if condition="reviewed?.organizationPartyId !== scope.organizationPartyId || reviewed.userId !== ec.user.userId">
+                <return error="true" message="Batch preview is not available"/>
+            </if>
+            <set field="results" from="JSON.parse(reviewed.resultJson || reviewed.requestJson)"/>
+            <set field="glJournalId" from="reviewed.glJournalId"/>
+        </actions>
+    </service>
+
+    <service verb="store" noun="Template" allow-remote="false">
+        <description>Create or change an unpublished journal template header; changing a published one makes its next
+            version, a copy with its lines. The currency defaults to the organization's base currency. Refuses a user
+            without GL posting, a stale revision, a missing name, a version of a superseded template and a unit that is
+            not a currency.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransTemplateId"/>
+            <parameter name="templateName"/>
+            <parameter name="acctgTransTypeEnumId"/>
+            <parameter name="amountUomId"/>
+            <parameter name="description"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransTemplateId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('template', context))</script>
         </actions>
     </service>
     <service verb="store" noun="TemplateLine" allow-remote="false">
-        <description>Save one draft template line and require revalidation before instantiation.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Add or change one line of an unpublished template, a fixed amount rounded to the template's currency
+            or a named amount parameter; the template must be published again. Refuses a published template, an account
+            not open for posting in the organization, a facility or cost centre outside it, a missing side, an amount
+            that is neither nonnegative nor named, an unknown line and a stale revision.</description>
+        <implements service="mantle.ledger.JournalServices.define#EntryLine"/>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransTemplateId"/>
+            <parameter name="entrySeqId"/>
+            <parameter name="amountParameter"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransTemplateId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('templateLine',context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('templateLine', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="TemplateLines" allow-remote="false">
+        <description>Replace an unpublished template's lines with 1 to 500 lines that balance, fixed amounts and the signs
+            of each named amount parameter alike, and publish it, ending the version it replaces. Refuses a published
+            template, a stale revision, a line outside the organization, a missing side, a negative amount, an invalid
+            parameter name, lines that do not balance and a replaced version that changed.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransTemplateId"/>
+            <parameter name="lines" type="List"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransTemplateId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('templateLines', context))</script>
         </actions>
     </service>
     <service verb="publish" noun="Template" allow-remote="false">
-        <description>Publish only a template whose fixed amounts and named amount parameters balance.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Publish a template with its saved lines, as store#TemplateLines; a published one is left as it is.
+            Refuses what store#TemplateLines refuses.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransTemplateId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransTemplateId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('publishTemplate',context))</script>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('publishTemplate', context))</script>
         </actions>
     </service>
     <service verb="delete" noun="TemplateLine" allow-remote="false">
-        <description>Delete only a current unpublished template line.</description>
-        <implements service="mantle.ledger.JournalServices.define#Parameters" />
+        <description>Delete a line of an unpublished template. Refuses a user without GL posting, a published template, an
+            unknown line and a stale revision.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransTemplateId"/>
+            <parameter name="entrySeqId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransTemplateId"/>
+        </out-parameters>
         <actions>
-            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js').execute('removeTemplateLine',context))</script>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="templateHeader" from="policy.record({kind:'templates', recordId:acctgTransTemplateId,
+                    organizationPartyId:organizationPartyId}, 'glPost', true)"/>
+            <if condition="templateHeader.isPublished === 'Y'">
+                <return error="true" message="Published template lines are immutable; create a new version"/>
+            </if>
+            <entity-find-one entity-name="mantle.ledger.transaction.AcctgTransTemplateEntry" value-field="templateLine"
+                    disable-authz="true">
+                <field-map field-name="acctgTransTemplateId" from="templateHeader.acctgTransTemplateId"/>
+                <field-map field-name="entrySeqId"/>
+            </entity-find-one>
+            <if condition="templateLine == null">
+                <return error="true" message="Template line is not available"/>
+            </if>
+            <script>policy.revision(templateLine, lastUpdatedStamp)</script>
+            <service-call name="delete#mantle.ledger.transaction.AcctgTransTemplateEntry" disable-authz="true"
+                    in-map="{acctgTransTemplateId:templateHeader.acctgTransTemplateId, entrySeqId:templateLine.entrySeqId}"/>
+            <set field="acctgTransTemplateId" from="templateHeader.acctgTransTemplateId"/>
+        </actions>
+    </service>
+    <service verb="create" noun="FromTemplate" allow-remote="false">
+        <description>Create an unposted draft entry from a published template in effect on its date, the named amount
+            parameters taken from amounts. Refuses a user without GL posting, a template not published or not in effect,
+            and what store#DraftEntry and store#DraftLine refuse.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="acctgTransTemplateId"/>
+            <parameter name="transactionDate" type="Timestamp"/>
+            <parameter name="amounts" type="Map"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="acctgTransId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/Journals.js')
+                .execute('instantiate', context))</script>
         </actions>
     </service>
 </services>
