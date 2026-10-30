@@ -321,3 +321,104 @@ feature("a configured transactional store notice sends normally and is suppresse
         manualCount == 1
     }
 })
+feature("a reviewed financial source version survives the asynchronous store notice's status-only stamp advance", {
+    when() {
+        login(f.users.ar)
+        const invoice = helper().draft(f, "19")
+        const finalized = native("change#InvoiceState", {
+            invoiceId: invoice.invoiceId,
+            action: "finalize",
+            lastUpdatedStamp: invoice.lastUpdatedStamp
+        })
+        assert(ec.factory.waitWorkerPoolEmpty(50), "Invoice mail worker pool did not drain")
+        const afterNotice = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: invoice.invoiceId})
+        const before = capture.count()
+        const parameters = {
+            invoiceId: invoice.invoiceId,
+            organizationPartyId: f.org,
+            sourceVersion: finalized.sourceVersion,
+            emailAccountId: f.emailAccountId,
+            toAddresses: "reviewed@example.com"
+        }
+        const strictStamp = helper().rejected(
+            "mantle.account.InvoiceServices.send#Invoice",
+            Object.assign({}, parameters, {
+                lastUpdatedStamp: finalized.lastUpdatedStamp,
+                operationKey: "native-status-only-stamp"
+            })
+        )
+        const beforeDeliveryCount = helper().lib.rows("mantle.account.invoice.InvoiceDelivery", {
+            invoiceId: invoice.invoiceId
+        }).length
+        const sent = native("send#Invoice", Object.assign({}, parameters, {operationKey: "native-status-only-source"}))
+        return {
+            finalized,
+            afterNotice,
+            strictStamp,
+            beforeDeliveryCount,
+            sent,
+            sentCount: capture.count() - before,
+            unchangedSource: helper().lib.fingerprint(afterNotice)
+        }
+    },
+    then({finalized, afterNotice, strictStamp, beforeDeliveryCount, sent, sentCount, unchangedSource}) {
+        finalized.statusId == "InvoiceFinalized"
+        afterNotice.statusId == "InvoiceSent"
+        helper().lib.ms(afterNotice.lastUpdatedStamp) != helper().lib.ms(finalized.lastUpdatedStamp)
+        unchangedSource == finalized.sourceVersion
+        strictStamp.includes("STALE_REVISION")
+        beforeDeliveryCount == 0
+        sent.statusId == "InvoiceSent"
+        sent.sourceVersion == finalized.sourceVersion
+        sent.successCount == 1
+        sentCount == 1
+    }
+})
+feature("source-version-only delivery refuses reviewed financial header and line changes without durable output or mail", {
+    when() {
+        login(f.users.ar)
+        const results = []
+        for (const change of ["header", "line"]) {
+            const invoice = helper().draft(f, "20")
+            const sourceVersion = helper().lib.fingerprint(invoice)
+            if (change === "header")
+                native("store#InvoiceDraft", {
+                    invoiceId: invoice.invoiceId,
+                    lastUpdatedStamp: invoice.lastUpdatedStamp,
+                    referenceNumber: "Changed after delivery review"
+                })
+            else {
+                const line = helper().lib.rows("mantle.account.invoice.InvoiceItem", {invoiceId: invoice.invoiceId})[0]
+                native("store#InvoiceDraftItem", {
+                    invoiceId: invoice.invoiceId,
+                    invoiceItemSeqId: line.invoiceItemSeqId,
+                    lastUpdatedStamp: line.lastUpdatedStamp,
+                    amount: "21"
+                })
+            }
+            const before = capture.count()
+            const refused = helper().rejected("mantle.account.InvoiceServices.send#Invoice", {
+                invoiceId: invoice.invoiceId,
+                organizationPartyId: f.org,
+                sourceVersion,
+                emailAccountId: f.emailAccountId,
+                toAddresses: "stale@example.com",
+                operationKey: "native-source-stale-" + change
+            })
+            results.push({
+                change,
+                refused,
+                sentCount: capture.count() - before,
+                state: helper().lib.one(helper().lib.invoiceEntity, {invoiceId: invoice.invoiceId}).statusId,
+                deliveries: helper().lib.rows("mantle.account.invoice.InvoiceDelivery", {invoiceId: invoice.invoiceId}).length,
+                outputs: helper().lib.rows("mantle.account.invoice.InvoiceContent", {invoiceId: invoice.invoiceId}).length
+            })
+        }
+        return {results}
+    },
+    then({results}) {
+        results.length == 2
+        results.every(row => row.refused.includes("STALE_PREVIEW"))
+        results.every(row => row.sentCount == 0 && row.state == "InvoiceInProcess" && row.deliveries == 0 && row.outputs == 0)
+    }
+})
