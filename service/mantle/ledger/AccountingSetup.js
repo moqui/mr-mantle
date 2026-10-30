@@ -110,6 +110,47 @@ const mappings = {
         ["glAccountId"],
     ],
 }
+// What each mapping kind is called on the screens.
+const mappingLabels = {
+    type: "Account types",
+    item: "Invoice item types",
+    invoice: "Invoice types",
+    payment: "Payment types",
+    instrument: "Payment instruments",
+    asset: "Assets",
+    financialType: "Financial account types",
+    financialReason: "Financial account reasons",
+    variance: "Inventory variance reasons",
+    product: "Products",
+    category: "Product categories",
+    account: "Party defaults",
+}
+// The readable key of a mapping row: enumeration descriptions, sides and directions in words, other ids as they are.
+const keyWords = {
+    direction: { I: "Incoming", O: "Outgoing", E: "Either direction" },
+    isPayable: { Y: "Payable", N: "Receivable", E: "Payable or receivable" },
+    isApplied: { Y: "Applied", N: "Unapplied", E: "Applied or not" },
+}
+function keyTexts(rows, keyFields) {
+    const enumIds = rows.flatMap((row) =>
+        keyFields.filter((field) => field.endsWith("EnumId")).map((field) => row[field]),
+    )
+    const enums = enumIds.length
+        ? Object.fromEntries(
+              Array.from(
+                  find("moqui.basic.Enumeration")
+                      .condition("enumId", "in", [...new Set(enumIds.filter(Boolean))])
+                      .list(),
+              ).map((row) => [row.enumId, row.description || row.enumId]),
+          )
+        : {}
+    for (const row of rows)
+        row.mappingKeyText = keyFields
+            .map((field) => keyWords[field]?.[row[field]] || enums[row[field]] || row[field] || "")
+            .filter(Boolean)
+            .join(" · ")
+    return rows
+}
 function readiness(p) {
     const s = lib.scope(p),
         findings = []
@@ -308,16 +349,24 @@ function mappingList(p) {
     const s = lib.scope(p, "admin"),
         mappingRows = [],
         missingMappings = []
-    if (!s.organizationPartyId)
-        return {
-            mappingRows,
-            missingMappings,
-            errorTransactions: [],
-            mappingKinds: Object.keys(mappings),
-        }
     const kind = p.mappingKind || "type",
         descriptor = mappings[kind]
-    if (!descriptor) throw new Error("Unknown posting mapping kind")
+    if (!descriptor || !mappingLabels[kind])
+        throw new Error("Unknown posting mapping kind")
+    // the kinds, and the key and account fields of the chosen one, for the screen's mapping form
+    const kindOut = {
+        mappingKind: kind,
+        mappingKindOptions: Object.entries(mappingLabels).map(([key, label]) => ({ key, label })),
+        mappingKeyFields: descriptor[1],
+        mappingFields: [...descriptor[1], ...descriptor[2]],
+    }
+    if (!s.organizationPartyId)
+        return Object.assign(kindOut, {
+            mappingRows,
+            mappingRowsCount: 0,
+            missingMappings,
+            errorTransactions: [],
+        })
     const size = Math.max(1, Math.min(100, Number(p.pageSize || 25))),
         index = Math.max(0, Number(p.pageIndex || 0))
     const conditions = { organizationPartyId: s.organizationPartyId },
@@ -339,6 +388,7 @@ function mappingList(p) {
             }),
         )
     }
+    keyTexts(mappingRows, descriptor[1])
     const selectedMapping = p.mappingToken
         ? mappingRows.find((row) => row.mappingToken === p.mappingToken)
         : null
@@ -379,6 +429,7 @@ function mappingList(p) {
                     mappingKey: item.enumId + " / " + direction,
                     description:
                         item.description +
+                        (direction === "I" ? ", incoming" : ", outgoing") +
                         " — default without a product override",
                     itemTypeEnumId: item.enumId,
                     direction,
@@ -397,14 +448,18 @@ function mappingList(p) {
                   .list(),
           ).map(map)
         : []
-    return {
+    return Object.assign(kindOut, {
         mappingRows,
         mappingRowsCount,
+        mappingRowsPageIndex: index,
+        mappingRowsPageSize: size,
+        mappingRowsPageMaxIndex: Math.max(0, Math.ceil(mappingRowsCount / size) - 1),
+        mappingRowsPageRangeLow: mappingRowsCount ? index * size + 1 : 0,
+        mappingRowsPageRangeHigh: Math.min(mappingRowsCount, (index + 1) * size),
         selectedMapping,
         missingMappings,
         errorTransactions,
-        mappingKinds: Object.keys(mappings),
-    }
+    })
 }
 function storeMapping(p) {
     const s = lib.organization(p, "admin"),
@@ -714,14 +769,16 @@ function methods(p) {
     }
     const methods = source.map((r) =>
         Object.assign(
-            pick(map(r), [
+            pick(lib.display(r), [
                 "paymentMethodId",
                 "ownerPartyId",
                 "paymentMethodTypeEnumId",
                 "currencyUomId",
                 "description",
                 "fromDate",
+                "fromDateText",
                 "thruDate",
+                "thruDateText",
                 "paymentGatewayConfigId",
                 "lastUpdatedStamp",
             ]),
@@ -801,17 +858,30 @@ function context(p) {
     const pref = preferences(p),
         s = lib.scope(p, "admin")
     if (!s.organizationPartyId)
-        return Object.assign(pref, { terms: [], currencies: [], rates: [] })
-    return Object.assign(pref, {
-        terms: rows("mantle.account.invoice.SettlementTerm", {}).map(map),
-        currenciesCount: find("moqui.basic.Uom", {
+        return Object.assign(pref, {
+            terms: [],
+            currencies: [],
+            currenciesCount: 0,
+            rates: [],
+        })
+    const currenciesCount = find("moqui.basic.Uom", {
             uomTypeEnumId: "UT_CURRENCY_MEASURE",
         }).count(),
+        pageSize = 25,
+        pageIndex = Math.max(0, Number(p.pageIndex || 0))
+    return Object.assign(pref, {
+        terms: rows("mantle.account.invoice.SettlementTerm", {}).map(map),
+        currenciesCount,
+        currenciesPageIndex: pageIndex,
+        currenciesPageSize: pageSize,
+        currenciesPageMaxIndex: Math.max(0, Math.ceil(currenciesCount / pageSize) - 1),
+        currenciesPageRangeLow: currenciesCount ? pageIndex * pageSize + 1 : 0,
+        currenciesPageRangeHigh: Math.min(currenciesCount, (pageIndex + 1) * pageSize),
         currencies: Array.from(
             find("moqui.basic.Uom", { uomTypeEnumId: "UT_CURRENCY_MEASURE" })
                 .orderBy("uomId")
-                .offset(Math.max(0, Number(p.pageIndex || 0)) * 25)
-                .limit(25)
+                .offset(pageIndex * pageSize)
+                .limit(pageSize)
                 .list(),
         ).map(map),
         rates: Array.from(
@@ -826,7 +896,7 @@ function context(p) {
                 .orderBy("-fromDate")
                 .limit(100)
                 .list(),
-        ).map(map),
+        ).map(lib.display),
     })
 }
 const operations = {

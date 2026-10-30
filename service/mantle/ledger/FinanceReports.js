@@ -225,7 +225,7 @@ function ledger(p) {
                 row.debitCreditFlag === "D" ? 1 : -1,
             ),
         )
-        return Object.assign(lib.map(row), {
+        return Object.assign(lib.display(row), {
             debits: row.debitCreditFlag === "D" ? row.amount : toDecimal(0),
             credits: row.debitCreditFlag === "C" ? row.amount : toDecimal(0),
             ending: balances[key],

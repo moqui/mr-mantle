@@ -321,6 +321,8 @@ feature(
             for (const [suffix, permissions] of [
                 ["READ", ["ACCOUNTING_VIEW"]],
                 ["GL", ["ACCOUNTING_VIEW", "ACCOUNTING_GL_POST"]],
+                ["AR_EDIT", ["RECEIVABLE_EDIT"]],
+                ["AR_VIEW", ["RECEIVABLE_VIEW"]],
             ]) {
                 const id = "FIN_NATIVE_" + suffix
                 lib().call("create#moqui.security.UserGroup", {
@@ -384,6 +386,32 @@ feature("native permission checks survive disabled artifact authorization", {
         a.capabilities.glPost == false
         refused.length > 0
         settings.length > 0
+    },
+})
+feature("an edit permission alone opens no finance reads; a view permission reads its kind only", {
+    when() {
+        const reach = (user) => {
+            login(user)
+            const capabilities = lib().capabilities()
+            const invoices = rejected("AccountingServices.find#Records", {
+                kind: "invoices",
+                organizationPartyId: org,
+            })
+            const journals = rejected("AccountingServices.find#Records", {
+                kind: "journals",
+                organizationPartyId: org,
+            })
+            login("john.doe")
+            return { read: capabilities.read, invoices, journals }
+        }
+        return { edit: reach("FIN_NATIVE_AR_EDIT"), view: reach("FIN_NATIVE_AR_VIEW") }
+    },
+    then({ edit, view }) {
+        edit.read == false
+        edit.invoices.includes("Accounting access is required")
+        view.read == true
+        view.invoices == ""
+        view.journals.includes("Accounting record is not available")
     },
 })
 feature("a hard lock cannot be relaxed or excepted", {
@@ -1138,7 +1166,8 @@ feature("opt-in issuance adjustments preserve posted history and retry once", {
         native("CloseServices.store#Lock", {
             organizationPartyId: org,
             lockScope: "all",
-            lockThroughDate: yesterday.slice(0, 10),
+            // the day in the user's zone; toISOString's UTC day is already today from evening on
+            lockThroughDate: ec.l10n.format(new Date(Number(ec.user.nowTimestamp) - 86400000), "yyyy-MM-dd"),
             isHard: "Y",
             changeReason: "Protect issuance history",
         })
@@ -1391,3 +1420,23 @@ feature(
         },
     },
 )
+feature("record reads give screens date text and the audit of header and lines", {
+    when() {
+        const read = native("AccountingServices.get#Record", {
+            kind: "journals",
+            recordId: txId,
+            organizationPartyId: org,
+        })
+        return { read, expected: lib().display({ day: "2026-10-29", stampDate: ec.user.nowTimestamp }) }
+    },
+    then({ read, expected }) {
+        read.record.lastUpdatedStampText.length >= 10
+        read.lines.length == 2
+        read.lines.every((line) => line.lastUpdatedStampText.length >= 10)
+        read.auditRows.length > 0
+        read.auditRows.every((row) => row.changedByName.length > 0 && row.changedDateText.length >= 10)
+        read.auditRows.every((row) => row.lineText == "Entry" || row.lineText.startsWith("Line "))
+        expected.dayText == undefined
+        expected.stampDateText == ec.l10n.format(ec.user.nowTimestamp, "yyyy-MM-dd HH:mm").replace(/ 00:00$/, "")
+    },
+})

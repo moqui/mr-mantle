@@ -30,6 +30,7 @@
             <parameter name="pageIndex" type="Integer" />
             <parameter name="pageSize" type="Integer" />
             <parameter name="lines" type="List" />
+            <parameter name="auditRows" type="List" />
             <parameter name="recordId" type="String" />
             <parameter name="debitTotal" type="BigDecimal" />
             <parameter name="creditTotal" type="BigDecimal" />

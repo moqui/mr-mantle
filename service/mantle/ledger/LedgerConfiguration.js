@@ -163,7 +163,7 @@ function classifications(p) {
                 .orderBy("-fromDate")
                 .limit(100)
                 .list(),
-        ).map(lib.map),
+        ).map(lib.display),
         groupRows: lib
             .rows("mantle.ledger.account.GlAccountGroupMember", {
                 glAccountId: p.glAccountId,

@@ -140,7 +140,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (['MantlePayment','MantleGlAccount','MantleAcctgTrans'].includes(documentId)) {
                     const finance = ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
                     const caps = finance.capabilities()
-                    if (!caps.reportRead && !caps.glPost && !caps.admin && !(documentId === 'MantlePayment' && (caps.arEdit || caps.apEdit || caps.paymentEdit))) continue
+                    if (!caps.reportRead && !caps.glPost && !caps.admin && !(documentId === 'MantlePayment' && (caps.arRead || caps.apRead || caps.paymentRead))) continue
                 }
                 const document = ec.entity.find('moqui.entity.document.DataDocument').condition('dataDocumentId', documentId)
                         .useCache(true).one()

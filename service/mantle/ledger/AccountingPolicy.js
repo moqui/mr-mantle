@@ -34,6 +34,28 @@ const pick = (row, fields) =>
             .map((key) => [key, row[key]]),
     )
 const hash = (value) => ec.user.singleUseCodeHash(JSON.stringify(value))
+// A date or stamp as display text in the user's time zone: the day alone at midnight, else with the time.
+function dateText(value) {
+    if (value == null || value === "") return ""
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value)
+    const text = ec.l10n.format(new Date(ms(value)), "yyyy-MM-dd HH:mm")
+    return text.endsWith(" 00:00") ? text.slice(0, 10) : text
+}
+// A row for a screen: a plain map with <field>Text for each date and stamp, since JSON drops their types. Not for
+// fingerprints, which use map.
+function display(row) {
+    const out = map(row)
+    for (const field of Object.keys(out)) {
+        if (!/(Date|Stamp)$/.test(field) || out[field] == null) continue
+        try {
+            out[field + "Text"] = dateText(out[field])
+        } catch (error) {
+            ec.logger.error("Accounting date " + field + ": " + error.message)
+            out[field + "Text"] = ""
+        }
+    }
+    return out
+}
 function capabilities() {
     const has = domain.has
     const admin = has("ACCOUNTING_ADMIN")
@@ -42,6 +64,9 @@ function capabilities() {
         admin,
         glPost: has("ACCOUNTING_GL_POST"),
         reportRead: has("ACCOUNTING_VIEW"),
+        arRead: has("RECEIVABLE_VIEW"),
+        apRead: has("PAYABLE_VIEW"),
+        paymentRead: has("PAYMENT_VIEW"),
         arEdit: has("RECEIVABLE_EDIT"),
         apEdit: has("PAYABLE_EDIT"),
         paymentEdit: has("PAYMENT_EDIT"),
@@ -51,7 +76,21 @@ function capabilities() {
         fiscalClose: has("FISCAL_CLOSE"),
         fiscalReopen: has("FISCAL_REOPEN"),
     }
-    out.read = Object.values(out).some(Boolean)
+    // An edit permission alone opens no reads: other apps' groups hold some (Projects' RECEIVABLE_EDIT for billing).
+    out.read = [
+        out.systemAdmin,
+        out.admin,
+        out.glPost,
+        out.reportRead,
+        out.arRead,
+        out.apRead,
+        out.paymentRead,
+        out.match,
+        out.taxEdit,
+        out.approve,
+        out.fiscalClose,
+        out.fiscalReopen,
+    ].some(Boolean)
     return out
 }
 function access() {
@@ -94,6 +133,12 @@ function scope(p = {}, need = "read") {
     if (org && !a.allowedOrganizationPartyIds.includes(org))
         throw new Error("Accounting organization is not available")
     return Object.assign(a, { organizationPartyId: org })
+}
+// The organizations a scope covers: the chosen one, else every one the user may work in.
+function organizationIds(scope) {
+    return scope.organizationPartyId
+        ? [scope.organizationPartyId]
+        : scope.allowedOrganizationPartyIds
 }
 function organization(p, need = "read") {
     const s = scope(p, need)
@@ -202,19 +247,19 @@ const kinds = {
         "mantle.account.invoice.Invoice",
         "invoiceId",
         "fromPartyId",
-        "arEdit",
+        "arRead",
     ],
     bills: [
         "mantle.account.invoice.Invoice",
         "invoiceId",
         "toPartyId",
-        "apEdit",
+        "apRead",
     ],
     payments: [
         "mantle.account.payment.Payment",
         "paymentId",
         "fromPartyId",
-        "paymentEdit",
+        "paymentRead",
     ],
     accounts: [
         "mantle.ledger.account.GlAccountAndOrganization",
@@ -265,6 +310,20 @@ const kinds = {
         "admin",
     ],
 }
+// The fields a search text matches, ignoring case: the record's id and its names.
+const searchFields = {
+    invoices: ["invoiceId", "description", "referenceNumber"],
+    bills: ["invoiceId", "description", "referenceNumber"],
+    payments: ["paymentId", "paymentRefNum", "comments"],
+    accounts: ["glAccountId", "accountCode", "accountName"],
+    journals: ["acctgTransId", "description"],
+    entries: ["acctgTransId", "txDescription", "description"],
+    periods: ["timePeriodId", "periodName"],
+    batches: ["glJournalId", "glJournalName"],
+    templates: ["acctgTransTemplateId", "templateName", "description"],
+    locks: ["accountingLockId", "lockScope", "changeReason"],
+    exceptions: ["accountingLockExceptionId", "lockScope", "changeReason"],
+}
 function query(p) {
     const kind = kinds[p.kind]
     if (!kind) throw new Error("Unknown accounting record kind")
@@ -275,13 +334,11 @@ function query(p) {
         !s.capabilities[kind[3]] &&
         !(
             p.kind === "payments" &&
-            (s.capabilities.arEdit || s.capabilities.apEdit)
+            (s.capabilities.arRead || s.capabilities.apRead)
         )
     )
         throw new Error("Accounting record is not available")
-    let ids = s.organizationPartyId
-        ? [s.organizationPartyId]
-        : s.allowedOrganizationPartyIds
+    let ids = organizationIds(s)
     if (["accounts", "periods"].includes(p.kind))
         ids = [...new Set(ids.flatMap((id) => organizationChain(id)))]
     let q = find(kind[0])
@@ -316,14 +373,19 @@ function query(p) {
         q = q.condition("isPosted", p.isPosted)
     if (p.glJournalId && p.kind === "journals")
         q = q.condition("glJournalId", p.glJournalId)
-    if (p.text) {
-        const field =
-            {
-                accounts: "accountName",
-                batches: "glJournalName",
-                templates: "templateName",
-            }[p.kind] || kind[1]
-        q = q.condition(field, "like", "%" + p.text + "%")
+    const text = String(p.text || "").trim()
+    if (text) {
+        const cf = ec.entity.conditionFactory
+        q = q.condition(
+            cf.makeCondition(
+                (searchFields[p.kind] || [kind[1]]).map((field) =>
+                    cf
+                        .makeCondition(field, "like", "%" + text + "%")
+                        .ignoreCase(),
+                ),
+                "or",
+            ),
+        )
     }
     return { q, s, kind }
 }
@@ -341,6 +403,7 @@ function record(p, need = "read", lock = false) {
     one,
     rows,
     map,
+    display,
     call,
     ms,
     active,
@@ -349,6 +412,7 @@ function record(p, need = "read", lock = false) {
     capabilities,
     access,
     scope,
+    organizationIds,
     organization,
     preference,
     reason,

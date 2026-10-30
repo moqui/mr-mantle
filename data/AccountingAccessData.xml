@@ -14,10 +14,13 @@
     <moqui.security.UserPermission userPermissionId="INVOICE_MATCH" description="Invoice Match"/>
     <moqui.security.UserPermission userPermissionId="PAYABLE_EDIT" description="Payable Edit"/>
     <moqui.security.UserPermission userPermissionId="PAYABLE_IMPORT" description="Payable Import"/>
+    <moqui.security.UserPermission userPermissionId="PAYABLE_VIEW" description="Payable View"/>
     <moqui.security.UserPermission userPermissionId="PAYMENT_EDIT" description="Payment Edit"/>
     <moqui.security.UserPermission userPermissionId="PAYMENT_RUN_APPROVE" description="Payment Run Approve"/>
+    <moqui.security.UserPermission userPermissionId="PAYMENT_VIEW" description="Payment View"/>
     <moqui.security.UserPermission userPermissionId="PRODUCTION_COST_POST" description="Production Cost Post"/>
     <moqui.security.UserPermission userPermissionId="RECEIVABLE_EDIT" description="Receivable Edit"/>
+    <moqui.security.UserPermission userPermissionId="RECEIVABLE_VIEW" description="Receivable View"/>
     <moqui.security.UserPermission userPermissionId="RETURN_CREDIT_APPROVE" description="Return Credit Approve"/>
     <moqui.security.UserPermission userPermissionId="SUPPLIER_TERMS_EDIT" description="Supplier Terms Edit"/>
     <moqui.security.UserPermission userPermissionId="TAX_STATEMENT_EDIT" description="Tax Statement Edit"/>

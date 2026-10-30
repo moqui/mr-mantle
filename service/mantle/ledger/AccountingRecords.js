@@ -1,9 +1,85 @@
 const lib = ec.resource.script(
     "component://mr-mantle/service/mantle/ledger/AccountingPolicy.js",
 )
-const { call, map, pick } = lib
+const { call, map, pick, display } = lib
+// Names of the parties a user may see, by party id, read in one query.
+function partyNames(ids) {
+    const names = {}
+    const wanted = [...new Set(ids.filter(Boolean))]
+    if (!wanted.length) return names
+    for (const party of Array.from(
+        lib.find("mantle.party.PartyDetail").condition("partyId", "in", wanted).list(),
+    )) {
+        if (party.privateOwnerUserId && party.privateOwnerUserId !== ec.user.userId)
+            continue
+        names[party.partyId] =
+            party.organizationName ||
+            [party.firstName, party.lastName].filter(Boolean).join(" ") ||
+            party.partyId
+    }
+    return names
+}
+// Status names by status id, read in one query.
+function statusNames(ids) {
+    const wanted = [...new Set(ids.filter(Boolean))]
+    if (!wanted.length) return {}
+    return Object.fromEntries(
+        Array.from(
+            lib.find("moqui.basic.StatusItem").condition("statusId", "in", wanted).list(),
+        ).map((row) => [row.statusId, row.description || row.statusId]),
+    )
+}
+// The document rows' display values: party and status names, the counterparty (the party that is not one of the
+// user's organizations), and the date, amount and currency of an invoice or payment alike. A draft invoice with no
+// stored total gets its computed one.
+function nameDocuments(rows, organizationPartyIds) {
+    const parties = partyNames(rows.flatMap((row) => [row.fromPartyId, row.toPartyId]))
+    const statuses = statusNames(rows.map((row) => row.statusId))
+    for (const row of rows) {
+        if (row.invoiceId && row.invoiceTotal == null)
+            Object.assign(row, call("mantle.account.InvoiceServices.get#InvoiceTotal", { invoiceId: row.invoiceId }))
+        row.fromPartyName = parties[row.fromPartyId] || null
+        row.toPartyName = parties[row.toPartyId] || null
+        row.statusText = statuses[row.statusId] || row.statusId || ""
+        row.counterpartyName = organizationPartyIds.includes(row.fromPartyId) ? row.toPartyName : row.fromPartyName
+        row.documentDateText = row.invoiceDateText || row.effectiveDateText || ""
+        row.documentAmount = row.invoiceId ? row.invoiceTotal : row.amount
+        row.documentCurrencyUomId = row.currencyUomId || row.amountUomId || null
+    }
+    return rows
+}
+// The audit of a journal entry: its header and its lines, newest first, with who changed them.
+function journalAudit(acctgTransId) {
+    const rows = Array.from(
+        lib
+            .find("moqui.entity.EntityAuditLog")
+            .condition("changedEntityName", "in", [
+                "mantle.ledger.transaction.AcctgTrans",
+                "mantle.ledger.transaction.AcctgTransEntry",
+            ])
+            .condition("pkPrimaryValue", acctgTransId)
+            .orderBy("-changedDate")
+            .limit(200)
+            .list(),
+    ).map(display)
+    const userIds = [...new Set(rows.map((row) => row.changedByUserId).filter(Boolean))]
+    const users = userIds.length
+        ? Object.fromEntries(
+              Array.from(
+                  lib.find("moqui.security.UserAccount").condition("userId", "in", userIds).list(),
+              ).map((user) => [user.userId, user.userFullName || user.username || user.userId]),
+          )
+        : {}
+    for (const row of rows) {
+        row.changedByName = users[row.changedByUserId] || row.changedByUserId || ""
+        row.lineText = row.changedEntityName.endsWith("AcctgTransEntry")
+            ? "Line " + (row.pkSecondaryValue || "")
+            : "Entry"
+    }
+    return rows
+}
 function list(p) {
-    let { q, kind } = lib.query(p)
+    let { q, kind, s } = lib.query(p)
     const pageSize = Math.max(1, Math.min(100, Number(p.pageSize || 25)))
     const pageIndex = Math.max(0, Number(p.pageIndex || 0))
     const accountFields = [
@@ -27,11 +103,13 @@ function list(p) {
     const count = countQuery.count()
     const records = Array.from(
         q
-            .orderBy(kind[1])
+            .orderBy({ accounts: "accountCode", periods: "fromDate,timePeriodTypeId" }[p.kind] || kind[1])
             .limit(pageSize)
             .offset(pageSize * pageIndex)
             .list(),
-    ).map(map)
+    ).map(display)
+    if (["invoices", "bills", "payments"].includes(p.kind))
+        nameDocuments(records, lib.organizationIds(s))
     if (p.kind === "accounts" && records.length) {
         const children = Array.from(
             lib
@@ -64,39 +142,9 @@ function list(p) {
 }
 function read(p) {
     const row = lib.record(p)
-    const out = { record: map(row) }
-    if (["invoices", "bills"].includes(p.kind) && row.invoiceTotal == null)
-        Object.assign(
-            out.record,
-            call("mantle.account.InvoiceServices.get#InvoiceTotal", {
-                invoiceId: row.invoiceId,
-            }),
-        )
-    if (["invoices", "bills", "payments"].includes(p.kind)) {
-        for (const party of Array.from(
-            lib
-                .find("mantle.party.PartyDetail")
-                .condition(
-                    "partyId",
-                    "in",
-                    [row.fromPartyId, row.toPartyId].filter(Boolean),
-                )
-                .list(),
-        )) {
-            if (
-                party.privateOwnerUserId &&
-                party.privateOwnerUserId !== ec.user.userId
-            )
-                continue
-            const name =
-                party.organizationName ||
-                [party.firstName, party.lastName].filter(Boolean).join(" ") ||
-                party.partyId
-            if (party.partyId === row.fromPartyId)
-                out.record.fromPartyName = name
-            if (party.partyId === row.toPartyId) out.record.toPartyName = name
-        }
-    }
+    const out = { record: display(row) }
+    if (["invoices", "bills", "payments"].includes(p.kind))
+        nameDocuments([out.record], lib.organizationIds(lib.scope(p)))
     if (p.kind === "accounts") {
         const scope = lib.scope(p),
             org =
@@ -111,7 +159,7 @@ function read(p) {
             glAccountId: row.glAccountId,
         })
         out.record = Object.assign(
-            map(account),
+            display(account),
             assignment
                 ? pick(map(assignment), [
                       "fromDate",
@@ -135,7 +183,8 @@ function read(p) {
             .rows("mantle.ledger.transaction.AcctgTransEntry", {
                 acctgTransId: row.acctgTransId,
             })
-            .map(map)
+            .map(display)
+        out.auditRows = journalAudit(row.acctgTransId)
         Object.assign(
             out,
             call(
@@ -151,7 +200,7 @@ function read(p) {
             .rows("mantle.ledger.transaction.AcctgTransTemplateEntry", {
                 acctgTransTemplateId: row.acctgTransTemplateId,
             })
-            .map(map)
+            .map(display)
     return out
 }
 function draft(p) {
@@ -194,6 +243,8 @@ function draft(p) {
         result = call(
             "mantle.account.PaymentServices.create#Payment",
             Object.assign(base, {
+                // a payment keeps its description as its comments
+                comments: p.description,
                 paymentTypeEnumId: "PtDisbursement",
                 paymentInstrumentEnumId: "PiOther",
                 amountUomId: currency,

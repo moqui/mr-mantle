@@ -35,7 +35,15 @@
             <parameter name="mappingRows" type="List" />
             <parameter name="missingMappings" type="List" />
             <parameter name="errorTransactions" type="List" />
-            <parameter name="mappingKinds" type="List" />
+            <parameter name="mappingKind" type="String" />
+            <parameter name="mappingKindOptions" type="List" />
+            <parameter name="mappingKeyFields" type="List" />
+            <parameter name="mappingFields" type="List" />
+            <parameter name="mappingRowsPageIndex" type="Integer" />
+            <parameter name="mappingRowsPageSize" type="Integer" />
+            <parameter name="mappingRowsPageMaxIndex" type="Integer" />
+            <parameter name="mappingRowsPageRangeLow" type="Integer" />
+            <parameter name="mappingRowsPageRangeHigh" type="Integer" />
             <parameter name="inputFingerprint" type="String" />
             <parameter name="conflicts" type="List" />
             <parameter name="copyCount" type="Integer" />
@@ -50,6 +58,11 @@
             <parameter name="mappingRowsCount" type="Integer" />
             <parameter name="selectedMapping" type="Map" />
             <parameter name="currenciesCount" type="Integer" />
+            <parameter name="currenciesPageIndex" type="Integer" />
+            <parameter name="currenciesPageSize" type="Integer" />
+            <parameter name="currenciesPageMaxIndex" type="Integer" />
+            <parameter name="currenciesPageRangeLow" type="Integer" />
+            <parameter name="currenciesPageRangeHigh" type="Integer" />
         </out-parameters>
     </service>
     <service verb="get" noun="Preferences" allow-remote="false">
