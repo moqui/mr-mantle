@@ -220,8 +220,9 @@ function storeVariantSettings(p) {
     find("mantle.party.Party", {partyId: organizationPartyId}).forUpdate(true).one()
     const old = variantSettings({organizationPartyId}),
         data = parse(p.settingsJson, p.settings || {}),
-        at = p.fromDate == null || p.fromDate === "" ? ms(ec.user.nowTimestamp) : ms(p.fromDate)
-    if (!Number.isFinite(at) || at < ms(ec.user.nowTimestamp)) throw new Error("Policy changes must take effect now or later")
+        now = ms(ec.user.nowTimestamp),
+        at = p.fromDate == null || p.fromDate === "" ? Math.max(now, (ms(old.fromDate) || 0) + 1) : ms(p.fromDate)
+    if (!Number.isFinite(at) || at < now) throw new Error("Policy changes must take effect now or later")
     if (ms(p.expectedFromDate) !== ms(old.fromDate)) throw new Error("Variant policy changed; reload before saving")
     const batchLimit = Number(data.batchLimit == null ? old.settings.batchLimit : data.batchLimit),
         copyFields = data.copyFields == null ? old.settings.copyFields : list(data.copyFields)

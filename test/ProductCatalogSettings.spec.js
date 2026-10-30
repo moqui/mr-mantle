@@ -141,3 +141,30 @@ feature("a variant policy limits its batch size and copies only safe fields", {
         saved.settings.copyFields == ["description", "taxable"]
     }
 })
+
+feature("an explicit backdated variant policy refuses without changing issued policy rows", {
+    when() {
+        const snapshot = () =>
+            JSON.stringify(
+                Array.from(
+                    find("mantle.product.ProductVariantSetting", {organizationPartyId: ORG}).orderBy("fromDate").list()
+                ).map(row => row.getMap())
+            )
+        const before = snapshot()
+        const refused = as("pcs_admin", () => {
+            const initial = invoke(S + "get#VariantSettings", {organizationPartyId: ORG})
+            return invoke(S + "store#VariantSettings", {
+                organizationPartyId: ORG,
+                expectedFromDate: initial.fromDate,
+                fromDate: Number(ec.user.nowTimestamp) - 60000,
+                settings: {batchLimit: 40, copyFields: "description,taxable"},
+                changeReason: "Refused backdated policy"
+            })
+        })
+        return {before, after: snapshot(), refused}
+    },
+    then({before, after, refused}) {
+        refused.error.includes("now or later")
+        after == before
+    }
+})
