@@ -1,21 +1,14 @@
-const lib = ec.resource.script(
-    "component://mr-mantle/service/mantle/ledger/AccountingPolicy.js",
-)
-const { call, map, pick, display } = lib
+const lib = ec.resource.script("component://mr-mantle/service/mantle/ledger/AccountingPolicy.js")
+const {call, map, pick, display} = lib
 // Names of the parties a user may see, by party id, read in one query.
 function partyNames(ids) {
     const names = {}
     const wanted = [...new Set(ids.filter(Boolean))]
     if (!wanted.length) return names
-    for (const party of Array.from(
-        lib.find("mantle.party.PartyDetail").condition("partyId", "in", wanted).list(),
-    )) {
-        if (party.privateOwnerUserId && party.privateOwnerUserId !== ec.user.userId)
-            continue
+    for (const party of Array.from(lib.find("mantle.party.PartyDetail").condition("partyId", "in", wanted).list())) {
+        if (party.privateOwnerUserId && party.privateOwnerUserId !== ec.user.userId) continue
         names[party.partyId] =
-            party.organizationName ||
-            [party.firstName, party.lastName].filter(Boolean).join(" ") ||
-            party.partyId
+            party.organizationName || [party.firstName, party.lastName].filter(Boolean).join(" ") || party.partyId
     }
     return names
 }
@@ -24,20 +17,21 @@ function statusNames(ids) {
     const wanted = [...new Set(ids.filter(Boolean))]
     if (!wanted.length) return {}
     return Object.fromEntries(
-        Array.from(
-            lib.find("moqui.basic.StatusItem").condition("statusId", "in", wanted).list(),
-        ).map((row) => [row.statusId, row.description || row.statusId]),
+        Array.from(lib.find("moqui.basic.StatusItem").condition("statusId", "in", wanted).list()).map(row => [
+            row.statusId,
+            row.description || row.statusId
+        ])
     )
 }
 // The document rows' display values: party and status names, the counterparty (the party that is not one of the
 // user's organizations), and the date, amount and currency of an invoice or payment alike. A draft invoice with no
 // stored total gets its computed one.
 function nameDocuments(rows, organizationPartyIds) {
-    const parties = partyNames(rows.flatMap((row) => [row.fromPartyId, row.toPartyId]))
-    const statuses = statusNames(rows.map((row) => row.statusId))
+    const parties = partyNames(rows.flatMap(row => [row.fromPartyId, row.toPartyId]))
+    const statuses = statusNames(rows.map(row => row.statusId))
     for (const row of rows) {
         if (row.invoiceId && row.invoiceTotal == null)
-            Object.assign(row, call("mantle.account.InvoiceServices.get#InvoiceTotal", { invoiceId: row.invoiceId }))
+            Object.assign(row, call("mantle.account.InvoiceServices.get#InvoiceTotal", {invoiceId: row.invoiceId}))
         row.fromPartyName = parties[row.fromPartyId] || null
         row.toPartyName = parties[row.toPartyId] || null
         row.statusText = statuses[row.statusId] || row.statusId || ""
@@ -55,31 +49,30 @@ function journalAudit(acctgTransId) {
             .find("moqui.entity.EntityAuditLog")
             .condition("changedEntityName", "in", [
                 "mantle.ledger.transaction.AcctgTrans",
-                "mantle.ledger.transaction.AcctgTransEntry",
+                "mantle.ledger.transaction.AcctgTransEntry"
             ])
             .condition("pkPrimaryValue", acctgTransId)
             .orderBy("-changedDate")
             .limit(200)
-            .list(),
+            .list()
     ).map(display)
-    const userIds = [...new Set(rows.map((row) => row.changedByUserId).filter(Boolean))]
+    const userIds = [...new Set(rows.map(row => row.changedByUserId).filter(Boolean))]
     const users = userIds.length
         ? Object.fromEntries(
-              Array.from(
-                  lib.find("moqui.security.UserAccount").condition("userId", "in", userIds).list(),
-              ).map((user) => [user.userId, user.userFullName || user.username || user.userId]),
+              Array.from(lib.find("moqui.security.UserAccount").condition("userId", "in", userIds).list()).map(user => [
+                  user.userId,
+                  user.userFullName || user.username || user.userId
+              ])
           )
         : {}
     for (const row of rows) {
         row.changedByName = users[row.changedByUserId] || row.changedByUserId || ""
-        row.lineText = row.changedEntityName.endsWith("AcctgTransEntry")
-            ? "Line " + (row.pkSecondaryValue || "")
-            : "Entry"
+        row.lineText = row.changedEntityName.endsWith("AcctgTransEntry") ? "Line " + (row.pkSecondaryValue || "") : "Entry"
     }
     return rows
 }
 function list(p) {
-    let { q, kind, s } = lib.query(p)
+    let {q, kind, s} = lib.query(p)
     const pageSize = Math.max(1, Math.min(100, Number(p.pageSize || 25)))
     const pageIndex = Math.max(0, Number(p.pageIndex || 0))
     const accountFields = [
@@ -92,7 +85,7 @@ function list(p) {
         "description",
         "disallowPosting",
         "isDebit",
-        "isTemporary",
+        "isTemporary"
     ]
     let countQuery = lib.query(p).q
     if (p.kind === "accounts") {
@@ -103,29 +96,27 @@ function list(p) {
     const count = countQuery.count()
     const records = Array.from(
         q
-            .orderBy({ accounts: "accountCode", periods: "fromDate,timePeriodTypeId" }[p.kind] || kind[1])
+            .orderBy({accounts: "accountCode", periods: "fromDate,timePeriodTypeId"}[p.kind] || kind[1])
             .limit(pageSize)
             .offset(pageSize * pageIndex)
-            .list(),
+            .list()
     ).map(display)
-    if (["invoices", "bills", "payments"].includes(p.kind))
-        nameDocuments(records, lib.organizationIds(s))
+    if (["invoices", "bills", "payments"].includes(p.kind)) nameDocuments(records, lib.organizationIds(s))
     if (p.kind === "accounts" && records.length) {
         const children = Array.from(
             lib
-                .query(Object.assign({}, p, { parentGlAccountId: null }))
+                .query(Object.assign({}, p, {parentGlAccountId: null}))
                 .q.condition(
                     "parentGlAccountId",
                     "in",
-                    records.map((r) => r.glAccountId),
+                    records.map(r => r.glAccountId)
                 )
                 .selectField("parentGlAccountId")
                 .distinct(true)
-                .list(),
+                .list()
         )
-        const parents = new Set(children.map((r) => r.parentGlAccountId))
-        for (const record of records)
-            record.childCount = parents.has(record.glAccountId) ? 1 : 0
+        const parents = new Set(children.map(r => r.parentGlAccountId))
+        for (const record of records) record.childCount = parents.has(record.glAccountId) ? 1 : 0
     }
     return {
         records,
@@ -137,109 +128,78 @@ function list(p) {
         recordsPageIndex: pageIndex,
         recordsPageMaxIndex: Math.max(0, Math.ceil(count / pageSize) - 1),
         recordsPageRangeLow: count ? pageIndex * pageSize + 1 : 0,
-        recordsPageRangeHigh: Math.min(count, (pageIndex + 1) * pageSize),
+        recordsPageRangeHigh: Math.min(count, (pageIndex + 1) * pageSize)
     }
 }
 function read(p) {
     const row = lib.record(p)
-    const out = { record: display(row) }
-    if (["invoices", "bills", "payments"].includes(p.kind))
-        nameDocuments([out.record], lib.organizationIds(lib.scope(p)))
+    const out = {record: display(row)}
+    if (["invoices", "bills", "payments"].includes(p.kind)) nameDocuments([out.record], lib.organizationIds(lib.scope(p)))
     if (p.kind === "accounts") {
         const scope = lib.scope(p),
             org =
-                p.organizationPartyId ||
-                scope.allowedOrganizationPartyIds.find((id) =>
-                    lib.accountAssignment(id, row.glAccountId),
-                )
-        const assignment = org
-            ? lib.accountAssignment(org, row.glAccountId)
-            : null
+                p.organizationPartyId || scope.allowedOrganizationPartyIds.find(id => lib.accountAssignment(id, row.glAccountId))
+        const assignment = org ? lib.accountAssignment(org, row.glAccountId) : null
         const account = lib.one("mantle.ledger.account.GlAccount", {
-            glAccountId: row.glAccountId,
+            glAccountId: row.glAccountId
         })
         out.record = Object.assign(
             display(account),
-            assignment
-                ? pick(map(assignment), [
-                      "fromDate",
-                      "thruDate",
-                      "facilityRequired",
-                      "costCenterRequired",
-                  ])
-                : {},
+            assignment ? pick(map(assignment), ["fromDate", "thruDate", "facilityRequired", "costCenterRequired"]) : {},
             {
                 organizationPartyId: org,
                 assignmentOrganizationPartyId: assignment?.organizationPartyId,
-                assignmentLastUpdatedStamp:
-                    assignment?.organizationPartyId === org
-                        ? assignment.lastUpdatedStamp
-                        : null,
-            },
+                assignmentLastUpdatedStamp: assignment?.organizationPartyId === org ? assignment.lastUpdatedStamp : null
+            }
         )
     }
     if (p.kind === "journals") {
         out.lines = lib
             .rows("mantle.ledger.transaction.AcctgTransEntry", {
-                acctgTransId: row.acctgTransId,
+                acctgTransId: row.acctgTransId
             })
             .map(display)
         out.auditRows = journalAudit(row.acctgTransId)
         Object.assign(
             out,
-            call(
-                "mantle.ledger.LedgerServices.calculate#AcctgTransTrialBalance",
-                {
-                    acctgTransId: row.acctgTransId,
-                },
-            ),
+            call("mantle.ledger.LedgerServices.calculate#AcctgTransTrialBalance", {
+                acctgTransId: row.acctgTransId
+            })
         )
     }
     if (p.kind === "templates")
         out.lines = lib
             .rows("mantle.ledger.transaction.AcctgTransTemplateEntry", {
-                acctgTransTemplateId: row.acctgTransTemplateId,
+                acctgTransTemplateId: row.acctgTransTemplateId
             })
             .map(display)
     return out
 }
 function draft(p) {
-    if (!["invoices", "bills", "payments"].includes(p.kind))
-        throw new Error("Unknown document kind")
+    if (!["invoices", "bills", "payments"].includes(p.kind)) throw new Error("Unknown document kind")
     const need = {
         invoices: "arEdit",
         bills: "apEdit",
-        payments: "paymentEdit",
+        payments: "paymentEdit"
     }[p.kind]
     const s = lib.organization(p, need),
         organizationPartyId = s.organizationPartyId
-    const currency =
-        p.currencyUomId || lib.preference(organizationPartyId).baseCurrencyUomId
+    const currency = p.currencyUomId || lib.preference(organizationPartyId).baseCurrencyUomId
     lib.currency(currency)
-    const otherParty =
-        p.otherPartyId &&
-        lib.one("mantle.party.Party", { partyId: p.otherPartyId })
-    if (
-        !otherParty ||
-        (otherParty.privateOwnerUserId &&
-            otherParty.privateOwnerUserId !== ec.user.userId)
-    )
+    const otherParty = p.otherPartyId && lib.one("mantle.party.Party", {partyId: p.otherPartyId})
+    if (!otherParty || (otherParty.privateOwnerUserId && otherParty.privateOwnerUserId !== ec.user.userId))
         throw new Error("Choose an available counterparty")
     const base = {
         fromPartyId: p.kind === "bills" ? p.otherPartyId : organizationPartyId,
         toPartyId: p.kind === "bills" ? organizationPartyId : p.otherPartyId,
         currencyUomId: currency,
-        description: p.description,
+        description: p.description
     }
     let result
     if (p.kind === "payments") {
-        if (p.amount == null || toDecimal(p.amount).compare(0) <= 0)
-            throw new Error("Enter a positive payment amount")
+        if (p.amount == null || toDecimal(p.amount).compare(0) <= 0) throw new Error("Enter a positive payment amount")
         const amount = ec.l10n.roundCurrency(toDecimal(p.amount), currency)
-        if (amount.compare(0) <= 0)
-            throw new Error(
-                "Enter a positive payment amount in the selected currency",
-            )
+        if (amount.compare(0) <= 0) throw new Error("Enter a positive payment amount in the selected currency")
         result = call(
             "mantle.account.PaymentServices.create#Payment",
             Object.assign(base, {
@@ -249,26 +209,25 @@ function draft(p) {
                 paymentInstrumentEnumId: "PiOther",
                 amountUomId: currency,
                 amount,
-                statusId: "PmntProposed",
-            }),
+                statusId: "PmntProposed"
+            })
         )
-        return { recordId: result.paymentId }
+        return {recordId: result.paymentId}
     }
     result = call(
         "mantle.account.InvoiceServices.create#Invoice",
         Object.assign(base, {
             invoiceTypeEnumId: "InvoiceSales",
             statusId: "InvoiceInProcess",
-            invoiceDate: p.invoiceDate || ec.user.nowTimestamp,
-        }),
+            invoiceDate: p.invoiceDate || ec.user.nowTimestamp
+        })
     )
-    return { recordId: result.invoiceId }
+    return {recordId: result.invoiceId}
 }
-const operations = { access: lib.access, list, read, draft }
+const operations = {access: lib.access, list, read, draft}
 ;({
     execute: (op, p) => {
-        if (!operations[op])
-            throw new Error("Unknown accounting record operation " + op)
+        if (!operations[op]) throw new Error("Unknown accounting record operation " + op)
         return operations[op](p)
-    },
+    }
 })

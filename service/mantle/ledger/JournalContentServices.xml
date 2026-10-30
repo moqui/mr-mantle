@@ -1,28 +1,90 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- CC0 1.0 Universal plus Grant of Patent License. See LICENSE.md. -->
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="define" noun="Parameters" type="interface">
+    <service verb="create" noun="Content" allow-remote="false" transaction="force-new">
+        <description>Add an attachment to a journal entry the user may post, without changing its amounts. Refuses a
+            content type that is not a journal attachment type.</description>
         <in-parameters>
-            <parameter name="acctgTransId" type="String"/>
-            <parameter name="acctgTransContentId" type="String"/>
-            <parameter name="contentTypeEnumId" type="String"/>
-            <parameter name="description" type="String"/>
+            <parameter name="acctgTransId" required="true"/>
+            <parameter name="contentTypeEnumId"/>
+            <parameter name="description"/>
             <parameter name="contentFile" type="Object"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="acctgTransContentId" type="String"/>
-            <parameter name="contentLocation" type="String"/>
+            <parameter name="acctgTransContentId"/>
+            <parameter name="contentLocation"/>
         </out-parameters>
+        <actions>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="acctgTrans" from="policy.record({kind:'journals', recordId:acctgTransId}, 'glPost', false)"/>
+            <if condition="contentTypeEnumId">
+                <entity-find-one entity-name="moqui.basic.Enumeration" value-field="contentType" disable-authz="true">
+                    <field-map field-name="enumId" from="contentTypeEnumId"/>
+                </entity-find-one>
+                <if condition="contentType?.enumTypeId !== 'AcctgTransContentType'">
+                    <return error="true" message="Choose a journal attachment type"/>
+                </if>
+            </if>
+            <service-call name="create#mantle.ledger.transaction.AcctgTransContent" out-map="context" disable-authz="true"
+                    in-map="{acctgTransId:acctgTrans.acctgTransId, contentTypeEnumId:contentTypeEnumId,
+                        contentDate:ec.user.nowTimestamp, description:description, userId:ec.user.userId}"/>
+            <if condition="contentFile != null &amp;&amp; Number(contentFile.size) &gt; 0">
+                <service-call name="mantle.ledger.JournalContentServices.save#ContentFile" out-map="context"
+                        in-map="{acctgTransContentId:acctgTransContentId, contentFile:contentFile}"/>
+            </if>
+        </actions>
     </service>
-    <service verb="create" noun="Content" allow-remote="false" transaction="force-new">
-        <description>Add an authorized journal attachment without changing any posted amounts.</description>
-        <implements service="mantle.ledger.JournalContentServices.define#Parameters"/>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/JournalContent.js').execute('create', context))</script></actions>
+    <service verb="save" noun="ContentFile" allow-remote="false">
+        <description>Save an uploaded file into its journal attachment's folder under the content root. Refuses an empty
+            file, a file name that is not a plain name, and a journal entry the user may not post.</description>
+        <in-parameters>
+            <parameter name="acctgTransContentId" required="true"/>
+            <parameter name="contentFile" type="Object" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="contentLocation"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="mantle.ledger.transaction.AcctgTransContent" value-field="content" disable-authz="true"/>
+            <if condition="content == null">
+                <return error="true" message="Journal attachment is not available"/>
+            </if>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                .record({kind:'journals', recordId:content.acctgTransId}, 'glPost', false)</script>
+            <if condition="Number(contentFile.size) &lt;= 0">
+                <return error="true" message="Choose a nonempty attachment"/>
+            </if>
+            <set field="filename" from="String(contentFile.getName()).split(/[\\/]/).pop()"/>
+            <if condition="!filename || filename === '.' || filename === '..' || filename.includes('\u0000')">
+                <return error="true" message="Invalid attachment filename"/>
+            </if>
+            <!-- the content type, and so text or not, comes from the file name's extension, as save#PaymentContentFile -->
+            <if condition="ec.resource.getLocationReference('dbresource://' + filename).isText()">
+                <then>
+                    <set field="contentRoot" from="ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'"/>
+                </then>
+                <else>
+                    <set field="contentRoot"
+                            from="ec.user.getPreference('mantle.content.large.root') || 'dbresource://mantle/content'"/>
+                </else>
+            </if>
+            <set field="contentLocation"
+                    value="${contentRoot}/journal/${content.acctgTransId}/content_${acctgTransContentId}/${filename}"/>
+            <script>ec.resource.getLocationReference(contentLocation).putUpload(contentFile)</script>
+            <service-call name="update#mantle.ledger.transaction.AcctgTransContent" disable-authz="true"
+                    in-map="{acctgTransContentId:acctgTransContentId, contentLocation:contentLocation}"/>
+        </actions>
     </service>
-    <service verb="save" noun="ContentFile" allow-remote="false" transaction="force-new">
-        <description>Save an uploaded file only into its authorized journal content folder.</description>
-        <implements service="mantle.ledger.JournalContentServices.define#Parameters"/>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/ledger/JournalContent.js').execute('save', context))</script></actions>
-    </service>
-
 </services>
