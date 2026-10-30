@@ -300,19 +300,25 @@ along with this software (see the LICENSE.md file). If not, see
                     attributes: attributes})
             }
 
-            // The index cannot count current bound-post visibility. Report only the authorized page
-            // and omit aggregate facets instead of disclosing stale concealed matches.
+            // The index cannot count current bound-post visibility. Report only the authorized page as the total, and
+            // count the communication events from it, never from the index, instead of disclosing stale concealed
+            // matches; the other types' facets are the index's, over the authorized match.
             if (liveMailboxCounts) { total = results.length; totalRelation = 'gte' }
             // facets over the whole authorized match, not the page
             const facetList = facets ?? []
-            if (facetList.length && !liveMailboxCounts) {
+            if (facetList.length) {
                 const facetFilter = {bool: {all: [request.query === 'match_all' || request.query == null ? 'match_all' : lexicalQuery, filter]}}
                 if (facetList.includes('entityType')) {
-                    const counts = ec.search.aggregate({documentType: types, filter: facetFilter, aggs: {types: {terms: {field: '_document', size: types.length}}}})
-                    facetCounts.entityType = counts.types.buckets.map((bucket) =>
+                    const indexed = liveMailboxCounts ? types.filter((type) => type !== 'MantleCommunicationEvent') : types
+                    const counts = indexed.length ? ec.search.aggregate({documentType: indexed, filter: facetFilter,
+                            aggs: {types: {terms: {field: '_document', size: indexed.length}}}}) : null
+                    facetCounts.entityType = (counts ? counts.types.buckets : []).map((bucket) =>
                             ({value: bucket.key, label: documents[bucket.key] ? documents[bucket.key].name : bucket.key, count: bucket.doc_count}))
+                    const live = liveMailboxCounts ? results.filter((result) => result.entityType === 'MantleCommunicationEvent').length : 0
+                    if (live) facetCounts.entityType.push({value: 'MantleCommunicationEvent',
+                            label: documents.MantleCommunicationEvent.name, count: live})
                 }
-                const categoryField = types.length === 1 ? documents[types[0]].roles.category : null
+                const categoryField = types.length === 1 && !liveMailboxCounts ? documents[types[0]].roles.category : null
                 if (facetList.includes('category') && categoryField) {
                     const counts = ec.search.aggregate({documentType: types[0], filter: facetFilter, aggs: {categories: {terms: {field: categoryField, size: 50}}}})
                     facetCounts.category = counts.categories.buckets.map((bucket) => ({value: bucket.key, label: bucket.key, count: bucket.doc_count}))

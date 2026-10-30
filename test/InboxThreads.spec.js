@@ -77,6 +77,11 @@ feature("users, parties with email addresses, personal contacts, mail accounts a
             user[first] = call("mantle.party.PartyServices.create#PartyUserAccount", { partyId: party[first], emailAddress: `${username}@ibx.example.com`,
                     username, newPassword: "moqui1!!", newPasswordVerify: "moqui1!!" }).userId
         }
+        // staff: a user in a group besides ALL_USERS is internal (mantle.forum.ForumInternalAccount), so a mailbox's
+        // posts reach their Inbox; a user in no group is a public account, which takes them as topic markers
+        call("create#moqui.security.UserGroup", { userGroupId: "IBX_STAFF", description: "Inbox threads staff" })
+        for (const first of ["Ada", "Ben", "Cy"])
+            call("create#moqui.security.UserGroupMember", { userGroupId: "IBX_STAFF", userId: user[first], fromDate: effectiveTime - minute })
         // a user with no party: the internal store has nothing for it
         const dan = ec.entity.makeValue("moqui.security.UserAccount")
         dan.setFields({ userId: "IBX_DAN", username: "ibx.dan", emailAddress: "ibx.dan@ibx.example.com" }, true, null, null)
