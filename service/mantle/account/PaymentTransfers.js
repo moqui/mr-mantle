@@ -734,7 +734,6 @@ function create(p) {
         workflow.paymentApplications(ids).length
     )
         denied("TRANSFER_NOT_POSTED", "Transfer requires exactly two original postings and no applications")
-    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentArchiveGuard.js").prepare()
     for (let i = 0; i < 2; i++) {
         const child = workflow.paymentScope({organizationPartyId: n.scope.organizationPartyId, paymentId: ids[i]}, true, true),
             summary = Object.assign({}, n.payload.transferSummary, {

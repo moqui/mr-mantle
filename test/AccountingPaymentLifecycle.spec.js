@@ -258,7 +258,7 @@ feature("search happens before paging and selected rows outside text retain thei
         value.selectedRows[0].sourceVersion != null
     }
 })
-feature("foreign owner methods, currency precision and native guard disabled refuse the same authorized draft request", {
+feature("foreign owner methods, currency precision and an overlong reference refuse the same authorized draft request", {
     when() {
         const h = helper(),
             request = h.request(f),
@@ -271,27 +271,82 @@ feature("foreign owner methods, currency precision and native guard disabled ref
                     organizationMethodVersion: workflow.methodVersion(method)
                 })
             ),
-            precision = h.rejected("create#PaymentDraft", Object.assign({}, request, {amount: "1.001"}))
-        h.call("update#mantle.ledger.config.PartyAcctgPreference", {
-            organizationPartyId: f.org,
-            settlementApplicationGuardEnabled: "N"
-        })
-        let guard
-        try {
-            guard = h.rejected("create#PaymentDraft", request)
-        } finally {
-            h.call("update#mantle.ledger.config.PartyAcctgPreference", {
-                organizationPartyId: f.org,
-                settlementApplicationGuardEnabled: "Y"
-            })
-        }
-        return {owner, precision, guard, positive: h.native("create#PaymentDraft", request)}
+            precision = h.rejected("create#PaymentDraft", Object.assign({}, request, {amount: "1.001"})),
+            reference = h.rejected("create#PaymentDraft", Object.assign({}, request, {referenceNumber: "R".repeat(61)}))
+        return {owner, precision, reference, positive: h.native("create#PaymentDraft", request)}
     },
-    then({owner, precision, guard, positive}) {
+    then({owner, precision, reference, positive}) {
         owner.includes("PAYMENT_METHOD_UNAVAILABLE")
         precision.includes("CURRENCY_PRECISION")
-        guard.includes("SETTLEMENT_GUARD_REQUIRED")
+        reference.includes("PAYMENT_REFERENCE_TOO_LONG")
         positive.paymentId != null
+    }
+})
+feature("a confirmed payment cannot be confirmed again by the status flow and a posted one cannot be validated", {
+    when() {
+        const h = helper(),
+            paymentId = h.delivered(f),
+            validate = h.rejected("preview#PaymentState", {
+                organizationPartyId: f.org,
+                paymentId,
+                action: "validate",
+                sourceVersion: h.detail(f, paymentId).sourceVersion,
+                reason: "Validate again"
+            })
+        h.confirm(h.preview(f, paymentId, "confirm"))
+        const confirmAgain = h.rejected("preview#PaymentState", {
+            organizationPartyId: f.org,
+            paymentId,
+            action: "confirm",
+            sourceVersion: h.detail(f, paymentId).sourceVersion,
+            referenceNumber: "Human reference",
+            reason: "Confirm again",
+            settlementDate: f.timestamp
+        })
+        return {validate, confirmAgain, payment: h.lib.one("mantle.account.payment.Payment", {paymentId})}
+    },
+    then({validate, confirmAgain, payment}) {
+        validate.includes("PAYMENT_ALREADY_FINANCIAL")
+        confirmAgain.includes("PAYMENT_STATE_INVALID")
+        payment.statusId == "PmntConfirmed"
+    }
+})
+feature("simultaneous exact delivery confirmations retain one cash transaction and one completed operation", {
+    when() {
+        const h = helper()
+        login(f.users.treasury)
+        const paymentId = h.draft(f),
+            preview = h.preview(f, paymentId, "deliver"),
+            args = {
+                username: f.users.treasury,
+                request: {
+                    previewId: preview.previewId,
+                    inputFingerprint: preview.inputFingerprint,
+                    operationKey: "life-concurrent-exact"
+                }
+            }
+        const results = parallel(
+            2,
+            (thread, args) => {
+                login(args.username)
+                ec.artifactExecution.disableAuthz()
+                return call("mantle.account.PaymentServices.change#PaymentState", args.request)
+            },
+            args,
+            {transaction: false, timeout: 30}
+        )
+        return {
+            results,
+            transactions: h.lib.rows("mantle.ledger.transaction.AcctgTrans", {paymentId}),
+            operations: h.count("mantle.ledger.transaction.PostingOperation", {operationKey: args.request.operationKey})
+        }
+    },
+    then({results, transactions, operations}) {
+        results.length == 2
+        results.filter(row => row.alreadyApplied).length == 1
+        transactions.length == 1
+        transactions[0].isPosted == "Y"
+        operations == 1
     }
 })
 feature("manual delivery refuses gateway instruments and legacy for-invoice auto application", {
@@ -338,5 +393,37 @@ feature("manual delivery refuses gateway instruments and legacy for-invoice auto
         gateway.includes("GATEWAY_PAYMENT_MANAGED")
         linked.includes("INVOICE_APPLICATION_REVIEW_REQUIRED")
         view.capabilities.canDeliver == false
+    }
+})
+feature("payment method choices search ignoring case before paging, keep selected rows and stay masked", {
+    when() {
+        const h = helper()
+        login(f.users.paymentView)
+        const search = h.native("find#PaymentMethods", {organizationPartyId: f.org, text: "OPERATING", pageSize: 1}),
+            empty = h.native("find#PaymentMethods", {
+                organizationPartyId: f.org,
+                text: "no such method",
+                selectedPaymentMethodIdList: [f.methodId]
+            }),
+            counterparty = h.native("find#PaymentMethods", {
+                organizationPartyId: f.org,
+                methodRole: "counterparty",
+                partyId: f.customer
+            })
+        login(f.users.paymentEditOnly)
+        const editOnly = h.rejected("find#PaymentMethods", {organizationPartyId: f.org})
+        login("john.doe")
+        return {search, empty, counterparty, editOnly}
+    },
+    then({search, empty, counterparty, editOnly}) {
+        search.recordCount == 1
+        search.rows[0].paymentMethodId == f.methodId
+        search.rows[0].label.includes("6789")
+        JSON.stringify(search.rows).includes("123456789") == false
+        !!search.rows[0].version
+        empty.rows.length == 0
+        empty.selectedRows.map(row => row.paymentMethodId).join(",") == f.methodId
+        counterparty.rows.map(row => row.paymentMethodId).join(",") == f.customerMethodId
+        editOnly.includes("PERMISSION_DENIED") || editOnly.includes("view authority")
     }
 })

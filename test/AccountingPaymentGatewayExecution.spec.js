@@ -52,7 +52,7 @@ feature("authorization completes without parent cash and exact operation replay 
             detail,
             effect,
             transactions: h.lifecycle.count("mantle.ledger.transaction.AcctgTrans", {paymentId}),
-            outputs: h.lifecycle.count("mantle.account.payment.PaymentIssuedOutput", {paymentId})
+            outputs: h.lifecycle.count("mantle.account.payment.PaymentContent", {paymentId})
         }
     },
     then({first, again, detail, effect, transactions, outputs}) {

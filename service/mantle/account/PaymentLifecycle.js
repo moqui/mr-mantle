@@ -1,4 +1,6 @@
-// Reviewed payment lifecycle. Financial inputs are retained before a confirm-only operation executes them.
+// Payment lifecycle: drafts, reviewed state changes and application corrections. A confirmed change runs through
+// Mantle's Payment services: update#mantle.account.payment.Payment checked by StatusFlowTransition, so the Payment
+// SECAs post, void, unapply and clear, and unapply#PaymentApplication with its reversal SECA.
 const workflow = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentWorkflow.js")
 const {
     lib,
@@ -19,11 +21,34 @@ const PREVIEW = "mantle.account.payment.PaymentStatePreview",
     CONTENT = "mantle.account.payment.PaymentContent",
     TX = "mantle.ledger.transaction.AcctgTrans",
     ENTRY = "mantle.ledger.transaction.AcctgTransEntry"
+// The status each lifecycle action leads to; whether the payment may go there is StatusFlowTransition data.
+const actionStatus = {
+    validate: "PmntPromised",
+    deliver: "PmntDelivered",
+    confirm: "PmntConfirmed",
+    cancel: "PmntCancelled",
+    void: "PmntVoid"
+}
 const maxEvidenceCount = 10,
     maxEvidenceBytes = 10485760,
     maxTotalEvidenceBytes = 20971520
 function setFields(record, fields) {
     for (const [field, value] of Object.entries(fields)) record.set(field, value)
+}
+// The statuses a payment passes through from one status to another along the Default status flow: the direct
+// transition, or through Promised (a proposed draft is promised before it is delivered). Null when the flow has neither.
+function statusPath(fromStatusId, toStatusId) {
+    const transition = (statusId, to) =>
+        Boolean(
+            find("moqui.basic.StatusFlowTransition", {statusFlowId: "Default", statusId, toStatusId: to}).useCache(true).one()
+        )
+    if (transition(fromStatusId, toStatusId)) return [toStatusId]
+    if (transition(fromStatusId, "PmntPromised") && transition("PmntPromised", toStatusId)) return ["PmntPromised", toStatusId]
+    return null
+}
+// A status change through the Payment update service, so the Payment SECAs run.
+function updatePayment(paymentId, fields) {
+    call("update#" + P, Object.assign({paymentId}, fields))
 }
 function projectResult(result) {
     if (!workflow.ledgerRead())
@@ -161,6 +186,10 @@ function draftRequest(p, scope) {
     policy.currency(p.currencyUomId)
     if (policy.preference(scope.organizationPartyId).baseCurrencyUomId !== p.currencyUomId)
         denied("CURRENCY_MISMATCH", "Payment lifecycle currently requires the organization base currency")
+    const referenceNumber = String(p.referenceNumber || "").trim(),
+        comments = String(p.comments || "")
+    if (referenceNumber.length > 60) denied("PAYMENT_REFERENCE_TOO_LONG", "The payment reference is limited to 60 characters")
+    if (comments.length > 4000) denied("PAYMENT_COMMENTS_TOO_LONG", "The payment comments are limited to 4000 characters")
     const date = settlement.dateInput(p.effectiveDate, p._accountingDay),
         amount = amountInput(p.amount, p.currencyUomId),
         instrument = one("moqui.basic.Enumeration", {enumId: p.paymentInstrumentEnumId, enumTypeId: "PaymentInstrument"})
@@ -179,10 +208,8 @@ function draftRequest(p, scope) {
         organizationMethodVersion: p.organizationMethodVersion,
         counterpartyPaymentMethodId: p.counterpartyPaymentMethodId || null,
         counterpartyMethodVersion: p.counterpartyPaymentMethodId ? p.counterpartyMethodVersion : null,
-        referenceNumber: String(p.referenceNumber || "")
-            .trim()
-            .slice(0, 60),
-        comments: String(p.comments || "").slice(0, 4000)
+        referenceNumber,
+        comments
     }
 }
 function draftFields(request, methods) {
@@ -245,7 +272,6 @@ function event(scope, action, before, op, p = {}, evidence = [], acctgTransIds =
 }
 function createDraft(p) {
     const scope = paymentContext(p, true, true)
-    requireGuard(scope)
     const request = draftRequest(p, scope),
         op = lib.operation(p, "PaymentDraftCreate", scope.organizationPartyId, request)
     if (op.old) return lib.previous(op)
@@ -271,7 +297,6 @@ function createDraft(p) {
 }
 function storeDraft(p) {
     const initial = paymentScope(p, true, true)
-    requireGuard(initial)
     const request = draftRequest(p, initial),
         op = lib.operation(p, "PaymentDraftStore", initial.organizationPartyId, {
             paymentId: p.paymentId,
@@ -287,8 +312,7 @@ function storeDraft(p) {
     ec.resource
         .script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
         .assertAdoptable(initial.record, true)
-    setFields(initial.record, draftFields(request, methods))
-    initial.record.update()
+    updatePayment(p.paymentId, draftFields(request, methods))
     const result = draftResult(one(P, {paymentId: p.paymentId}))
     const editEvent = event(
         initial,
@@ -420,20 +444,10 @@ function selectedEvidence(scope, p, lock = false) {
         return file
     })
 }
+// The reviewed evidence manifest (file names, sizes and hashes) on the lifecycle event. The files stay payment content;
+// save#PaymentContentFile refuses to replace a file once the payment is posted.
 function freezeEvidence(scope, eventId, files) {
-    const manifest = files.map(file => {
-        const location =
-            "dbresource://mantle/content/payment-issued/" +
-            scope.record.paymentId +
-            "/evidence/" +
-            eventId +
-            "/" +
-            file.manifest.paymentContentId +
-            "/" +
-            file.manifest.fileName
-        ec.resource.getLocationReference(location).putBytes(file.bytes)
-        return Object.assign({}, file.manifest, {archiveLocation: location})
-    })
+    const manifest = files.map(file => file.manifest)
     if (manifest.length) call("update#" + EVENT, {paymentLifecycleEventId: eventId, evidenceJson: JSON.stringify(manifest)})
     return manifest
 }
@@ -530,7 +544,6 @@ function stateNormalized(p, lock = false) {
         lock
     })
     ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
-    requireGuard(scope)
     counterparty({partyId: scope.partyId}, scope.organizationPartyId)
     if (!p.sourceVersion || paymentVersion(r) !== p.sourceVersion)
         denied("STALE_REVISION", "The payment changed; review it again")
@@ -551,14 +564,9 @@ function stateNormalized(p, lock = false) {
     const referenceNumber = String(p.referenceNumber || "").trim(),
         reason = String(p.reason || "").trim()
     if (!["validate", "deliver", "confirm", "cancel"].includes(action))
-        denied("PAYMENT_STATE_ACTION_UNAVAILABLE", "This payment action is not available in this checkpoint")
-    const allowed = {
-        validate: ["PmntProposed"],
-        deliver: ["PmntProposed", "PmntPromised"],
-        confirm: ["PmntDelivered"],
-        cancel: ["PmntProposed", "PmntPromised"]
-    }
-    if (!allowed[action].includes(before)) denied("PAYMENT_STATE_INVALID", "The payment is not in a state for this action")
+        denied("PAYMENT_STATE_ACTION_UNAVAILABLE", "This payment action is not available")
+    const path = statusPath(before, actionStatus[action])
+    if (!path) denied("PAYMENT_STATE_INVALID", "The payment is not in a state for this action")
     if (["deliver", "confirm"].includes(action) && (!referenceNumber || !reason))
         denied("PAYMENT_EVIDENCE_REQUIRED", "Enter a human payment reference and reason")
     if (referenceNumber.length > 60 || reason.length > 4000)
@@ -619,7 +627,7 @@ function stateNormalized(p, lock = false) {
         )
     }
     if (policyEvidence) policyEvidence.methods = methodInput
-    const after = {validate: "PmntPromised", deliver: "PmntDelivered", confirm: "PmntConfirmed", cancel: "PmntCancelled"}[action],
+    const after = actionStatus[action],
         names = lib.partyNames([scope.organizationPartyId, scope.partyId]),
         paymentSummary = {
             paymentId: r.paymentId,
@@ -683,8 +691,7 @@ function projectPreview(row, payload, scope) {
             row.status === "review" &&
             lib.ms(row.expiresDate) > Number(ec.user.nowTimestamp) &&
             scope.broad &&
-            lib.has("PAYMENT_EDIT") &&
-            scope.guardEnabled
+            lib.has("PAYMENT_EDIT")
     })
     dto.capabilities = paymentCapabilities(scope)
     const outputFlags = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentOutput.js").available(scope)
@@ -809,53 +816,45 @@ function changeState(p) {
         })
     if (fingerprint !== r.row.inputFingerprint)
         denied("STALE_PREVIEW", "The payment or its posting policy changed; review it again")
-    if (n.request.action === "deliver" || n.evidence.length)
-        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentArchiveGuard.js").prepare()
     ec.resource
         .script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
         .assertAdoptable(n.scope.record, true)
-    let record = n.scope.record
-    const before = record.statusId,
-        action = n.request.action
-    if (action === "deliver" && record.statusId === "PmntProposed") {
-        record.set("statusId", "PmntPromised")
-        record.update()
-        record = find(P, {paymentId: record.paymentId}).forUpdate(true).one()
-        n.scope.record = record
+    const record = n.scope.record,
+        paymentId = record.paymentId,
+        before = record.statusId,
+        action = n.request.action,
+        path = statusPath(before, n.payload.after.statusId)
+    if (!path) denied("PAYMENT_STATE_INVALID", "The payment is not in a state for this action")
+    // An outgoing check gets its number before delivery, so the posting and the issued check carry it.
+    if (
+        action === "deliver" &&
+        n.scope.cashDirection === "outgoing" &&
+        ["PiCompanyCheck", "PiCertifiedCheck"].includes(record.paymentInstrumentEnumId)
+    ) {
+        const existingCheck = one("mantle.account.method.BankAccountCheck", {paymentId})
+        if (existingCheck && existingCheck.paymentMethodId !== record.paymentMethodId)
+            denied("CHECK_NUMBER_CONFLICT", "The existing check number belongs to a different bank account")
+        if (!existingCheck) call("mantle.account.PaymentServices.assign#BankAccountCheckNumber", {paymentId})
     }
-    setFields(record, {statusId: n.payload.after.statusId, lifecycleManaged: "Y"})
-    if (["validate", "deliver"].includes(action) && !record.accountingDate) record.set("accountingDate", n.request._paymentDay)
-    if (n.request.referenceNumber) record.set("paymentRefNum", n.request.referenceNumber)
-    if (action === "confirm") {
-        record.set("settlementDate", n.request.settlementDate)
-        record.set("settlementAccountingDate", n.request._settlementDay)
-    }
-    record.update()
-    n.scope.record = find(P, {paymentId: record.paymentId}).forUpdate(true).one()
+    const fields = {lifecycleManaged: "Y"}
+    if (["validate", "deliver"].includes(action) && !record.accountingDate) fields.accountingDate = n.request._paymentDay
+    if (n.request.referenceNumber) fields.paymentRefNum = n.request.referenceNumber
+    if (action === "confirm")
+        Object.assign(fields, {settlementDate: n.request.settlementDate, settlementAccountingDate: n.request._settlementDay})
+    // Each step is a status change through update#Payment; delivery posts through the PaymentGlPost SECA.
+    for (const statusId of path) updatePayment(paymentId, Object.assign({}, fields, {statusId}))
+    n.scope.record = find(P, {paymentId}).forUpdate(true).one()
     let acctgTransIds = []
     let outputRows = []
     if (action === "deliver") {
-        if (
-            n.scope.cashDirection === "outgoing" &&
-            ["PiCompanyCheck", "PiCertifiedCheck"].includes(record.paymentInstrumentEnumId)
-        ) {
-            const existingCheck = one("mantle.account.method.BankAccountCheck", {paymentId: record.paymentId})
-            if (existingCheck && existingCheck.paymentMethodId !== record.paymentMethodId)
-                denied("CHECK_NUMBER_CONFLICT", "The existing check number belongs to a different bank account")
-            if (!existingCheck)
-                call("mantle.account.PaymentServices.assign#BankAccountCheckNumber", {paymentId: record.paymentId})
-            n.scope.record = find(P, {paymentId: record.paymentId}).forUpdate(true).one()
-        }
-        call("mantle.ledger.PaymentAutoPostServices.post#Payment", {paymentId: record.paymentId})
-        n.scope.record = find(P, {paymentId: record.paymentId}).forUpdate(true).one()
         acctgTransIds = verifyCash(n.scope, n.plans)
         outputRows = ec.resource
             .script("component://mr-mantle/service/mantle/account/PaymentOutput.js")
-            .issue(n.scope, Object.assign({}, n.request, {paymentSummary: n.payload.paymentSummary}), op.operationKey)
+            .issue(n.scope, n.request, op.operationKey)
     }
     const eventResult = event(n.scope, action, before, op, n.request, [], acctgTransIds)
     freezeEvidence(n.scope, eventResult.paymentLifecycleEventId, n.evidence)
-    const result = Object.assign(draftResult(one(P, {paymentId: record.paymentId})), {
+    const result = Object.assign(draftResult(one(P, {paymentId})), {
         action,
         settlementDateText: n.request._settlementDay,
         applicationResults: [],
@@ -867,7 +866,7 @@ function changeState(p) {
     })
     setFields(r.row, {status: "complete", operationKey: op.operationKey, resultJson: JSON.stringify(result)})
     r.row.update()
-    lib.complete(op, P, record.paymentId, result)
+    lib.complete(op, P, paymentId, result)
     return projectResult(result)
 }
 const applicationTypes = [
@@ -877,74 +876,6 @@ const applicationTypes = [
     "AttInvoiceInOutAppl",
     "AttPaymentApplied"
 ]
-function reversalPolicy(scope, transaction, entries, lock) {
-    const guard = ec.resource.script("component://mr-mantle/service/mantle/ledger/PostingGuard.js"),
-        day = policy.postingDay(transaction),
-        fiscal = guard.fiscal(scope.organizationPartyId, transaction.transactionDate, lock, [], day),
-        locks = guard.postingLocks(transaction, guard.scopes(transaction, entries), lock, day, true),
-        findings = [...fiscal.findings, ...locks.findings],
-        pref = policy.preference(scope.organizationPartyId)
-    if (findings.length) denied(findings[0].code, findings.map(row => row.message).join("; "))
-    if (
-        transaction.amountUomId !== scope.record.amountUomId ||
-        transaction.glFiscalTypeEnumId !== "GLFT_ACTUAL" ||
-        transaction.isPosted !== "Y" ||
-        transaction.amountUomId !== pref.baseCurrencyUomId ||
-        (pref.errorGlJournalId && transaction.glJournalId === pref.errorGlJournalId)
-    )
-        denied("PAYMENT_POSTING_UNAVAILABLE", "The original actual same-currency posting is required")
-    let debit = toDecimal(0),
-        credit = toDecimal(0)
-    const accounts = entries.map(line => {
-        if (!line.glAccountId || !["D", "C"].includes(line.debitCreditFlag))
-            denied("ENTRY_INVALID", "The original posting contains an invalid entry")
-        if (line.debitCreditFlag === "D") debit = debit.add(line.amount || 0)
-        else credit = credit.add(line.amount || 0)
-        const account = policy.account(scope.organizationPartyId, line.glAccountId, transaction.transactionDate)
-        policy.dimensions(scope.organizationPartyId, line, transaction.transactionDate)
-        if (
-            pref.requiredLedgerDimensionsEnabled === "Y" &&
-            ((account.assignment.facilityRequired === "Y" && !line.facilityId) ||
-                (account.assignment.costCenterRequired === "Y" && !line.costCenterId))
-        )
-            denied("DIMENSION_REQUIRED", "The original posting lacks a required ledger dimension")
-        return {
-            account: policy.pick(map(account.row), [
-                "glAccountId",
-                "accountCode",
-                "accountName",
-                "glAccountClassEnumId",
-                "disallowPosting"
-            ]),
-            assignment: policy.pick(map(account.assignment), [
-                "glAccountId",
-                "organizationPartyId",
-                "fromDate",
-                "thruDate",
-                "facilityRequired",
-                "costCenterRequired"
-            ])
-        }
-    })
-    if (!entries.length || !debit.eq(credit)) denied("UNBALANCED", "The original posting is not balanced")
-    return {
-        day,
-        periods: fiscal.periods.map(row =>
-            policy.pick(map(row), ["timePeriodId", "partyId", "timePeriodTypeId", "fromDate", "thruDate", "isClosed"])
-        ),
-        locks: locks.locks.map(row => ({
-            lock: map(row),
-            exceptions: rows("mantle.ledger.config.AccountingLockException", {accountingLockId: row.accountingLockId}).map(map)
-        })),
-        accounts,
-        preference: policy.pick(map(pref), [
-            "baseCurrencyUomId",
-            "postingGuardEnabled",
-            "requiredLedgerDimensionsEnabled",
-            "settlementApplicationGuardEnabled"
-        ])
-    }
-}
 function applicationDocuments(scope, applications, lock) {
     const invoiceIds = [...new Set(applications.flatMap(row => [row.invoiceId, row.toInvoiceId]).filter(Boolean))].sort(),
         paymentIds = [
@@ -1022,7 +953,6 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
     const scope = paymentScope(p, true, lock),
         r = scope.record
     ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").assertAdoptable(r)
-    requireGuard(scope)
     counterparty({partyId: scope.partyId}, scope.organizationPartyId)
     if (!p.sourceVersion || p.sourceVersion !== paymentVersion(r))
         denied("STALE_REVISION", "The payment changed; review it again")
@@ -1032,6 +962,8 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
         !["PmntDelivered", "PmntConfirmed"].includes(r.statusId)
     )
         denied("PAYMENT_STATE_INVALID", "Only a delivered trade payment can be unapplied or voided here")
+    if (voidPayment && !statusPath(r.statusId, "PmntVoid"))
+        denied("PAYMENT_STATE_INVALID", "The payment cannot be voided from its status")
     const reason = String(p.reason || "").trim()
     if (!reason || reason.length > 4000) denied("PAYMENT_REASON_REQUIRED", "Enter a reason for the correction")
     const related = paymentApplications([r.paymentId]),
@@ -1066,9 +998,7 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
         currentSelected = allApplications.filter(row => ids.includes(row.paymentApplicationId))
     if (hash(currentSelected.map(map)) !== hash(selected.map(map)))
         denied("STALE_APPLICATION", "The applications changed while being reviewed")
-    const transactionIds = new Set(),
-        cf = ec.entity.conditionFactory,
-        applicationTransactions = ids.length
+    const applicationTransactions = ids.length
             ? Array.from(
                   find(TX, {organizationPartyId: scope.organizationPartyId})
                       .condition("paymentApplicationId", "in", ids)
@@ -1082,79 +1012,25 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
             : [],
         cash = nativeTransactions(r.paymentId, scope.organizationPartyId, lock),
         cashEntries = cashEvidence(scope, cash, lock),
-        sourceGuard = ec.resource.script("component://mr-mantle/service/mantle/account/SourcePostingGuard.js"),
-        policies = [],
-        plans = []
-    for (const application of currentSelected) {
-        const evidence = sourceGuard.applicationEvidence(application),
-            date = settlement.dateInput(evidence.effectiveDate, evidence.day)
-        policies.push(
-            settlement.validatePolicy(
-                {
-                    organizationPartyId: scope.organizationPartyId,
-                    partyId: scope.partyId,
-                    direction: scope.financeDirection,
-                    currencyUomId: r.amountUomId
-                },
-                date,
-                [],
-                lock
-            )
-        )
-    }
-    const cashIsDirect = Boolean(cash[0].invoiceId || cash[0].paymentApplicationId),
-        direct = cashIsDirect
+        // Cash posted straight to the receivable or payable account (an applied payment at delivery) is reposted
+        // unapplied by revert#PaymentApplicationPost, so it unapplies as a whole set.
+        direct = Boolean(cash[0].invoiceId || cash[0].paymentApplicationId)
     if (direct && !voidPayment && ids.length !== positive.length)
         denied("DIRECT_PAYMENT_UNAPPLY_REQUIRED", "Unapply the entire dependent application set from a directly posted payment")
-    if (direct) {
-        sourceGuard.directHistory(r, cash[0].invoiceId, cash, positive)
-        const originalInvoice = one(workflow.I, {invoiceId: cash[0].invoiceId}),
-            outgoing = scope.cashDirection === "outgoing",
-            control = call("mantle.ledger.InvoiceAutoPostServices.get#InvoiceTypeTransType", {
-                organizationPartyId: scope.organizationPartyId,
-                invoiceTypeEnumId: originalInvoice?.invoiceTypeEnumId,
-                isPayable: outgoing ? "Y" : "N"
-            }).glAccountId,
-            cashAccount = call("mantle.ledger.PaymentAutoPostServices.get#PaymentMethodGlAccount", {
-                paymentId: r.paymentId,
-                organizationPartyId: scope.organizationPartyId,
-                otherPartyId: scope.partyId
-            }).glAccountId
-        if (!control || !cashAccount) denied("MAPPING_MISSING", "The original direct cash accounts are not configured")
-        sourceGuard.controlProof({entries: cashEntries}, control, outgoing ? "D" : "C", r.amount)
-        sourceGuard.controlProof({entries: cashEntries}, cashAccount, outgoing ? "C" : "D", r.amount)
-    }
     for (const application of currentSelected) {
         const matches = applicationTransactions.filter(tx => tx.paymentApplicationId === application.paymentApplicationId)
         if (matches.length > 1 || (!matches.length && !direct))
             denied("APPLICATION_POSTING_UNAVAILABLE", "The exact original application posting could not be identified")
     }
-    for (const tx of applicationTransactions) transactionIds.add(tx.acctgTransId)
-    if (voidPayment || direct) {
-        if (r.reconcileStatusId && r.reconcileStatusId !== "PmtrNot")
-            denied("PAYMENT_RECONCILED", "A reconciled payment needs a reconciliation correction first")
-        const entries = Array.from(
-            find(ENTRY, {acctgTransId: cash[0].acctgTransId}).orderBy("acctgTransEntrySeqId").forUpdate(lock).list()
-        )
-        if (entries.some(line => line.reconcileStatusId && line.reconcileStatusId !== "AterNot"))
-            denied("PAYMENT_RECONCILED", "Reconciled cash entries cannot be reversed here")
-        transactionIds.add(cash[0].acctgTransId)
-    }
-    const originalTransactions = Array.from(
-            find(TX)
-                .condition("acctgTransId", "in", [...transactionIds])
-                .orderBy("acctgTransId")
-                .forUpdate(lock)
-                .list()
-        ),
-        entryEvidence = []
+    if (voidPayment && r.reconcileStatusId && r.reconcileStatusId !== "PmtrNot")
+        denied("PAYMENT_RECONCILED", "A reconciled payment needs a reconciliation correction first")
+    if (voidPayment && rows(ENTRY, {acctgTransId: cash[0].acctgTransId}).some(isReconciledEntry))
+        denied("PAYMENT_RECONCILED", "Reconciled cash entries cannot be reversed here")
+    const originalTransactions = [...applicationTransactions, ...(voidPayment || direct ? cash : [])],
+        entryEvidence = [],
+        plans = []
     for (const tx of originalTransactions) {
-        if (find(TX, {reverseOfAcctgTransId: tx.acctgTransId, isPosted: "Y"}).limit(1).one())
-            denied("PAYMENT_POSTING_REVERSED", "An original posting was already reversed")
-        const entries = Array.from(
-            find(ENTRY, {acctgTransId: tx.acctgTransId}).orderBy("acctgTransEntrySeqId").forUpdate(lock).list()
-        )
-        policies.push(reversalPolicy(scope, tx, entries, lock))
+        const entries = Array.from(find(ENTRY, {acctgTransId: tx.acctgTransId}).orderBy("acctgTransEntrySeqId").list())
         entryEvidence.push(...entries.map(map))
         plans.push({
             kind: applicationTypes.includes(tx.acctgTransTypeEnumId) ? "reverseApplication" : "reverseCash",
@@ -1169,36 +1045,13 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
             }))
         })
     }
-    let replacement = null
-    if (direct && !voidPayment) {
-        const methodInput = methodRequest(scope),
-            methods = methodInput.organizationPaymentMethodId
-                ? methodEvidence(scope, methodInput, cash[0].transactionDate, lock)
-                : null
-        replacement = Object.assign(cashPlan(scope, methods), {
-            transactionDate: cash[0].transactionDate,
-            accountingDate: policy.postingDay(cash[0])
-        })
-        const replacementPolicy = settlement.validatePolicy(
-            {
-                organizationPartyId: scope.organizationPartyId,
-                partyId: scope.partyId,
-                direction: scope.financeDirection,
-                currencyUomId: r.amountUomId
-            },
-            settlement.dateInput(cash[0].transactionDate, policy.postingDay(cash[0])),
-            [replacement],
-            lock
+    if (direct && !voidPayment)
+        plans.push(
+            Object.assign(cashPlan(scope, null), {
+                kind: "replaceUnappliedCash",
+                accountingDateText: policy.postingDay(cash[0])
+            })
         )
-        replacementPolicy.methods = methodInput
-        policies.push(replacementPolicy)
-        plans.push(Object.assign({kind: "replaceUnappliedCash", accountingDateText: policy.postingDay(cash[0])}, replacement))
-    }
-    plans.sort(
-        (a, b) =>
-            ({reverseApplication: 0, reverseCash: 1, replaceUnappliedCash: 2})[a.kind] -
-            {reverseApplication: 0, reverseCash: 1, replaceUnappliedCash: 2}[b.kind]
-    )
     const balances = documents.map(document => {
             const fields = document.kind === "invoice" ? ["invoiceId", "toInvoiceId"] : ["paymentId", "toPaymentId"],
                 matches = allApplications.filter(row => fields.some(field => row[field] === document.id)),
@@ -1256,12 +1109,12 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
             },
             paymentSummary: summary,
             postingSummary: {
-                cashPostingCount: Number(voidPayment || direct) + Number(Boolean(replacement)),
+                cashPostingCount: Number(voidPayment || direct) + Number(direct && !voidPayment),
                 applicationPostingCount: applicationTransactions.length,
                 effect: voidPayment
-                    ? "Reverse reviewed applications, then cash"
+                    ? "Reverse the applications, then the cash"
                     : direct
-                      ? "Unapply the entire direct set and restore unapplied cash"
+                      ? "Unapply the entire direct set and repost the cash unapplied"
                       : "Reverse only the selected application postings"
             },
             applicationEffects: currentSelected.map(row =>
@@ -1278,7 +1131,7 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
                     {
                         amountOriginallyApplied: String(row.amountApplied),
                         afterAmountApplied: "0",
-                        originalDateText: sourceGuard.applicationDay(row)
+                        originalDateText: row.appliedDate ? ec.l10n.format(row.appliedDate, "yyyy-MM-dd") : null
                     }
                 )
             ),
@@ -1301,11 +1154,12 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
         originalTransactions,
         entryEvidence,
         cashEntries,
-        policies,
         plans,
-        replacement,
         evidence
     }
+}
+function isReconciledEntry(line) {
+    return Boolean(line.reconcileStatusId && line.reconcileStatusId !== "AterNot")
 }
 function correctionFingerprint(n) {
     return hash({
@@ -1325,7 +1179,6 @@ function correctionFingerprint(n) {
         ]),
         originals: n.originalTransactions.map(map),
         entries: n.entryEvidence,
-        policies: n.policies,
         cash: n.cashEntries
     })
 }
@@ -1356,106 +1209,38 @@ function getUnapplyPreview(p) {
     if (r.row.previewKind !== "unapply") denied("PAYMENT_PREVIEW_MISMATCH", "Choose an unapplication review")
     return projectPreview(r.row, r.payload, r.scope)
 }
-function verifyReversal(original, reversalId, expected) {
-    const tx = one(TX, {acctgTransId: reversalId}),
-        entries = tx ? rows(ENTRY, {acctgTransId: reversalId}) : [],
-        actual = {},
-        plan = {}
-    if (
-        !tx ||
-        tx.isPosted !== "Y" ||
-        tx.reverseOfAcctgTransId !== original.acctgTransId ||
-        tx.organizationPartyId !== original.organizationPartyId ||
-        tx.amountUomId !== original.amountUomId ||
-        policy.postingDay(tx) !== policy.postingDay(original)
-    )
-        denied("PAYMENT_REVERSAL_NOT_POSTED", "The original-day reversal did not post exactly")
-    for (const [lines, target] of [
-        [expected, plan],
-        [entries, actual]
-    ])
-        for (const line of lines) {
-            const key = line.glAccountId + ":" + line.debitCreditFlag
-            target[key] = (target[key] || toDecimal(0)).add(line.amount || 0)
-        }
-    if (
-        Object.keys(actual).length !== Object.keys(plan).length ||
-        Object.keys(plan).some(key => !actual[key] || !actual[key].eq(plan[key]))
-    )
-        denied("POSTING_MISMATCH", "The reversal differs from the reviewed original entries")
-    return tx.acctgTransId
-}
+// Runs a reviewed correction through Mantle: unapply#PaymentApplication for each selected application, whose SECA
+// reverses its posting (or reposts direct cash unapplied), and for a void then the PmntVoid status change, whose SECAs
+// reverse the cash posting and clear the payment's method transactions. Reversals keep each original's day.
 function executeCorrection(n, op) {
-    if (n.evidence.length) ec.resource.script("component://mr-mantle/service/mantle/account/PaymentArchiveGuard.js").prepare()
     ec.resource
         .script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js")
         .assertAdoptable(n.scope.record, true)
-    const reversalIds = [],
-        replacementIds = [],
-        before = n.scope.record.statusId
-    for (const application of n.applications) {
-        const current = find(A, {paymentApplicationId: application.paymentApplicationId}).forUpdate(true).one()
-        current.set("amountOriginallyApplied", current.amountApplied)
-        current.set("amountApplied", toDecimal(0))
-        current.update()
-    }
-    for (const plan of n.plans.filter(row => row.kind === "reverseApplication" || row.kind === "reverseCash")) {
-        const original = n.originalTransactions.find(row => row.acctgTransId === plan.originalAcctgTransId),
-            result = call("mantle.ledger.LedgerServices.post#ReverseAcctgTrans", {
-                acctgTransId: original.acctgTransId,
-                changeReason: n.request.reason
-            })
-        reversalIds.push(verifyReversal(original, result.acctgTransId, plan.lines))
-    }
-    for (const document of n.documents.filter(row => row.kind === "invoice")) {
-        const record = find(workflow.I, {invoiceId: document.id}).forUpdate(true).one(),
-            totals = lib.totals(record)
-        if (totals.unpaidTotal.compare(0) > 0 && ["InvoicePmtRecvd", "InvoicePmtSent"].includes(record.statusId)) {
-            record.set("statusId", record.statusId === "InvoicePmtRecvd" ? "InvoiceFinalized" : "InvoiceApproved")
-            record.set("paidDate", null)
-            record.update()
-        }
-    }
-    n.scope.record = find(P, {paymentId: n.scope.record.paymentId}).forUpdate(true).one()
-    if (n.scope.record.lifecycleManaged !== "Y") {
-        n.scope.record.set("lifecycleManaged", "Y")
-        n.scope.record.update()
-        n.scope.record = find(P, {paymentId: n.scope.record.paymentId}).forUpdate(true).one()
-    }
-    if (n.replacement) {
-        if (paymentApplications([n.scope.record.paymentId]).some(row => toDecimal(row.amountApplied || 0).compare(0) > 0))
-            denied("DIRECT_PAYMENT_UNAPPLY_REQUIRED", "Replacement cash requires all dependent applications to be zero")
-        const made = call("mantle.ledger.LedgerServices.create#AcctgTrans", {
-                organizationPartyId: n.scope.organizationPartyId,
-                otherPartyId: n.scope.partyId,
-                paymentId: n.scope.record.paymentId,
-                acctgTransTypeEnumId: n.replacement.acctgTransTypeEnumId,
-                amountUomId: n.replacement.amountUomId,
-                transactionDate: n.replacement.transactionDate,
-                glFiscalTypeEnumId: "GLFT_ACTUAL",
-                description: "Reviewed original-day unapplied cash replacement"
-            }),
-            transaction = find(TX, {acctgTransId: made.acctgTransId}).forUpdate(true).one()
-        transaction.set("accountingDate", n.replacement.accountingDate)
-        transaction.update()
-        for (const line of n.replacement.lines)
-            call("mantle.ledger.LedgerServices.create#AcctgTransEntry", Object.assign({acctgTransId: made.acctgTransId}, line))
-        call("mantle.ledger.LedgerServices.post#AcctgTrans", {acctgTransId: made.acctgTransId})
-        n.scope.record = find(P, {paymentId: n.scope.record.paymentId}).forUpdate(true).one()
-        replacementIds.push(...verifyCash(n.scope, [n.replacement]))
-        if (
-            replacementIds.length !== 1 ||
-            policy.postingDay(one(TX, {acctgTransId: replacementIds[0]})) !== n.replacement.accountingDate
-        )
-            denied("POSTING_MISMATCH", "Replacement cash did not retain the original accounting day")
-    }
-    if (n.request.action === "void") {
-        n.scope.record.set("statusId", "PmntVoid")
-        n.scope.record.update()
-        n.scope.record = find(P, {paymentId: n.scope.record.paymentId}).forUpdate(true).one()
-    }
+    const paymentId = n.scope.record.paymentId,
+        before = n.scope.record.statusId,
+        originalIds = n.originalTransactions.map(row => row.acctgTransId)
+    // Applications first: a posting with positive applications keeps its evidence until they are unapplied.
+    for (const application of n.applications)
+        call("mantle.account.PaymentServices.unapply#PaymentApplication", {
+            paymentApplicationId: application.paymentApplicationId
+        })
+    if (n.request.action === "void") updatePayment(paymentId, {statusId: "PmntVoid", lifecycleManaged: "Y"})
+    n.scope.record = find(P, {paymentId}).forUpdate(true).one()
+    if (n.scope.record.lifecycleManaged !== "Y") updatePayment(paymentId, {lifecycleManaged: "Y"})
+    const reversalIds = originalIds.length
+            ? Array.from(find(TX).condition("reverseOfAcctgTransId", "in", originalIds).orderBy("acctgTransId").list())
+                  .filter(tx => tx.isPosted === "Y")
+                  .map(tx => tx.acctgTransId)
+            : [],
+        originalCash = new Set(n.originalTransactions.map(row => row.acctgTransId)),
+        replacementIds =
+            n.request.action === "unapply" && n.plans.some(plan => plan.kind === "replaceUnappliedCash")
+                ? nativeTransactions(paymentId, n.scope.organizationPartyId)
+                      .filter(tx => !originalCash.has(tx.acctgTransId))
+                      .map(tx => tx.acctgTransId)
+                : []
     const postingEffects = {
-            originalAcctgTransIds: n.originalTransactions.map(row => row.acctgTransId),
+            originalAcctgTransIds: originalIds,
             reversalAcctgTransIds: reversalIds,
             replacementAcctgTransIds: replacementIds
         },
@@ -1469,7 +1254,7 @@ function executeCorrection(n, op) {
             [...reversalIds, ...replacementIds]
         )
     freezeEvidence(n.scope, ev.paymentLifecycleEventId, n.evidence)
-    return Object.assign(draftResult(n.scope.record), {
+    return Object.assign(draftResult(one(P, {paymentId})), {
         action: n.request.action,
         applicationResults: n.applications.map(row => ({
             paymentApplicationId: row.paymentApplicationId,
@@ -1502,9 +1287,12 @@ function unapplyReviewed(p) {
     lib.complete(op, P, n.scope.record.paymentId, result)
     return projectResult(result)
 }
+// The approve and refuse actions of a PaymentValidation notification (mantle.account.PaymentNotificationServices
+// send#PaymentValidationNotice). The notice must be the user's, about this payment and about its current revision and
+// methods; approving runs the same reviewed state change as the payment screens, under the user's own authority.
 function validationNotice(p, approve) {
     const notification = one("moqui.security.user.NotificationMessage", {notificationMessageId: p.notificationMessageId})
-    let message
+    let message = {}
     try {
         message = JSON.parse(notification?.messageJson || "{}")
     } catch (_) {
@@ -1523,51 +1311,37 @@ function validationNotice(p, approve) {
         })
     )
         denied("PAYMENT_VALIDATION_NOTICE_UNAVAILABLE", "This validation notice is not assigned to you")
+    if (
+        !p.message ||
+        p.message.validationEventId !== message.validationEventId ||
+        p.message.sourceVersion !== message.sourceVersion
+    )
+        denied("PAYMENT_VALIDATION_NOTICE_INVALID", "The supplied message does not match the stored notice")
     const sourceEvent = one(EVENT, {paymentLifecycleEventId: message.validationEventId})
     if (
         !sourceEvent ||
         !["create", "edit"].includes(sourceEvent.action) ||
-        sourceEvent.afterStatusId !== "PmntProposed" ||
         sourceEvent.paymentId !== p.recordId ||
-        sourceEvent.organizationPartyId !== message.organizationPartyId ||
-        sourceEvent.expectedSourceVersion !== message.sourceVersion ||
-        notification.actorUserId !== sourceEvent.userId
+        sourceEvent.expectedSourceVersion !== message.sourceVersion
     )
-        denied("PAYMENT_VALIDATION_NOTICE_INVALID", "The notice does not match its original native validation request")
-    if (
-        !p.message ||
-        p.message.validationEventId !== message.validationEventId ||
-        p.message.sourceVersion !== message.sourceVersion ||
-        p.message.paymentId !== message.paymentId ||
-        p.message.organizationPartyId !== message.organizationPartyId
-    )
-        denied("PAYMENT_VALIDATION_NOTICE_INVALID", "The supplied message does not match the stored notice")
+        denied("PAYMENT_VALIDATION_NOTICE_INVALID", "The notice does not match its validation request")
     const scope = paymentScope(
         {organizationPartyId: sourceEvent.organizationPartyId, paymentId: sourceEvent.paymentId},
         true,
         true
     )
-    requireGuard(scope)
-    const decision = approve ? "approved" : "refused",
-        reason = approve ? "Approved from payment validation notice" : String(p.reason || "").trim()
-    if (!reason || reason.length > 4000) denied("PAYMENT_REASON_REQUIRED", "Give a reason for refusing validation")
-    const operationKey = "pval:" + hash(sourceEvent.paymentLifecycleEventId).slice(0, 35),
-        op = lib.operation({operationKey}, "PaymentValidationDecision", scope.organizationPartyId, {
-            validationEventId: sourceEvent.paymentLifecycleEventId,
-            notificationMessageId: p.notificationMessageId,
-            decision,
-            reason
-        })
-    if (op.old) return projectResult(lib.previous(op))
     if (scope.record.statusId !== "PmntProposed" || paymentVersion(scope.record) !== sourceEvent.expectedSourceVersion)
         denied("STALE_REVISION", "The payment changed after this validation request")
     const methods = methodRequest(scope),
-        frozenPolicy = JSON.parse(sourceEvent.validationPolicyJson || "{}")
+        reviewedMethods = JSON.parse(sourceEvent.validationPolicyJson || "{}")
     if (
-        methods.organizationMethodVersion !== frozenPolicy.organizationMethodVersion ||
-        methods.counterpartyMethodVersion !== frozenPolicy.counterpartyMethodVersion
+        methods.organizationMethodVersion !== reviewedMethods.organizationMethodVersion ||
+        methods.counterpartyMethodVersion !== reviewedMethods.counterpartyMethodVersion
     )
         denied("STALE_PAYMENT_METHOD", "The banking identity changed after this validation request")
+    const decision = approve ? "approved" : "refused",
+        reason = approve ? "Approved from payment validation notice" : String(p.reason || "").trim()
+    if (!reason || reason.length > 4000) denied("PAYMENT_REASON_REQUIRED", "Give a reason for refusing validation")
     let result
     if (approve) {
         const preview = previewState({
@@ -1581,26 +1355,29 @@ function validationNotice(p, approve) {
         result = call("mantle.account.PaymentServices.change#PaymentState", {
             previewId: preview.previewId,
             inputFingerprint: preview.inputFingerprint,
-            operationKey: "pvstate:" + hash(sourceEvent.paymentLifecycleEventId).slice(0, 32)
+            operationKey: "pval-" + sourceEvent.paymentLifecycleEventId
         })
     } else {
-        const ev = event(scope, "validationRejected", scope.record.statusId, op, {
-            reason,
-            expectedSourceVersion: sourceEvent.expectedSourceVersion,
-            sourceValidationEventId: sourceEvent.paymentLifecycleEventId
-        })
-        result = Object.assign(draftResult(scope.record), {
-            paymentLifecycleEventId: ev.paymentLifecycleEventId,
-            reasonCode: "PAYMENT_VALIDATION_REFUSED"
-        })
+        const ev = event(
+            scope,
+            "validationRejected",
+            scope.record.statusId,
+            {operationKey: null},
+            {
+                reason,
+                expectedSourceVersion: sourceEvent.expectedSourceVersion,
+                sourceValidationEventId: sourceEvent.paymentLifecycleEventId
+            }
+        )
+        result = Object.assign(draftResult(scope.record), {paymentLifecycleEventId: ev.paymentLifecycleEventId})
     }
-    Object.assign(result, {
-        validationEventId: sourceEvent.paymentLifecycleEventId,
-        decision,
-        reasonCode: approve ? "PAYMENT_VALIDATION_APPROVED" : "PAYMENT_VALIDATION_REFUSED"
-    })
-    lib.complete(op, EVENT, result.paymentLifecycleEventId, result)
-    return projectResult(result)
+    return projectResult(
+        Object.assign(result, {
+            validationEventId: sourceEvent.paymentLifecycleEventId,
+            decision,
+            reasonCode: approve ? "PAYMENT_VALIDATION_APPROVED" : "PAYMENT_VALIDATION_REFUSED"
+        })
+    )
 }
 function approveValidation(p) {
     return validationNotice(p, true)
@@ -1608,32 +1385,35 @@ function approveValidation(p) {
 function refuseValidation(p) {
     return validationNotice(p, false)
 }
-;({
+const operations = {
     createDraft,
     storeDraft,
     previewState,
     getStatePreview,
     changeState,
-    stateNormalized,
-    retained,
-    projectPreview,
-    evidenceOptions,
-    selectedEvidence,
-    methodRequest,
-    methodEvidence,
-    cashPlan,
-    freezeEvidence,
-    canonicalDbLocation,
-    nativeTransactions,
-    verifyCash,
-    requireGuard,
-    event,
-    unapplyNormalized,
-    correctionFingerprint,
     previewUnapply,
     getUnapplyPreview,
     unapplyReviewed,
-    executeCorrection,
     approveValidation,
     refuseValidation
+}
+// Runs one lifecycle operation for its service and puts the results in the service's context.
+function execute(op, context) {
+    if (!operations[op]) throw new Error("Unknown payment lifecycle operation " + op)
+    const result = operations[op](context)
+    ec.context.putAll(result)
+    return result
+}
+;({
+    execute,
+    methodEvidence,
+    methodRequest,
+    cashPlan,
+    nativeTransactions,
+    verifyCash,
+    selectedEvidence,
+    freezeEvidence,
+    evidenceOptions,
+    event,
+    requireGuard
 })

@@ -672,7 +672,7 @@ function paymentTotals(record, applicationRows) {
 function paymentCapabilities(scope, applicationRows = [], posted = false) {
     const r = scope.record,
         draft = r && ["PmntProposed", "PmntPromised"].includes(r.statusId),
-        canWrite = scope.broad && has("PAYMENT_EDIT") && scope.guardEnabled,
+        canWrite = scope.broad && has("PAYMENT_EDIT"),
         supported =
             r &&
             !r.refundForPaymentId &&
@@ -686,77 +686,76 @@ function paymentCapabilities(scope, applicationRows = [], posted = false) {
         )
     const capabilities = {
         canRead: true,
-        canCreate: scope.broad && has("PAYMENT_EDIT") && scope.guardEnabled,
-        guardEnabled: scope.guardEnabled,
+        canCreate: scope.broad && has("PAYMENT_EDIT"),
         canEdit: Boolean(
             canWrite &&
-                supported &&
-                draft &&
-                !posted &&
-                !hasApplications &&
-                !scope.hasGatewayInstruction &&
-                !scope.hasPriorFinancialHistory
+            supported &&
+            draft &&
+            !posted &&
+            !hasApplications &&
+            !scope.hasGatewayInstruction &&
+            !scope.hasPriorFinancialHistory
         ),
         canEditDraft: Boolean(
             canWrite &&
-                supported &&
-                draft &&
-                !posted &&
-                !hasApplications &&
-                !scope.hasGatewayInstruction &&
-                !scope.hasPriorFinancialHistory
+            supported &&
+            draft &&
+            !posted &&
+            !hasApplications &&
+            !scope.hasGatewayInstruction &&
+            !scope.hasPriorFinancialHistory
         ),
         canValidate: Boolean(
             canWrite &&
-                supported &&
-                r.statusId === "PmntProposed" &&
-                Boolean(r.effectiveDate) &&
-                !posted &&
-                !scope.hasPriorFinancialHistory &&
-                !scope.hasGatewayInstruction
+            supported &&
+            r.statusId === "PmntProposed" &&
+            Boolean(r.effectiveDate) &&
+            !posted &&
+            !scope.hasPriorFinancialHistory &&
+            !scope.hasGatewayInstruction
         ),
         canDeliver: Boolean(
             canWrite &&
-                supported &&
-                draft &&
-                !gateway &&
-                Boolean(r.effectiveDate) &&
-                !posted &&
-                !hasApplications &&
-                !r.forInvoiceId &&
-                !scope.hasPriorFinancialHistory &&
-                !scope.hasGatewayInstruction
+            supported &&
+            draft &&
+            !gateway &&
+            Boolean(r.effectiveDate) &&
+            !posted &&
+            !hasApplications &&
+            !r.forInvoiceId &&
+            !scope.hasPriorFinancialHistory &&
+            !scope.hasGatewayInstruction
         ),
         canManualDeliver: Boolean(
             canWrite &&
-                supported &&
-                draft &&
-                !gateway &&
-                Boolean(r.effectiveDate) &&
-                !posted &&
-                !hasApplications &&
-                !r.forInvoiceId &&
-                !scope.hasPriorFinancialHistory &&
-                !scope.hasGatewayInstruction
+            supported &&
+            draft &&
+            !gateway &&
+            Boolean(r.effectiveDate) &&
+            !posted &&
+            !hasApplications &&
+            !r.forInvoiceId &&
+            !scope.hasPriorFinancialHistory &&
+            !scope.hasGatewayInstruction
         ),
         canConfirm: Boolean(canWrite && supported && r.statusId === "PmntDelivered" && !gateway && posted),
         canCancel: Boolean(canWrite && supported && draft && !posted && !hasApplications && !scope.hasGatewayInstruction),
         canVoid: Boolean(
             canWrite &&
-                supported &&
-                !r.gatewayRole &&
-                ["PmntDelivered", "PmntConfirmed"].includes(r.statusId) &&
-                posted &&
-                (!hasApplications || sideEdit) &&
-                (!r.reconcileStatusId || r.reconcileStatusId === "PmtrNot")
+            supported &&
+            !r.gatewayRole &&
+            ["PmntDelivered", "PmntConfirmed"].includes(r.statusId) &&
+            posted &&
+            (!hasApplications || sideEdit) &&
+            (!r.reconcileStatusId || r.reconcileStatusId === "PmtrNot")
         ),
         canUnapply: Boolean(
             canWrite &&
-                supported &&
-                hasApplications &&
-                sideEdit &&
-                ["PmntDelivered", "PmntConfirmed"].includes(r.statusId) &&
-                posted
+            supported &&
+            hasApplications &&
+            sideEdit &&
+            ["PmntDelivered", "PmntConfirmed"].includes(r.statusId) &&
+            posted
         ),
         canReadGateway: scope.broad && (has("PAYMENT_EDIT") || has("ACCOUNTING_ADMIN") || lib.access.systemAdmin()),
         canReadLedger: ledgerRead(),
@@ -772,7 +771,7 @@ function paymentCapabilities(scope, applicationRows = [], posted = false) {
         canRefund: false,
         canPreviewRefund: false,
         canTransfer: Boolean(scope.broad && has("PAYMENT_EDIT") && scope.guardEnabled),
-        reasons: scope.guardEnabled ? [] : ["SETTLEMENT_GUARD_REQUIRED"],
+        reasons: [],
         unavailableReason: "PAYMENT_SLICE_UNAVAILABLE"
     }
     if (r && ec.resource.script("component://mr-mantle/service/mantle/account/LegacyPaymentGatewayGuard.js").adoptionRefusal(r)) {
@@ -1023,59 +1022,49 @@ function methodRows(records) {
         }
     })
 }
-function methods(p) {
-    const scope = paymentContext(p),
-        role = p.methodRole || "organization",
-        date = p.effectiveDate || ec.user.nowTimestamp,
-        owner = role === "organization" ? scope.organizationPartyId : p.partyId
-    if (!scope.broad) denied("PERMISSION_DENIED", "Payment method choices require payment view authority")
-    if (!["organization", "counterparty"].includes(role) || !owner)
-        denied("PAYMENT_METHOD_OWNER_REQUIRED", "Choose the payment method owner")
-    if (role === "counterparty" && one("mantle.party.PartyRole", {partyId: owner, roleTypeId: "OrgInternal"}))
-        denied("INTERCOMPANY_EXCLUDED", "Internal methods use the transfer or intercompany workflow")
-    const party = one("mantle.party.Party", {partyId: owner})
-    if (!party || (party.privateOwnerUserId && party.privateOwnerUserId !== ec.user.userId && !lib.access.systemAdmin()))
-        denied("PARTY_UNAVAILABLE", "The payment method owner is unavailable")
+// Treasury reads issued checks: payment view and payment edit (or accounting administration).
+function treasury(scope) {
+    return scope.broad && (has("PAYMENT_EDIT") || has("ACCOUNTING_ADMIN") || lib.access.systemAdmin())
+}
+// The payment's content the user may read: check images only with treasury authority.
+function contentQuery(scope) {
     const cf = ec.entity.conditionFactory
-    function q(search = true) {
-        let query = find("mantle.account.method.PaymentMethod", {ownerPartyId: owner})
-            .condition(
-                cf.makeCondition(
-                    [cf.makeCondition("fromDate", "is-null", null), cf.makeCondition("fromDate", "less-equals", date)],
-                    "or"
-                )
+    let query = find("mantle.account.payment.PaymentContent", {paymentId: scope.record.paymentId})
+    if (!treasury(scope))
+        query = query.condition(
+            cf.makeCondition(
+                [
+                    cf.makeCondition("contentTypeEnumId", "is-null", null),
+                    cf.makeCondition("contentTypeEnumId", "not-equals", "PctCheckImage")
+                ],
+                "or"
             )
-            .condition(
-                cf.makeCondition(
-                    [cf.makeCondition("thruDate", "is-null", null), cf.makeCondition("thruDate", "greater", date)],
-                    "or"
-                )
-            )
-        if (p.currencyUomId) query = query.condition("currencyUomId", p.currencyUomId)
-        if (search && String(p.text || "").trim())
-            query = query.condition(
-                cf.makeCondition(
-                    ["paymentMethodId", "description"].map(field =>
-                        cf.makeCondition(field, "like", "%" + String(p.text).trim().slice(0, 200) + "%").ignoreCase()
-                    ),
-                    "or"
-                )
-            )
-        return query
+        )
+    return query
+}
+// A payment the user may read, and what they may do with its files: add them (canChange), replace or remove them
+// (not once the payment is posted: contentLocked) and read check images (canReadCheck).
+function access(p) {
+    const scope = paymentScope(p),
+        posted = find("mantle.ledger.transaction.AcctgTrans", {paymentId: scope.record.paymentId, isPosted: "Y"}).count() > 0
+    return {
+        organizationPartyId: scope.organizationPartyId,
+        partyId: scope.partyId,
+        cashDirection: scope.cashDirection,
+        canChange: scope.broad && has("PAYMENT_EDIT"),
+        contentLocked: posted,
+        canReadCheck: treasury(scope)
     }
-    const count = q().count(),
-        page = lib.page(q().orderBy("description,paymentMethodId"), p, "records", count),
-        ids = [...new Set(Array.from(p.selectedPaymentMethodIdList || []).map(String))]
-    if (ids.length > 200) denied("PAYMENT_SELECTION_LIMIT", "Select at most two hundred methods")
-    return Object.assign(
-        lib.policy.pick(page, ["recordCount", "pageIndex", "pageSize", "pageMaxIndex", "pageRangeLow", "pageRangeHigh"]),
-        {
-            rows: methodRows(page.rows),
-            selectedRows: ids.length ? methodRows(Array.from(q(false).condition("paymentMethodId", "in", ids).list())) : [],
-            complete: true,
-            errors: []
-        }
-    )
+}
+// The organization whose payment methods a user with payment view authority may choose from.
+function methodScope(p) {
+    const scope = paymentContext(p)
+    if (!scope.broad) denied("PERMISSION_DENIED", "Payment method choices require payment view authority")
+    return {organizationPartyId: scope.organizationPartyId}
+}
+// Masked rows of the given payment methods, for a service's paymentMethodList.
+function maskedMethods(p) {
+    return {methodRows: methodRows(Array.from(p.paymentMethodList || []))}
 }
 function visibleApplications(scope, applicationRows) {
     if (!applicationRows.length && !scope.record.forInvoiceId) return {rows: [], restricted: false, invoiceIds: new Set()}
@@ -1113,7 +1102,7 @@ function visibleApplications(scope, applicationRows) {
     )
     return {rows: visible, restricted: visible.length !== applicationRows.length, invoiceIds: allowedInvoices}
 }
-function paymentDetail(p) {
+function paymentDetailRead(p) {
     const scope = paymentScope(p),
         record = scope.record,
         apps = paymentApplications([p.paymentId]),
@@ -1190,6 +1179,8 @@ function paymentDetail(p) {
     ).map(row => paymentProjection(scope, row, paymentApplications([row.paymentId]), names))
     const outputService = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentOutput.js")
     Object.assign(capabilities, outputService.available(scope))
+    out.outputRows = capabilities.outputRows
+    delete capabilities.outputRows
     if (record.paymentTypeEnumId === "PtInternalTransfer") {
         Object.assign(
             out,
@@ -1218,22 +1209,20 @@ function paymentDetail(p) {
         if (instruction?.organizationPartyId === scope.organizationPartyId)
             out.gatewayInstruction = gateway.instructionSummary(instruction)
     }
-    out.contentRows = Array.from(
-        find(outputService.readEntityName, {paymentId: p.paymentId})
-            .condition(outputService.readCondition({organizationPartyId: scope.organizationPartyId, paymentId: p.paymentId}))
-            .orderBy("-contentDate,paymentContentId")
-            .limit(100)
-            .list()
-    ).map(row =>
-        lib.policy.pick(lib.display(row), [
-            "paymentContentId",
-            "contentTypeEnumId",
-            "description",
-            "contentDate",
-            "contentDateText",
-            "userId"
-        ])
-    )
+    out.contentRows = contentQuery(scope)
+        .orderBy("-contentDate,paymentContentId")
+        .limit(100)
+        .list()
+        .map(row =>
+            lib.policy.pick(lib.display(row), [
+                "paymentContentId",
+                "contentTypeEnumId",
+                "description",
+                "contentDate",
+                "contentDateText",
+                "userId"
+            ])
+        )
     out.historyRows = Array.from(
         find("mantle.account.payment.PaymentLifecycleEvent", {
             paymentId: p.paymentId,
@@ -1349,8 +1338,7 @@ function paymentDetail(p) {
             .evidenceOptions(
                 scope,
                 Array.from(
-                    find("mantle.account.payment.PaymentContent", {paymentId: p.paymentId})
-                        .condition("paymentOutputId", "is-null", null)
+                    contentQuery(scope)
                         .orderBy("-contentDate,paymentContentId")
                         .limit(101)
                         .list()
@@ -1363,7 +1351,17 @@ function paymentDetail(p) {
     }
     return out
 }
+const operations = {payments, paymentDetail: paymentDetailRead, access, methodScope, maskedMethods}
+// Runs one payment read for its service and puts the results in the service's context.
+function execute(op, context) {
+    if (!operations[op]) throw new Error("Unknown payment workflow operation " + op)
+    const result = operations[op](context)
+    ec.context.putAll(result)
+    return result
+}
+const paymentDetail = paymentDetailRead
 ;({
+    execute,
     lib,
     I,
     P,
@@ -1379,6 +1377,7 @@ function paymentDetail(p) {
     openItems,
     broadRead,
     ledgerRead,
+    treasury,
     paymentContext,
     paymentQuery,
     paymentScope,
@@ -1394,7 +1393,6 @@ function paymentDetail(p) {
     cardIdentityFields,
     methodIdentities,
     methodRows,
-    methods,
     paymentDetail,
     manualInstruments
 })

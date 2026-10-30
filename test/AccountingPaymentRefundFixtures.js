@@ -39,7 +39,7 @@ function counts(paymentId) {
         payments: lib.find("mantle.account.payment.Payment", {refundForPaymentId: paymentId}).count(),
         applications: lib.find("mantle.account.payment.PaymentApplication", {toPaymentId: paymentId}).count(),
         transactions: lib.find("mantle.ledger.transaction.AcctgTrans").count(),
-        outputs: lib.find("mantle.account.payment.PaymentIssuedOutput").count(),
+        outputs: lib.find("mantle.account.payment.PaymentContent").condition("contentTypeEnumId", "in", ["PctReceipt", "PctPaymentDocument", "PctCheckImage"]).count(),
         provider: lib.find("mantle.account.method.PaymentGatewayResponse").count()
     }
 }

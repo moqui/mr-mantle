@@ -122,8 +122,7 @@ feature(
                     row.canOpen === true &&
                     [result.fromPaymentId, result.toPaymentId].includes(row.paymentId)
             )
-            outputs.every(row => row.approvedHtml.includes("Internal transfer"))
-            outputs.some(row => row.approvedHtml.includes("Principal") && row.approvedHtml.includes("Fee"))
+            outputs.every(row => row.documentHtml.includes("Internal transfer"))
         }
     }
 )

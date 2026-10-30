@@ -1,0 +1,64 @@
+<#--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<#-- An issued payment document (receipt, detail or check) from mantle.account.PaymentServices.get#PaymentDocumentInfo;
+    ${} is HTML escaped. -->
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${document.title}</title>
+<style>
+@page { size: A4; margin: 18mm; }
+body { font: 11pt sans-serif; color: #20252b; }
+h1 { font-size: 20pt; margin: 0 0 12pt; }
+table { width: 100%; border-collapse: collapse; margin-top: 12pt; }
+th, td { text-align: left; padding: 4pt 6pt; border-bottom: 1px solid #d8dde3; }
+th { width: 35%; font-weight: 600; }
+.amount { font-size: 18pt; font-weight: 600; }
+.check { border: 2px solid #20252b; padding: 12pt; }
+.micr { font-family: monospace; letter-spacing: 2pt; margin-top: 18pt; }
+footer { margin-top: 24pt; font-size: 9pt; color: #5b6570; }
+</style>
+</head>
+<body>
+<h1>${document.title}</h1>
+<div class="${document.outputType == 'check' ? 'check' : 'document'}">
+<p><strong>${document.organizationName || ''}</strong></p>
+<p class="amount">${document.amountText}</p>
+<table>
+<tr><th>Payment</th><td>${document.paymentId}</td></tr>
+<tr><th>Date</th><td>${document.paymentDateText || ''}</td></tr>
+<tr><th>${document.partyLabel}</th><td>${document.partyName || ''}</td></tr>
+<tr><th>Currency</th><td>${document.currencyUomId}</td></tr>
+<#if document.methodLabel>
+<tr><th>Method</th><td>${document.methodLabel}</td></tr>
+</#if>
+<#if document.referenceNumber>
+<tr><th>Reference</th><td>${document.referenceNumber}</td></tr>
+</#if>
+<#if document.comments>
+<tr><th>Comments</th><td>${document.comments}</td></tr>
+</#if>
+<#if document.checkNumber>
+<tr><th>Check number</th><td>${document.checkNumber}</td></tr>
+<tr><th>Bank</th><td>${document.bankName || ''}</td></tr>
+</#if>
+</table>
+<#if document.outputType == 'check'>
+<p class="micr">${document.routingNumber || ''} · ${document.accountNumber || ''} · ${document.checkNumber || ''}</p>
+</#if>
+</div>
+<footer>${document.title} · ${document.paymentId}</footer>
+</body>
+</html>

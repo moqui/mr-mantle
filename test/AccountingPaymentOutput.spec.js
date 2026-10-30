@@ -1,3 +1,4 @@
+// Issued payment documents: payment content written at delivery from the PaymentDocument template.
 const helper = () => ec.resource.script("component://mr-mantle/test/AccountingPaymentLifecycleFixtures.js")
 let f
 spec({
@@ -14,143 +15,113 @@ spec({
         login("john.doe")
     }
 })
-feature("issued receipt read is pure, revision round-trips and immutable PDF bytes match the stored hash", {
+function contentRows(h, paymentId) {
+    return h.lib.rows("mantle.account.payment.PaymentContent", {paymentId})
+}
+function bytesOf(location) {
+    const stream = ec.resource.getLocationReference(location).getInputStream()
+    try {
+        return stream.readAllBytes()
+    } finally {
+        stream.close()
+    }
+}
+feature("delivery issues a receipt and a detail as payment content and reading one changes nothing", {
     when() {
         const h = helper()
         login(f.users.treasury)
         const paymentId = h.delivered(f, {amount: "40"}),
-            view = h.detail(f, paymentId),
-            before = h.count("mantle.account.payment.PaymentIssuedOutput", {paymentId}),
-            first = h.native("get#PaymentOutput", {
-                organizationPartyId: f.org,
-                paymentId,
-                outputType: "receipt",
-                sourceVersion: view.sourceVersion
-            }),
-            second = h.native("get#PaymentOutput", {
-                organizationPartyId: f.org,
-                paymentId,
-                outputId: first.outputId,
-                sourceVersion: first.sourceVersion
-            }),
-            row = h.lib.one("mantle.account.payment.PaymentIssuedOutput", {paymentOutputId: first.outputId}),
-            stream = ec.resource.getLocationReference(row.contentLocation).getInputStream()
-        let actualHash
-        try {
-            actualHash = h.lib.hash(StringUtilities.base64Encode(stream.readAllBytes()))
-        } finally {
-            stream.close()
-        }
-        return {first, second, before, after: h.count("mantle.account.payment.PaymentIssuedOutput", {paymentId}), row, actualHash}
+            before = contentRows(h, paymentId),
+            receipt = h.native("get#PaymentOutput", {organizationPartyId: f.org, paymentId, outputType: "receipt"}),
+            again = h.native("get#PaymentOutput", {organizationPartyId: f.org, outputId: receipt.outputId}),
+            content = h.lib.one("mantle.account.payment.PaymentContent", {paymentContentId: receipt.outputId})
+        return {before, after: contentRows(h, paymentId), receipt, again, content, pdf: bytesOf(content.contentLocation)}
     },
-    then({first, second, before, after, row, actualHash}) {
-        first.outputId == second.outputId
-        first.contentHash == second.contentHash
-        first.outputSourceVersion == second.outputSourceVersion
-        first.contentHash == actualHash
-        before == after
-        toDecimal(first.summary.amount).eq(40)
-        first.summary.currencyUomId == "USD"
-        first.summary.accountingDateText == f.day
-        first.summary.maskedMethodLabel.includes("6789")
-        first.approvedHtml.includes("123456789") == false
-        row.contentLocation.startsWith("dbresource://mantle/content/payment-issued/")
-        row.contentLocation.includes("/payment/" + row.paymentId + "/") == false
-        first.contentLocation == null
+    then({before, after, receipt, again, content, pdf}) {
+        before.map(row => row.contentTypeEnumId).sort().join(",") == "PctPaymentDocument,PctReceipt"
+        after.length == before.length
+        again.outputId == receipt.outputId
+        again.outputType == "receipt"
+        receipt.fileName == "Payment-" + content.paymentId + "-receipt.pdf"
+        content.contentLocation.includes("/payment/" + content.paymentId + "/content_" + content.paymentContentId + "/")
+        String.fromCharCode(pdf[0], pdf[1], pdf[2], pdf[3]) == "%PDF"
+        toDecimal(receipt.summary.amount).eq(40)
+        receipt.summary.currencyUomId == "USD"
+        receipt.summary.methodLabel.includes("6789")
+        receipt.documentHtml.includes("Payment receipt")
+        receipt.documentHtml.includes("123456789") == false
     }
 })
-feature("issued checks require treasury in output and content helpers and are omitted before ordinary file counts", {
+feature("an outgoing check is numbered at delivery and its document needs treasury authority", {
     when() {
         const h = helper()
         login(f.users.treasury)
-        const paymentId = h.delivered(f, {cashDirection: "outgoing", amount: "35", paymentInstrumentEnumId: "PiCompanyCheck"}),
+        const paymentId = h.delivered(f, {cashDirection: "outgoing", paymentInstrumentEnumId: "PiCompanyCheck", amount: "15"}),
             check = h.native("get#PaymentOutput", {organizationPartyId: f.org, paymentId, outputType: "check"}),
-            row = h.lib.one("mantle.account.payment.PaymentIssuedOutput", {paymentOutputId: check.outputId}),
-            bankBefore = h.lib.one("mantle.account.method.BankAccount", {paymentMethodId: f.methodId}).lastCheckNumber
+            treasuryView = h.detail(f, paymentId)
         login(f.users.paymentView)
-        const view = h.detail(f, paymentId),
-            denied = h.rejected("get#PaymentOutput", {organizationPartyId: f.org, paymentId, outputType: "check"}),
-            module = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentOutput.js"),
-            visible = Array.from(
-                h.lib
-                    .find(module.readEntityName, {paymentId})
-                    .condition(module.readCondition({organizationPartyId: f.org, paymentId}))
-                    .list()
-            )
-        let contentDenied
-        try {
-            module.canReadContent(row.paymentContentId, f.org)
-            contentDenied = ""
-        } catch (error) {
-            contentDenied = error.message
-        }
+        const readerView = h.detail(f, paymentId),
+            refused = h.rejected("get#PaymentOutput", {organizationPartyId: f.org, paymentId, outputType: "check"}),
+            receipt = h.native("get#PaymentOutput", {organizationPartyId: f.org, paymentId, outputType: "receipt"})
+        login("john.doe")
         return {
             check,
-            view,
-            denied,
-            contentDenied,
-            visible,
-            bankBefore,
-            bankAfter: h.lib.one("mantle.account.method.BankAccount", {paymentMethodId: f.methodId}).lastCheckNumber
+            treasuryView,
+            readerView,
+            refused,
+            receipt,
+            number: h.lib.one("mantle.account.method.BankAccountCheck", {paymentMethodId: f.methodId, paymentId: paymentId})
         }
     },
-    then({check, view, denied, contentDenied, visible, bankBefore, bankAfter}) {
-        check.summary.checkNumber != null
-        check.approvedHtml.includes("123456789")
-        denied.includes("PERMISSION_DENIED")
-        contentDenied.includes("PERMISSION_DENIED")
-        view.capabilities.canPrintCheck == false
-        view.contentRows.every(row => row.contentTypeEnumId !== "PctCheckImage")
-        visible.length == 2
-        visible.every(row => row.contentTypeEnumId !== "PctCheckImage")
-        Number(bankBefore) == Number(bankAfter)
+    then({check, treasuryView, readerView, refused, receipt, number}) {
+        check.outputType == "check"
+        check.summary.checkNumber == String(number.checkNumber)
+        treasuryView.capabilities.canPrintCheck == true
+        treasuryView.contentRows.some(row => row.contentTypeEnumId === "PctCheckImage")
+        readerView.capabilities.canPrintCheck == false
+        readerView.contentRows.some(row => row.contentTypeEnumId === "PctCheckImage") == false
+        refused.includes("Treasury authority")
+        receipt.outputType == "receipt"
+    }
+})
+feature("a posted payment's files are kept as issued while new files can still be added", {
+    when() {
+        const h = helper(),
+            draftId = h.draft(f),
+            draftFile = h.native("create#PaymentContent", {
+                paymentId: draftId,
+                contentTypeEnumId: "PctPaymentDocument",
+                contentFile: uploadedFile("Instruction.txt", "First instruction")
+            }).paymentContentId
+        h.native("update#PaymentContent", {
+            paymentContentId: draftFile,
+            contentFile: uploadedFile("Instruction.txt", "Corrected instruction")
+        })
+        const paymentId = h.delivered(f),
+            issued = contentRows(h, paymentId).find(row => row.contentTypeEnumId === "PctReceipt"),
+            replaced = h.rejected("update#PaymentContent", {
+                paymentContentId: issued.paymentContentId,
+                contentFile: uploadedFile("Receipt.pdf", "Forged receipt")
+            }),
+            added = h.native("create#PaymentContent", {
+                paymentId,
+                contentTypeEnumId: "PctPaymentDocument",
+                contentFile: uploadedFile("Bank advice.txt", "Bank advice")
+            }).paymentContentId,
+            access = h.native("get#PaymentAccess", {organizationPartyId: f.org, paymentId}),
+            draftAccess = h.native("get#PaymentAccess", {organizationPartyId: f.org, paymentId: draftId})
+        return {replaced, added, access, draftAccess}
+    },
+    then({replaced, added, access, draftAccess}) {
+        replaced.includes("cannot be replaced")
+        added != null
+        access.contentLocked == true
+        access.canChange == true
+        draftAccess.contentLocked == false
     }
 })
 feature(
-    "completed custom operation keys reopen and replay exactly while pre-issuance reader conditions still exclude new checks",
-    {
-        when() {
-            const h = helper()
-            login(f.users.treasury)
-            const paymentId = h.draft(f, {cashDirection: "outgoing", amount: "18", paymentInstrumentEnumId: "PiCompanyCheck"})
-            login(f.users.paymentView)
-            const module = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentOutput.js"),
-                condition = module.readCondition({organizationPartyId: f.org, paymentId})
-            login(f.users.treasury)
-            const preview = h.preview(f, paymentId, "deliver"),
-                result = h.confirm(preview, "custom-payment-external-key"),
-                completed = h.native("get#PaymentStatePreview", {organizationPartyId: f.org, previewId: preview.previewId}),
-                again = h.confirm(completed, completed.operationKey),
-                before = h.count("mantle.account.payment.PaymentIssuedOutput", {paymentId})
-            login(f.users.paymentView)
-            const rows = Array.from(h.lib.find(module.readEntityName, {paymentId}).condition(condition).list())
-            return {
-                result,
-                completed,
-                again,
-                before,
-                after: h.count("mantle.account.payment.PaymentIssuedOutput", {paymentId}),
-                rows
-            }
-        },
-        then({result, completed, again, before, after, rows}) {
-            completed.operationKey == "custom-payment-external-key"
-            completed.status == "complete"
-            completed.capabilities.canPrintReceipt == true
-            completed.capabilities.canPrintDetail == true
-            completed.capabilities.canPrintCheck == true
-            completed.capabilities.outputRows == null
-            completed.results.outputRows.length == 3
-            again.alreadyApplied == true
-            again.outputId == result.outputId
-            before == after
-            rows.length == 2
-            rows.every(row => row.issuedOutputType !== "check")
-        }
-    }
-)
-feature(
-    "record scope infers an authoritative organization only with no selection and still denies another selected organization",
+    "payment access infers an authoritative organization only with no selection and still denies another selected organization",
     {
         when() {
             const h = helper(),
@@ -164,9 +135,7 @@ feature(
             try {
                 ec.user.setPreference("ACTIVE_ORGANIZATION", "")
                 login(f.users.paymentView)
-                positive = ec.resource
-                    .script("component://mr-mantle/service/mantle/account/PaymentWorkflow.js")
-                    .paymentScope({paymentId}).organizationPartyId
+                positive = h.native("get#PaymentAccess", {paymentId}).organizationPartyId
                 login("john.doe")
                 h.call("create#mantle.party.PartyRelationship", {
                     partyRelationshipId: "OUT_OTHER_VIEW_REL",
@@ -179,14 +148,7 @@ feature(
                 login(f.users.paymentView)
                 ec.user.setPreference("ACTIVE_ORGANIZATION", other.org)
                 login(f.users.paymentView)
-                try {
-                    ec.resource
-                        .script("component://mr-mantle/service/mantle/account/PaymentWorkflow.js")
-                        .paymentScope({paymentId})
-                    negative = ""
-                } catch (error) {
-                    negative = error.message
-                }
+                negative = h.rejected("get#PaymentAccess", {paymentId})
             } finally {
                 login(f.users.paymentView)
                 ec.user.setPreference("ACTIVE_ORGANIZATION", saved || "")

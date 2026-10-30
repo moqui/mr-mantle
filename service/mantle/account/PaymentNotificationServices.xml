@@ -1,39 +1,50 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <service verb="prepare" noun="PaymentValidationNotice" allow-remote="false">
-        <description>Reserve a durable validation publication in the native draft transaction, bound to its immutable event.</description>
-        <in-parameters><parameter name="paymentId"/><parameter name="validationRequired" type="Boolean"/><parameter name="validationEventId"/><parameter name="validationSourceVersion"/></in-parameters>
-        <out-parameters><parameter name="prepared" type="Boolean"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentNotifications.js').prepare(context))</script></actions>
-    </service>
-    <service verb="process" noun="PaymentValidationNotices" allow-remote="false" authenticate="anonymous-all">
-        <description>Publish pending validation notices after commit. Each recipient has an independent transaction and stable delivery identity.</description>
-        <in-parameters><parameter name="validationEventId"/><parameter name="afterEventId"/><parameter name="limit" type="Integer" default="100"/></in-parameters>
-        <out-parameters><parameter name="results" type="List"/><parameter name="incomplete" type="Boolean"/><parameter name="nextEventId"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentNotifications.js').process(context))</script></actions>
-    </service>
-    <service verb="send" noun="PaymentValidationNotice" allow-remote="false" authenticate="anonymous-all" transaction="force-new">
-        <description>Recheck one pending event and recipient, then atomically save the notification and its exact delivery result.</description>
-        <in-parameters><parameter name="validationEventId" required="true"/><parameter name="userId" required="true"/></in-parameters>
-        <out-parameters><parameter name="userId"/><parameter name="notificationMessageId"/><parameter name="status"/><parameter name="alreadySent" type="Boolean"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentNotifications.js').send(context))</script></actions>
-    </service>
-    <service verb="publish" noun="PaymentValidationNotice" allow-remote="false" authenticate="anonymous-all" transaction="force-new">
-        <description>Process one bound validation publication; its failure cannot roll back another publication.</description>
-        <in-parameters><parameter name="validationEventId" required="true"/></in-parameters>
-        <out-parameters><parameter name="validationEventId"/><parameter name="status"/><parameter name="recipients" type="List"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentNotifications.js').publish(context))</script></actions>
-    </service>
-    <service verb="retire" noun="PaymentValidationNotices" allow-remote="false" authenticate="anonymous-all">
-        <description>Retire obsolete or natively decided validation requests, including every recipient's approval message.</description>
-        <in-parameters><parameter name="paymentId" required="true"/></in-parameters>
-        <out-parameters><parameter name="results" type="List"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentNotifications.js').retire(context))</script></actions>
-    </service>
-    <service verb="retire" noun="PaymentValidationNotice" allow-remote="false" authenticate="anonymous-all" transaction="force-new">
-        <description>Retire one bound request only after its revision is obsolete or its native decision is complete.</description>
-        <in-parameters><parameter name="validationEventId" required="true"/></in-parameters>
-        <out-parameters><parameter name="validationEventId"/><parameter name="status"/></out-parameters>
-        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentNotifications.js').retireOne(context))</script></actions>
+    <service verb="send" noun="PaymentValidationNotice" allow-remote="false" authenticate="anonymous-all">
+        <description>Send the PaymentValidation notification of a proposed payment to the topic's subscribers, after its
+            draft commits (PaymentValidation.secas.xml). The message carries the revision to validate; a recipient
+            approves or refuses it with approve#/refuse#PaymentValidationNotice. Sends nothing for a payment no longer
+            proposed. It runs after commit without a user; the sender is the user who proposed the payment.</description>
+        <in-parameters>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="validationEventId" required="true"/>
+            <parameter name="sourceVersion" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="notificationMessageId"/>
+        </out-parameters>
+        <actions>
+            <entity-find-one entity-name="mantle.account.payment.Payment" value-field="payment" disable-authz="true"/>
+            <if condition="payment == null || payment.statusId != 'PmntProposed'">
+                <return/>
+            </if>
+            <entity-find-one entity-name="mantle.account.payment.PaymentLifecycleEvent" value-field="validationEvent"
+                    disable-authz="true">
+                <field-map field-name="paymentLifecycleEventId" from="validationEventId"/>
+            </entity-find-one>
+            <set field="message" from="{
+                    paymentId:paymentId, organizationPartyId:validationEvent?.organizationPartyId,
+                    validationEventId:validationEventId, sourceVersion:sourceVersion,
+                    amount:String(payment.amount ?? 0), currencyUomId:payment.amountUomId}"/>
+            <script><![CDATA[
+                const notification = ec.makeNotificationMessage().topic('PaymentValidation').message(message)
+                    .record('mantle.account.payment.Payment', paymentId).actorUserId(validationEvent?.userId)
+                notification.send()
+                notificationMessageId = notification.getNotificationMessageId()
+            ]]></script>
+        </actions>
     </service>
 </services>

@@ -1,6 +1,10 @@
 // Standalone payment lifecycle fixtures; no application records or application groups are used.
 const settlement = ec.resource.script("component://mr-mantle/test/AccountingSettlementFixtures.js")
 const {lib, call} = settlement
+// A fresh operation key for a test request.
+function key(prefix) {
+    return prefix + ec.entity.sequencedIdPrimary("AccountingPaymentLifecycleSpecKey", null, null)
+}
 function native(name, parameters) {
     return call("mantle.account.PaymentServices." + name, parameters)
 }
@@ -50,7 +54,7 @@ function request(f, extra = {}) {
             organizationMethodVersion: module.methodVersion(method),
             referenceNumber: "Manual receipt",
             comments: "Native payment lifecycle",
-            operationKey: "life-create-" + ec.user.randomString(20)
+            operationKey: key("life-create-")
         },
         extra
     )
@@ -78,7 +82,7 @@ function preview(f, paymentId, action, extra = {}) {
         )
     )
 }
-function confirm(review, operationKey = "life-state-" + ec.user.randomString(20)) {
+function confirm(review, operationKey = key("life-state-")) {
     return native("change#PaymentState", {previewId: review.previewId, inputFingerprint: review.inputFingerprint, operationKey})
 }
 function delivered(f, extra = {}) {
@@ -114,11 +118,11 @@ function apply(f, paymentId, invoiceId, amount, direction = "receivable") {
             [],
             direction
         ),
-        "life-apply-" + ec.user.randomString(20)
+        key("life-apply-")
     )
 }
 function rawApplication(values) {
-    const id = values.paymentApplicationId || ec.user.randomString(32)
+    const id = values.paymentApplicationId || key("LIFE_APP_")
     return parallel(
         1,
         (thread, args) => {
@@ -134,6 +138,7 @@ function rawApplication(values) {
     )[0]
 }
 ;({
+    key,
     settlement,
     lib,
     call,

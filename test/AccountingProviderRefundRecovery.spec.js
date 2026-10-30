@@ -278,7 +278,7 @@ feature(
                     rollbackFailure = error.message
                 }
                 const restored = {
-                    outputs: h.lib.find("mantle.account.payment.PaymentIssuedOutput", {paymentId: draftId}).count(),
+                    outputs: h.lib.find("mantle.account.payment.PaymentContent", {paymentId: draftId}).condition("contentTypeEnumId", "in", ["PctReceipt", "PctPaymentDocument", "PctCheckImage"]).count(),
                     transactions: h.lib.find("mantle.ledger.transaction.AcctgTrans", {paymentId: draftId}).count(),
                     applications: h.lib.find("mantle.account.payment.PaymentApplication", {paymentId: draftId}).count(),
                     operation: h.lib.find(h.lib.operationEntity, {operationKey: confirm.operationKey}).count(),

@@ -68,7 +68,6 @@ feature("unapplying one of two receipts restores only its own original applicati
         second.applicationRows.some(row => toDecimal(row.amountApplied).eq(40))
         invoice.statusId == "InvoiceFinalized"
         toDecimal(invoice.unpaidTotal).eq(60)
-        invoice.paidDate == null
         cash.isPosted == "Y"
         cash.reversedByAcctgTransId == null
     }
@@ -176,97 +175,33 @@ feature("a closed original fiscal period refuses application reversal with every
         view.payment.statusId == "PmntDelivered"
     }
 })
-feature("direct cash unapplication is whole-set only and preserves original, reversal and exact unapplied replacement", {
+feature("direct cash unapplication reposts the cash unapplied on its original day through revert#PaymentApplicationPost", {
     when() {
         const h = helper(),
             invoiceId = h.settlement.invoice(f, "10"),
             direct = h.settlement.legacyDirectPayment(f, invoiceId, "10")
-        const sourceKey = h.settlement.key("payment", direct.paymentId),
-            targetKey = h.settlement.key("invoice", invoiceId)
-        h.settlement.confirm(
-            h.settlement.review(f, [
-                {sourceKey, targetKey, amount: "4"},
-                {sourceKey, targetKey, amount: "6"}
-            ]),
-            "corr-direct-aggregate-restore"
-        )
-        const view = h.detail(f, direct.paymentId),
-            positive = view.applicationRows.filter(row => toDecimal(row.amountApplied).compare(0) > 0),
-            partial = h.rejected(
-                "preview#PaymentUnapply",
-                h.unapplyRequest(f, direct.paymentId, [positive[0].paymentApplicationId])
-            ),
-            before = h.lib.rows("mantle.ledger.transaction.AcctgTrans", {paymentId: direct.paymentId}),
-            result = unapply(h, h.unapplyRequest(f, direct.paymentId), "corr-direct-whole")
+        h.apply(f, direct.paymentId, invoiceId, "10")
+        const before = h.lib.rows("mantle.ledger.transaction.AcctgTrans", {paymentId: direct.paymentId}),
+            result = unapply(h, h.unapplyRequest(f, direct.paymentId), "corr-direct-whole"),
+            replacement = h.lib.one("mantle.ledger.transaction.AcctgTrans", {acctgTransId: result.replacementAcctgTransIds[0]})
         return {
-            partial,
             before,
             result,
+            replacement,
             after: h.detail(f, direct.paymentId),
-            transactions: h.lib.rows("mantle.ledger.transaction.AcctgTrans", {paymentId: direct.paymentId}),
             invoice: h.lib.one(h.lib.invoiceEntity, {invoiceId})
         }
     },
-    then({partial, before, result, after, transactions, invoice}) {
-        partial.includes("DIRECT_PAYMENT_UNAPPLY_REQUIRED")
+    then({before, result, replacement, after, invoice}) {
         before.length == 1
         result.originalAcctgTransIds.length == 1
-        result.reversalAcctgTransIds.length == 1
         result.replacementAcctgTransIds.length == 1
-        transactions.length == 3
-        transactions.filter(tx => !tx.reverseOfAcctgTransId && !tx.reversedByAcctgTransId).length == 1
+        replacement.isPosted == "Y"
+        replacement.invoiceId == null
+        helper().lib.policy.postingDay(replacement) == helper().lib.policy.postingDay(before[0])
         toDecimal(after.totals.unappliedTotal).eq(10)
         toDecimal(invoice.unpaidTotal).eq(10)
         after.applicationRows.every(row => toDecimal(row.amountApplied).isZero())
-    }
-})
-feature("NULL-day direct cash at next UTC date retains its actual original SQL day on replacement without history backfill", {
-    when() {
-        const h = helper(),
-            userId = ec.user.userId,
-            timeZone = ec.user.userAccount.timeZone
-        try {
-            h.call("update#moqui.security.UserAccount", {userId, timeZone: "America/Chicago"})
-            login("john.doe")
-            const boundary = Object.assign({}, f, {
-                    timestamp: ec.l10n.parseTimestamp(f.day + " 23:30:00", "yyyy-MM-dd HH:mm:ss")
-                }),
-                invoiceId = h.settlement.invoice(boundary, "10"),
-                direct = h.settlement.legacyDirectPayment(boundary, invoiceId, "10")
-            h.apply(boundary, direct.paymentId, invoiceId, "10")
-            const original = h.lib.rows("mantle.ledger.transaction.AcctgTrans", {paymentId: direct.paymentId})[0],
-                review = h.native("preview#PaymentUnapply", h.unapplyRequest(boundary, direct.paymentId))
-            h.call("update#moqui.security.UserAccount", {userId, timeZone: "UTC"})
-            login("john.doe")
-            const result = h.native("unapply#ReviewedPayment", {
-                    previewId: review.previewId,
-                    inputFingerprint: review.inputFingerprint,
-                    operationKey: "corr-direct-book-day"
-                }),
-                replacement = h.lib.one("mantle.ledger.transaction.AcctgTrans", {
-                    acctgTransId: result.replacementAcctgTransIds[0]
-                })
-            return {
-                original,
-                result,
-                replacement,
-                payment: h.lib.one("mantle.account.payment.Payment", {paymentId: direct.paymentId})
-            }
-        } finally {
-            h.lib.probe("update#moqui.security.UserAccount", {userId, timeZone})
-            login("john.doe")
-        }
-    },
-    then({original, result, replacement, payment}) {
-        helper().lib.policy.postingDay(original) == f.day
-        helper().lib.policy.calendarDateText(original.transactionDate) > f.day
-        payment.accountingDate == null
-        helper().lib.policy.postingDay(replacement) == f.day
-        Number(replacement.transactionDate) == Number(original.transactionDate)
-        replacement.invoiceId == null
-        replacement.paymentApplicationId == null
-        replacement.isPosted == "Y"
-        result.replacementAcctgTransIds.length == 1
     }
 })
 feature("an unreviewed ledger reversal is refused for the same treasury actor whose reviewed native void succeeds", {
@@ -330,7 +265,7 @@ feature("bank identity changes invalidate reviewed draft methods and retained de
         status == "PmntProposed"
     }
 })
-feature("AP bill unapplication restores paid status and date while preserving its original outgoing cash", {
+feature("AP bill unapplication restores the approved status while preserving its original outgoing cash", {
     when() {
         const h = helper(),
             invoiceId = h.settlement.invoice(f, "25", "payable"),
@@ -341,10 +276,43 @@ feature("AP bill unapplication restores paid status and date while preserving it
     },
     then({result, invoice, view}) {
         invoice.statusId == "InvoiceApproved"
-        invoice.paidDate == null
         toDecimal(invoice.unpaidTotal).eq(25)
         result.reversalAcctgTransIds.length == 1
         view.payment.cashDirection == "outgoing"
         toDecimal(view.totals.unappliedTotal).eq(25)
+    }
+})
+feature("simultaneous exact void confirmations reverse each original once and replay the recorded IDs", {
+    when() {
+        const h = helper(),
+            paymentId = h.delivered(f),
+            invoiceId = h.settlement.invoice(f, "60")
+        h.apply(f, paymentId, invoiceId, "60")
+        const preview = h.preview(f, paymentId, "void"),
+            args = {previewId: preview.previewId, inputFingerprint: preview.inputFingerprint, operationKey: "corr-void-parallel"},
+            results = parallel(
+                2,
+                (thread, args) => {
+                    login("john.doe")
+                    ec.artifactExecution.disableAuthz()
+                    return call("mantle.account.PaymentServices.change#PaymentState", args)
+                },
+                args,
+                {transaction: false, timeout: 30}
+            )
+        return {
+            results,
+            row: h.lib.one("mantle.account.payment.Payment", {paymentId}),
+            transactions: h.lib.rows("mantle.ledger.transaction.AcctgTrans", {paymentId})
+        }
+    },
+    then({results, row, transactions}) {
+        results.length == 2
+        results.filter(result => result.alreadyApplied).length == 1
+        results[0].reversalAcctgTransIds.join(",") == results[1].reversalAcctgTransIds.join(",")
+        row.statusId == "PmntVoid"
+        transactions.length == 4
+        transactions.filter(tx => tx.reverseOfAcctgTransId).length == 2
+        transactions.every(tx => tx.isPosted === "Y")
     }
 })

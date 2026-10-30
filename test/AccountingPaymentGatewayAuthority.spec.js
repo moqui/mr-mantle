@@ -140,7 +140,7 @@ feature("accepted capture retains its evidence and hold when permission authorit
                 status: "held"
             }),
             cashBefore = h.lib.one("mantle.account.payment.Payment", {paymentId: attempt.cashPaymentId}),
-            outputsBefore = h.lifecycle.count("mantle.account.payment.PaymentIssuedOutput", {
+            outputsBefore = h.lifecycle.count("mantle.account.payment.PaymentContent", {
                 paymentId: attempt.cashPaymentId
             }),
             receipt = JSON.parse(attempt.receiptJson || "{}")
@@ -309,7 +309,7 @@ feature("accepted capture retains its evidence and hold when organization author
                 status: "held"
             }),
             cashBefore = h.lib.one("mantle.account.payment.Payment", {paymentId: attempt.cashPaymentId}),
-            outputsBefore = h.lifecycle.count("mantle.account.payment.PaymentIssuedOutput", {
+            outputsBefore = h.lifecycle.count("mantle.account.payment.PaymentContent", {
                 paymentId: attempt.cashPaymentId
             }),
             receipt = JSON.parse(attempt.receiptJson || "{}")
@@ -474,7 +474,7 @@ feature("accepted capture retains its evidence and hold when private authority d
                 status: "held"
             }),
             cashBefore = h.lib.one("mantle.account.payment.Payment", {paymentId: attempt.cashPaymentId}),
-            outputsBefore = h.lifecycle.count("mantle.account.payment.PaymentIssuedOutput", {
+            outputsBefore = h.lifecycle.count("mantle.account.payment.PaymentContent", {
                 paymentId: attempt.cashPaymentId
             }),
             receipt = JSON.parse(attempt.receiptJson || "{}")

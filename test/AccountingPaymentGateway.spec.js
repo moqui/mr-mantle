@@ -45,7 +45,7 @@ feature("gateway draft bindings and authorization review are real scoped reads w
             attemptCount: h.lifecycle.count("mantle.account.payment.PaymentGatewayAttempt", {paymentId}),
             providerCount: h.lifecycle.count("mantle.account.payment.PaymentGatewayTestEffect", {paymentId}),
             transactionCount: h.lifecycle.count("mantle.ledger.transaction.AcctgTrans", {paymentId}),
-            outputCount: h.lifecycle.count("mantle.account.payment.PaymentIssuedOutput", {paymentId})
+            outputCount: h.lifecycle.count("mantle.account.payment.PaymentContent", {paymentId})
         }
     },
     then({choices, option, review, again, payment, attemptCount, providerCount, transactionCount, outputCount}) {

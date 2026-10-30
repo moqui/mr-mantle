@@ -66,7 +66,7 @@ function counts(f) {
             .find("mantle.account.payment.Payment", {financeOrganizationPartyId: f.org, paymentTypeEnumId: "PtInternalTransfer"})
             .count(),
         transactions: lib.find("mantle.ledger.transaction.AcctgTrans", {organizationPartyId: f.org}).count(),
-        outputs: lib.find("mantle.account.payment.PaymentIssuedOutput", {organizationPartyId: f.org}).count()
+        outputs: lib.find("mantle.account.payment.PaymentContent").condition("contentTypeEnumId", "in", ["PctReceipt", "PctPaymentDocument", "PctCheckImage"]).count()
     }
 }
 ;({lifecycle, lib, call, native, fixtures, request, preview, confirm, counts})

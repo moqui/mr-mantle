@@ -1323,7 +1323,6 @@ function completeMoney(n, refundPaymentId, op, attempt = null) {
         refundTotals = workflow.paymentTotals(actualScope.record, applications([refundPaymentId], true))
     if (!remaining.unappliedTotal.eq(n.funding.totals.unappliedTotal.subtract(n.amount)) || !refundTotals.unappliedTotal.isZero())
         denied("REFUND_POSTING_MISMATCH", "Actual consumed funding differs from review")
-    ec.resource.script("component://mr-mantle/service/mantle/account/PaymentArchiveGuard.js").prepare()
     const acctgTransIds = [cashIds[0], apTx[0].acctgTransId],
         event = lifecycle.event(
             actualScope,

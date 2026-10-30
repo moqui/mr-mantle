@@ -841,7 +841,6 @@ function complete(p) {
         before = null
         if (one(P, {paymentId: attempt.cashPaymentId}))
             denied("GATEWAY_FINANCIAL_INCONSISTENT", "Cash exists without the completed attempt")
-        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentArchiveGuard.js").prepare()
         const parent = retained.scope.record,
             child = ec.entity.makeValue(P),
             values = {
@@ -893,7 +892,6 @@ function complete(p) {
         } else if (attempt.action !== "release" || actualScope.record.statusId !== "PmntAuthorized")
             denied("GATEWAY_STATE_INVALID", "The release parent changed state")
         actualScope.record = find(P, {paymentId: attempt.paymentId}).forUpdate(true).one()
-        if (n.evidence.length) ec.resource.script("component://mr-mantle/service/mantle/account/PaymentArchiveGuard.js").prepare()
     }
     const event = lifecycle.event(
         actualScope,

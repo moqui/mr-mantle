@@ -30,46 +30,6 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="settlementRowSeq" type="id"/>
         <field name="currencyUomId" type="id"/>
     </extend-entity>
-    <extend-entity entity-name="PaymentContent" package="mantle.account.payment">
-        <field name="isImmutable" type="text-indicator"/>
-        <field name="paymentOutputId" type="id"/>
-    </extend-entity>
-    <view-entity entity-name="PaymentContentRead" package="mantle.account.payment" cache="never">
-        <member-entity entity-alias="C" entity-name="mantle.account.payment.PaymentContent"/>
-        <member-entity entity-alias="O" entity-name="mantle.account.payment.PaymentIssuedOutput" join-from-alias="C" join-optional="true">
-            <key-map field-name="paymentContentId" related="paymentContentId"/>
-        </member-entity>
-        <alias-all entity-alias="C"/>
-        <alias entity-alias="O" name="issuedOutputType" field="outputType"/>
-    </view-entity>
-    <entity entity-name="PaymentIssuedOutput" package="mantle.account.payment" cache="never">
-        <field name="paymentOutputId" type="id" is-pk="true"/>
-        <field name="organizationPartyId" type="id"/>
-        <field name="paymentId" type="id"/>
-        <field name="paymentContentId" type="id"/>
-        <field name="outputType" type="text-short"/>
-        <field name="sourceVersion" type="text-long"/>
-        <field name="amount" type="currency-amount"/>
-        <field name="currencyUomId" type="id"/>
-        <field name="accountingDate" type="date"/>
-        <field name="userId" type="id"/>
-        <field name="createdDate" type="date-time"/>
-        <field name="contentLocation" type="text-medium"/>
-        <field name="contentHash" type="text-long"/>
-        <field name="fileName" type="text-medium"/>
-        <field name="contentType" type="text-medium"/>
-        <field name="contentSize" type="number-integer"/>
-        <field name="approvedHtml" type="text-very-long"/>
-        <field name="summaryJson" type="text-very-long"/>
-        <field name="operationKey" type="id"/>
-        <index name="PAYMENT_OUTPUT_RECORD">
-            <index-field name="paymentId"/>
-            <index-field name="outputType"/>
-        </index>
-        <index name="PAYMENT_OUTPUT_CONTENT" unique="true">
-            <index-field name="paymentContentId"/>
-        </index>
-    </entity>
     <extend-entity entity-name="Invoice" package="mantle.account.invoice">
         <field name="settlementOperationKey" type="id"/>
         <field name="settlementAdjustmentKind" type="text-short"/>
