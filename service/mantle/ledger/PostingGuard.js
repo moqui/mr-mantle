@@ -102,6 +102,61 @@ function automatic(tx) {
         !stack.includes("mantle.ledger.JournalServices.")
     )
 }
+function postingLocks(tx, applicable, lock = false, sourceDay = null, enabled = true) {
+    const locks = enabled
+        ? rows("mantle.ledger.config.AccountingLock", {
+              organizationPartyId: tx.organizationPartyId
+          })
+        : []
+    const findings = []
+    const fail = (code, message) => findings.push({code, message})
+    for (const initial of locks.sort((a, b) => a.accountingLockId.localeCompare(b.accountingLockId))) {
+        const row = lock
+            ? find("mantle.ledger.config.AccountingLock", {
+                  accountingLockId: initial.accountingLockId
+              })
+                  .forUpdate(true)
+                  .one()
+            : initial
+        if (
+            !applicable.includes(row.lockScope) ||
+            (sourceDay || ec.l10n.format(tx.transactionDate, "yyyy-MM-dd")) > lib.calendarDateText(row.lockThroughDate)
+        )
+            continue
+        const exceptions =
+            row.isHard === "Y"
+                ? []
+                : rows("mantle.ledger.config.AccountingLockException", {
+                      accountingLockId: row.accountingLockId
+                  })
+        const allowed = exceptions.some(
+            e =>
+                active(e) &&
+                e.organizationPartyId === tx.organizationPartyId &&
+                (e.userId === ec.user.userId || (e.userGroupId && ec.user.isInGroup(e.userGroupId))) &&
+                (!e.acctgTransId || e.acctgTransId === tx.acctgTransId) &&
+                e.lockScope === row.lockScope
+        )
+        if (!allowed)
+            fail(
+                row.isHard === "Y" ? "HARD_LOCK" : "SOFT_LOCK",
+                "Posting lock " + row.accountingLockId + " (" + row.lockScope + "): " + row.changeReason
+            )
+    }
+    return {locks, findings}
+}
+function calendarDay(tx, sources, sourceDatesEnabled) {
+    if (tx.accountingDate) return lib.calendarDateText(tx.accountingDate)
+    if (tx.isPosted === "Y" || !sourceDatesEnabled) return null
+    // An undated legacy reversal keeps the original timestamp basis; a linked document's SQL day cannot move it.
+    if (tx.reverseOfAcctgTransId) return lib.postingDay(tx)
+    const originalSource = [
+        [sources.paymentApplicationId, "appliedDate"],
+        [sources.paymentId, "effectiveDate"],
+        [sources.invoiceId, "invoiceDate"]
+    ].find(([source, dateField]) => source?.accountingDate && ms(tx.transactionDate) === ms(source[dateField]))
+    return originalSource ? lib.calendarDateText(originalSource[0].accountingDate) : null
+}
 function validate(p, lock = false) {
     const tx = (lock ? find(T, {acctgTransId: p.acctgTransId}).forUpdate(true) : find(T, {acctgTransId: p.acctgTransId})).one()
     if (!tx) throw new Error("Accounting transaction is not available")
@@ -148,15 +203,16 @@ function validate(p, lock = false) {
         if (enabled && (!source || ![source.fromPartyId, source.toPartyId].includes(tx.organizationPartyId)))
             fail("SOURCE_SCOPE", "The posting source does not belong to this organization")
     }
-    const invoiceSource = sourceEvidence.invoiceId
-    // A later application or forward reversal keeps its own date; the original invoice day applies only to its posting.
-    const sourceDay = enabled
-        ? tx.accountingDate
-            ? lib.calendarDateText(tx.accountingDate)
-            : tx.isPosted !== "Y" && invoiceSource?.accountingDate && ms(tx.transactionDate) === ms(invoiceSource.invoiceDate)
-              ? lib.calendarDateText(invoiceSource.accountingDate)
-              : null
+    const applicationSource = tx.paymentApplicationId
+        ? (lock && enabled
+              ? find("mantle.account.payment.PaymentApplication", {paymentApplicationId: tx.paymentApplicationId}).forUpdate(true)
+              : find("mantle.account.payment.PaymentApplication", {paymentApplicationId: tx.paymentApplicationId})
+          ).one()
         : null
+    if (applicationSource) sourceEvidence.paymentApplicationId = map(applicationSource)
+    // Captured history remains authoritative even if the general guard is later disabled. Settlement adoption
+    // independently preserves new application/payment/adjustment days without enabling other posting rules.
+    const sourceDay = calendarDay(tx, sourceEvidence, enabled || pref.settlementApplicationGuardEnabled === "Y")
     const fiscalOut = fiscal(tx.organizationPartyId, tx.transactionDate, lock, [], sourceDay)
     findings.push(...fiscalOut.findings)
     if (enabled) {
@@ -213,44 +269,9 @@ function validate(p, lock = false) {
         }
     }
     const applicable = scopes(tx, lines)
-    const locks = enabled
-        ? rows("mantle.ledger.config.AccountingLock", {
-              organizationPartyId: tx.organizationPartyId
-          })
-        : []
-    for (const initial of locks.sort((a, b) => a.accountingLockId.localeCompare(b.accountingLockId))) {
-        const row = lock
-            ? find("mantle.ledger.config.AccountingLock", {
-                  accountingLockId: initial.accountingLockId
-              })
-                  .forUpdate(true)
-                  .one()
-            : initial
-        if (
-            !applicable.includes(row.lockScope) ||
-            (sourceDay || ec.l10n.format(tx.transactionDate, "yyyy-MM-dd")) > lib.calendarDateText(row.lockThroughDate)
-        )
-            continue
-        const exceptions =
-            row.isHard === "Y"
-                ? []
-                : rows("mantle.ledger.config.AccountingLockException", {
-                      accountingLockId: row.accountingLockId
-                  })
-        const allowed = exceptions.some(
-            e =>
-                active(e) &&
-                e.organizationPartyId === tx.organizationPartyId &&
-                (e.userId === ec.user.userId || (e.userGroupId && ec.user.isInGroup(e.userGroupId))) &&
-                (!e.acctgTransId || e.acctgTransId === tx.acctgTransId) &&
-                e.lockScope === row.lockScope
-        )
-        if (!allowed)
-            fail(
-                row.isHard === "Y" ? "HARD_LOCK" : "SOFT_LOCK",
-                "Posting lock " + row.accountingLockId + " (" + row.lockScope + "): " + row.changeReason
-            )
-    }
+    const lockOut = postingLocks(tx, applicable, lock, sourceDay, enabled)
+    const locks = lockOut.locks
+    findings.push(...lockOut.findings)
     const evidence = {
         sources: sourceEvidence,
         tx: map(tx),
@@ -293,8 +314,30 @@ function validate(p, lock = false) {
 function check(p) {
     const initial = one(T, {acctgTransId: p.acctgTransId})
     if (!initial) throw new Error("Accounting transaction is not available")
-    const adopted = preference(initial.organizationPartyId).postingGuardEnabled === "Y"
-    if (!p.verifyOnly && !adopted) return {handled: false, valid: true, findings: []}
+    const pref = preference(initial.organizationPartyId)
+    const adopted = pref.postingGuardEnabled === "Y"
+    if (!p.verifyOnly && !adopted) {
+        if (pref.settlementApplicationGuardEnabled === "Y" && initial.isPosted !== "Y" && !initial.accountingDate) {
+            find("mantle.party.Party", {partyId: initial.organizationPartyId}).forUpdate(true).one()
+            const current = find(T, {acctgTransId: initial.acctgTransId}).forUpdate(true).one()
+            const sources = {}
+            for (const [field, entity, key] of [
+                ["paymentApplicationId", "mantle.account.payment.PaymentApplication", "paymentApplicationId"],
+                ["paymentId", "mantle.account.payment.Payment", "paymentId"],
+                ["invoiceId", "mantle.account.invoice.Invoice", "invoiceId"]
+            ])
+                if (current[field])
+                    sources[field] = map(
+                        find(entity, {[key]: current[field]})
+                            .forUpdate(true)
+                            .one()
+                    )
+            const day = calendarDay(current, sources, true)
+            if (day && !current.accountingDate && current.isPosted !== "Y")
+                lib.call("update#" + T, {acctgTransId: current.acctgTransId, accountingDate: day})
+        }
+        return {handled: false, valid: true, findings: []}
+    }
     if (!p.verifyOnly) find("mantle.party.Party", {partyId: initial.organizationPartyId}).forUpdate(true).one()
     const out = validate(p, !p.verifyOnly)
     if (out.findings.some(r => r.code === "ORGANIZATION")) throw new Error("Posting organization is not available")
@@ -351,4 +394,4 @@ function completed(acctgTransId) {
             completedDate: ec.user.nowTimestamp
         })
 }
-;({validate, check, completed, fiscal, scopes})
+;({validate, check, completed, fiscal, scopes, postingLocks, calendarDay})

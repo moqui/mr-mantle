@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <extend-entity entity-name="PartyAcctgPreference" package="mantle.ledger.config">
+        <field name="settlementApplicationGuardEnabled" type="text-indicator" default="'N'" enable-audit-log="update"/>
+        <field name="paymentAutoApplicationEnabled" type="text-indicator" default="'N'" enable-audit-log="update"/>
+    </extend-entity>
+    <extend-entity entity-name="Payment" package="mantle.account.payment">
+        <field name="accountingDate" type="date" enable-audit-log="true"/>
+        <field name="financeOrganizationPartyId" type="id"/>
+        <field name="financeDirection" type="text-short"/>
+    </extend-entity>
+    <extend-entity entity-name="PaymentApplication" package="mantle.account.payment">
+        <field name="accountingDate" type="date" enable-audit-log="true"/>
+        <field name="settlementOperationKey" type="id"/>
+        <field name="settlementRowSeq" type="id"/>
+        <field name="currencyUomId" type="id"/>
+    </extend-entity>
+    <extend-entity entity-name="Invoice" package="mantle.account.invoice">
+        <field name="settlementOperationKey" type="id"/>
+        <field name="settlementAdjustmentKind" type="text-short"/>
+    </extend-entity>
+    <view-entity entity-name="PaymentFinance" package="mantle.account.payment" cache="never">
+        <member-entity entity-alias="P" entity-name="mantle.account.payment.Payment"/>
+        <member-entity entity-alias="O" entity-name="mantle.account.payment.Payment" join-from-alias="P" join-optional="true">
+            <key-map field-name="refundForPaymentId" related="paymentId"/>
+        </member-entity>
+        <member-entity entity-alias="F" entity-name="mantle.party.Party" join-from-alias="P">
+            <key-map field-name="fromPartyId" related="partyId"/>
+        </member-entity>
+        <member-entity entity-alias="T" entity-name="mantle.party.Party" join-from-alias="P">
+            <key-map field-name="toPartyId" related="partyId"/>
+        </member-entity>
+        <alias-all entity-alias="P"/>
+        <alias entity-alias="O" name="originalFromPartyId" field="fromPartyId"/>
+        <alias entity-alias="O" name="originalToPartyId" field="toPartyId"/>
+        <alias entity-alias="O" name="originalFinanceDirection" field="financeDirection"/>
+        <alias entity-alias="O" name="originalFinanceOrganizationPartyId" field="financeOrganizationPartyId"/>
+        <alias entity-alias="F" name="fromPrivateOwnerUserId" field="privateOwnerUserId"/>
+        <alias entity-alias="T" name="toPrivateOwnerUserId" field="privateOwnerUserId"/>
+    </view-entity>
+    <!-- Aggregate only stable document keys, so applications and items cannot multiply one another. -->
+    <view-entity entity-name="SettlementInvoiceItems" package="mantle.account.payment" cache="never">
+        <member-entity entity-alias="L" entity-name="mantle.account.invoice.InvoiceItem"/>
+        <member-entity entity-alias="I" entity-name="mantle.account.invoice.Invoice" join-from-alias="L">
+            <key-map field-name="invoiceId"/>
+        </member-entity>
+        <member-entity entity-alias="U" entity-name="moqui.basic.Uom" join-from-alias="I">
+            <key-map field-name="currencyUomId" related="uomId"/>
+        </member-entity>
+        <alias entity-alias="L" name="invoiceId"/>
+        <alias name="original" entity-alias="U" type="number-decimal" is-aggregate="true">
+            <complex-alias function="SUM">
+                <complex-alias function="ROUND">
+                    <complex-alias operator="*">
+                        <complex-alias-field entity-alias="L" field="quantity" default-value="1"/>
+                        <complex-alias-field entity-alias="L" field="amount" default-value="0"/>
+                    </complex-alias>
+                    <complex-alias expression="CAST(COALESCE(U.FRACTION_DIGITS, 2) AS INTEGER)"/>
+                </complex-alias>
+            </complex-alias>
+        </alias>
+    </view-entity>
+    <view-entity entity-name="SettlementAppliedInvoiceId" package="mantle.account.payment" cache="never">
+        <member-entity entity-alias="A" entity-name="mantle.account.payment.PaymentApplication"/>
+        <alias entity-alias="A" name="invoiceId"/>
+        <alias entity-alias="A" name="consumed" field="amountApplied" function="sum"/>
+    </view-entity>
+    <view-entity entity-name="SettlementAppliedToInvoiceId" package="mantle.account.payment" cache="never">
+        <member-entity entity-alias="A" entity-name="mantle.account.payment.PaymentApplication"/>
+        <alias entity-alias="A" name="toInvoiceId"/>
+        <alias entity-alias="A" name="consumed" field="amountApplied" function="sum"/>
+    </view-entity>
+    <view-entity entity-name="SettlementAppliedPaymentId" package="mantle.account.payment" cache="never">
+        <member-entity entity-alias="A" entity-name="mantle.account.payment.PaymentApplication"/>
+        <alias entity-alias="A" name="paymentId"/>
+        <alias entity-alias="A" name="consumed" field="amountApplied" function="sum"/>
+    </view-entity>
+    <view-entity entity-name="SettlementAppliedToPaymentId" package="mantle.account.payment" cache="never">
+        <member-entity entity-alias="A" entity-name="mantle.account.payment.PaymentApplication"/>
+        <alias entity-alias="A" name="toPaymentId"/>
+        <alias entity-alias="A" name="consumed" field="amountApplied" function="sum"/>
+    </view-entity>
+    <view-entity entity-name="SettlementInvoiceBalance" package="mantle.account.payment" cache="never">
+        <member-entity entity-alias="D" entity-name="mantle.account.invoice.InvoiceFinance"/>
+        <member-entity entity-alias="L" entity-name="mantle.account.payment.SettlementInvoiceItems" join-from-alias="D" join-optional="true" sub-select="true">
+            <key-map field-name="invoiceId"/>
+        </member-entity>
+        <member-entity entity-alias="S" entity-name="mantle.account.payment.SettlementAppliedInvoiceId" join-from-alias="D" join-optional="true" sub-select="true">
+            <key-map field-name="invoiceId" related="invoiceId"/>
+        </member-entity>
+        <member-entity entity-alias="T" entity-name="mantle.account.payment.SettlementAppliedToInvoiceId" join-from-alias="D" join-optional="true" sub-select="true">
+            <key-map field-name="invoiceId" related="toInvoiceId"/>
+        </member-entity>
+        <alias-all entity-alias="D"/>
+        <alias name="balanceRemaining" type="number-decimal">
+            <complex-alias operator="-">
+                <complex-alias-field entity-alias="L" field="original" default-value="0"/>
+                <complex-alias-field entity-alias="S" field="consumed" default-value="0"/>
+                <complex-alias-field entity-alias="T" field="consumed" default-value="0"/>
+            </complex-alias>
+        </alias>
+    </view-entity>
+    <view-entity entity-name="SettlementPaymentBalance" package="mantle.account.payment" cache="never">
+        <member-entity entity-alias="D" entity-name="mantle.account.payment.PaymentFinance"/>
+        <member-entity entity-alias="S" entity-name="mantle.account.payment.SettlementAppliedPaymentId" join-from-alias="D" join-optional="true" sub-select="true">
+            <key-map field-name="paymentId" related="paymentId"/>
+        </member-entity>
+        <member-entity entity-alias="T" entity-name="mantle.account.payment.SettlementAppliedToPaymentId" join-from-alias="D" join-optional="true" sub-select="true">
+            <key-map field-name="paymentId" related="toPaymentId"/>
+        </member-entity>
+        <alias-all entity-alias="D"/>
+        <alias name="balanceRemaining" type="number-decimal">
+            <complex-alias operator="-">
+                <complex-alias-field entity-alias="D" field="amount" default-value="0"/>
+                <complex-alias-field entity-alias="S" field="consumed" default-value="0"/>
+                <complex-alias-field entity-alias="T" field="consumed" default-value="0"/>
+            </complex-alias>
+        </alias>
+    </view-entity>
+    <entity entity-name="SettlementPreview" package="mantle.account.payment" cache="never">
+        <field name="previewId" type="id" is-pk="true"/>
+        <field name="organizationPartyId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="partyId" type="id"/>
+        <field name="direction" type="text-short"/>
+        <field name="currencyUomId" type="id"/>
+        <field name="previewKind" type="text-short"/>
+        <field name="sourcePaymentId" type="id"/>
+        <field name="effectiveDate" type="date-time"/>
+        <field name="accountingDate" type="date"/>
+        <field name="inputFingerprint" type="text-long"/>
+        <field name="requestJson" type="text-very-long"/>
+        <field name="payloadJson" type="text-very-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expiresDate" type="date-time"/>
+        <field name="status" type="text-short"/>
+        <field name="operationKey" type="id"/>
+        <field name="resultJson" type="text-very-long"/>
+        <index name="SETTLEMENT_PREVIEW_OWNER">
+            <index-field name="organizationPartyId"/>
+            <index-field name="userId"/>
+        </index>
+    </entity>
+    <entity entity-name="SettlementAllocation" package="mantle.account.payment" cache="never">
+        <field name="settlementId" type="id" is-pk="true"/>
+        <field name="rowSeq" type="id" is-pk="true"/>
+        <field name="previewId" type="id"/>
+        <field name="organizationPartyId" type="id"/>
+        <field name="sourceKey" type="text-medium"/>
+        <field name="targetKey" type="text-medium"/>
+        <field name="amount" type="currency-amount"/>
+        <field name="currencyUomId" type="id"/>
+        <field name="paymentApplicationId" type="id"/>
+        <field name="adjustmentInvoiceId" type="id"/>
+        <field name="acctgTransIdsJson" type="text-long"/>
+    </entity>
+</entities>

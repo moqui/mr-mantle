@@ -713,6 +713,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="acctgTransId" required="true"/>
         </in-parameters>
         <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/SourcePostingGuard.js').assertMutable({acctgTransId:acctgTransId})</script>
             <entity-find-one entity-name="mantle.ledger.transaction.AcctgTrans" value-field="acctgTrans" for-update="true"/>
             <!-- make sure the AcctgTrans has not already been posted -->
             <if condition="acctgTrans.isPosted != 'Y'">
@@ -912,6 +913,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="acctgTransId" required="true"/>
         </out-parameters>
         <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/SourcePostingGuard.js').assertMutable({acctgTransId:acctgTransId})</script>
             <entity-find-one entity-name="mantle.ledger.transaction.AcctgTrans" value-field="acctgTrans" for-update="true"/>
             <if condition="acctgTrans.isPosted != 'Y'">
                 <if condition="deleteIfNotPosted">
@@ -996,6 +998,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="acctgTransId" required="true"/>
         </out-parameters>
         <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/SourcePostingGuard.js').assertMutable({acctgTransId:acctgTransId})</script>
             <entity-find-one entity-name="mantle.ledger.transaction.AcctgTrans" value-field="acctgTrans"/>
             <entity-find-one entity-name="mantle.ledger.transaction.AcctgTransEntry" value-field="acctgTransEntry"/>
             <if condition="acctgTrans.isPosted != 'Y'">

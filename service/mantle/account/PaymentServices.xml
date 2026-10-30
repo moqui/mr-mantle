@@ -436,6 +436,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="Payment">
         <in-parameters>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
+                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
             <parameter name="paymentTypeEnumId" default-value="PtInvoicePayment"/>
@@ -462,7 +463,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="set" noun="PaymentAutoInfo">
         <in-parameters>
             <parameter name="paymentId"><description>Not required, used to exclude current Payment from total of other payments</description></parameter>
-            <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk"/>
+            <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
+                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
+            </auto-parameters>
         </in-parameters>
         <out-parameters><auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk"/></out-parameters>
         <actions>
@@ -575,6 +578,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="invoiceId" required="true"/>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
+                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
                 <exclude field-name="overrideGlAccountId"/><exclude field-name="acctgTransResultEnumId"/>
                 <exclude field-name="reconcileStatusId"/><exclude field-name="paymentMethodFileId"/></auto-parameters>
             <parameter name="paymentTypeEnumId"/>
@@ -642,6 +646,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="paymentId" required="true"><description>The ID of the original Payment</description></parameter>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
+                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
                 <exclude field-name="fromPartyId"/><exclude field-name="toPartyId"/><exclude field-name="forInvoiceId"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/>
@@ -792,6 +797,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="paymentId" required="true"/>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
+                <exclude field-name="accountingDate"/><exclude field-name="financeOrganizationPartyId"/><exclude field-name="financeDirection"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
         </in-parameters>
@@ -1209,11 +1215,22 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
-    <service verb="autoApply" noun="Payment">
-        <in-parameters><parameter name="paymentId" required="true"/></in-parameters>
-        <out-parameters><parameter name="invoiceIdList" type="List"/></out-parameters>
+    <service verb="autoApply" noun="Payment" allow-remote="false">
+        <description>Confirm a reviewed automatic application only for individually adopted organizations; default-off remains a no-op.</description>
+        <implements service="mantle.account.PaymentServices.define#SettlementResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="invoiceIdList" type="List"/>
+            <parameter name="enabled" type="Boolean"/>
+        </out-parameters>
         <actions>
-            <!-- TODO: implement this... -->
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').autoApply(context))</script>
         </actions>
     </service>
 
@@ -2115,4 +2132,186 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{paymentContentId:paymentContentId, contentLocation:contentLocation}"/></if>
         </actions>
     </service>
+
+    <!-- Explicit, reviewed settlement APIs. Legacy application primitives above retain their contracts. -->
+    <service verb="define" noun="SettlementScope" type="interface">
+        <description>Organization, counterparty, logical trade side and document selection-through scope.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="partyId" required="true"/>
+            <parameter name="direction" default="'receivable'"/>
+            <parameter name="currencyUomId" required="true"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+        </in-parameters>
+    </service>
+    <service verb="find" noun="OpenItems" allow-remote="false">
+        <description>Current authoritative scoped invoice, credit and payment balances with independent paging and selected-row lookup.</description>
+        <implements service="mantle.account.PaymentServices.define#SettlementScope"/>
+        <in-parameters>
+            <parameter name="sourceKind"/>
+            <parameter name="dueBucket"/>
+            <parameter name="text"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageByKind" type="Map"/>
+            <parameter name="selectedKeyList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="invoiceRows" type="List"/>
+            <parameter name="creditRows" type="List"/>
+            <parameter name="paymentRows" type="List"/>
+            <parameter name="paymentTargetRows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="pageInfo" type="Map"/>
+            <parameter name="sourceVersions" type="Map"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="incomplete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+            <parameter name="balanceBasis"/>
+            <parameter name="balanceAsOfDate" type="Timestamp"/>
+            <parameter name="selectionThroughDate" type="Timestamp"/>
+            <parameter name="selectionThroughDateText"/>
+            <parameter name="totals" type="Map"/>
+            <parameter name="selectedTotals" type="BigDecimal"/>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentWorkflow.js').openItems(context))</script>
+        </actions>
+    </service>
+    <service verb="find" noun="SettlementAdjustmentAccounts" allow-remote="false">
+        <description>Narrow identities of active assigned postable accounts for an explicit reviewed settlement adjustment.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="direction" default="'receivable'"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="text"/>
+            <parameter name="selectedIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="incomplete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').adjustmentAccounts(context))</script>
+        </actions>
+    </service>
+    <service verb="define" noun="SettlementPreviewResult" type="interface">
+        <description>Retained reviewed settlement output, canonical accounting day and authorized posting evidence.</description>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="partyId"/>
+            <parameter name="partyName"/>
+            <parameter name="direction"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="balanceBasis"/>
+            <parameter name="selectionThroughDate" type="Timestamp"/>
+            <parameter name="selectionThroughDateText"/>
+            <parameter name="balanceAsOfDate" type="Timestamp"/>
+            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="accountingDate" type="Date"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="allocationRows" type="List"/>
+            <parameter name="adjustmentRows" type="List"/>
+            <parameter name="beforeBalances" type="List"/>
+            <parameter name="afterBalances" type="List"/>
+            <parameter name="sourceVersions" type="Map"/>
+            <parameter name="ledgerPreview" type="List"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="status"/>
+            <parameter name="operationKey"/>
+            <parameter name="results" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="preview" noun="Settlement" allow-remote="false">
+        <description>Review or atomically confirm allocations and explicit-account adjustments using a durable owner-scoped preview.</description>
+        <implements service="mantle.account.PaymentServices.define#SettlementScope"/>
+        <implements service="mantle.account.PaymentServices.define#SettlementPreviewResult"/>
+        <in-parameters>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="allocations" type="List"/>
+            <parameter name="adjustments" type="List"/>
+            <parameter name="sourceVersions" type="Map" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').preview(context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="SettlementPreview" allow-remote="false">
+        <description>Read an owner-scoped retained settlement preview with current authorization.</description>
+        <implements service="mantle.account.PaymentServices.define#SettlementPreviewResult"/>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="organizationPartyId"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').getPreview(context))</script>
+        </actions>
+    </service>
+    <service verb="define" noun="SettlementResult" type="interface">
+        <description>Durable exact settlement outcome and application, adjustment and permitted posting identities.</description>
+        <out-parameters>
+            <parameter name="settlementId"/>
+            <parameter name="previewId"/>
+            <parameter name="accountingDate" type="Date"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="applicationIds" type="List"/>
+            <parameter name="adjustmentInvoiceIds" type="List"/>
+            <parameter name="acctgTransIds" type="List"/>
+            <parameter name="allocationResults" type="List"/>
+            <parameter name="adjustmentResults" type="List"/>
+            <parameter name="remainingRows" type="List"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="apply" noun="Settlement" allow-remote="false">
+        <description>Review or atomically confirm allocations and explicit-account adjustments using a durable owner-scoped preview.</description>
+        <implements service="mantle.account.PaymentServices.define#SettlementResult"/>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').apply(context))</script>
+        </actions>
+    </service>
+    <service verb="preview" noun="PaymentAutoApplication" allow-remote="false">
+        <description>Review deterministic oldest-due automatic payment application without applying money.</description>
+        <implements service="mantle.account.PaymentServices.define#SettlementPreviewResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="paymentId" required="true"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="sourceVersion" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentSettlement.js').previewAuto(context))</script>
+        </actions>
+    </service>
+
 </services>

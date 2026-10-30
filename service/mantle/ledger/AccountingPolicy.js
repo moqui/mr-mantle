@@ -35,6 +35,12 @@ function calendarDateText(value) {
         String(date.getUTCDate()).padStart(2, "0")
     ].join("-")
 }
+// Persisted SQL days are authoritative. Undated ledger history keeps the core ledger's UTC timestamp day.
+function postingDay(transaction) {
+    const day = calendarDateText(transaction.accountingDate || transaction.transactionDate)
+    if (!day) throw new Error("POSTING_DATE_INVALID: A ledger posting needs its original accounting day or timestamp")
+    return day
+}
 // New postings carry a fixed business day; older postings retain their existing timestamp range semantics.
 function accountingDateCondition({fromDate, thruDate, fromDay, thruDay, inclusive = false}) {
     if (!fromDate && !thruDate && !fromDay && !thruDay) return null
@@ -345,6 +351,7 @@ function record(p, need = "read", lock = false) {
     display,
     dateText,
     calendarDateText,
+    postingDay,
     accountingDateCondition,
     call,
     ms,
@@ -366,6 +373,7 @@ function record(p, need = "read", lock = false) {
     currency,
     dimensions,
     counterparty,
+    invoiceDirectionCondition,
     kinds,
     query,
     record

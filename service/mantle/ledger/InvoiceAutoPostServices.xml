@@ -755,9 +755,25 @@ along with this software (see the LICENSE.md file). If not, see
                 <order-by field-name="invoiceDate"/>
             </entity-find>
             <log message="Reposting ${invoiceList.length} invoices from ${fromDate}"/>
-            <iterate list="invoiceList" entry="invoice">
-                <service-call name="mantle.ledger.InvoiceAutoPostServices.repost#Invoice" in-map="{invoiceId:invoice.invoiceId}"/>
-            </iterate>
+            <script><![CDATA[
+const repostResults = []
+for (const invoice of Array.from(invoiceList)) {
+    ec.message.pushErrors()
+    try {
+        ec.service.sync().name('mantle.ledger.InvoiceAutoPostServices.repost#Invoice')
+            .parameters({invoiceId:invoice.invoiceId}).requireNewTransaction(true).throwOnError(true).call()
+        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+        repostResults.push({invoiceId:invoice.invoiceId,status:'complete'})
+    } catch (error) {
+        ec.logger.error('Invoice ' + invoice.invoiceId + ' repost failed: ' + error.message)
+        repostResults.push({invoiceId:invoice.invoiceId,status:'failed',errorMessage:String(error.message)})
+    } finally {
+        ec.message.clearErrors()
+        ec.message.popErrors()
+    }
+}
+context.repostResults = repostResults
+]]></script>
         </actions>
     </service>
     <service verb="revert" noun="InvoicePost">

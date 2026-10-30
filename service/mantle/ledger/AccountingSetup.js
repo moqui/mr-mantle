@@ -23,6 +23,8 @@ const preferenceFields = [
     "allowAccountingSelfApproval",
     "singleCurrencyDocumentsOnly",
     "invoiceApprovalRequired",
+    "paymentAutoApplicationEnabled",
+    "settlementApplicationGuardEnabled",
     "inventoryRevaluationEnabled",
     "invoiceDocumentTemplate",
     "paymentDocumentTemplate",
@@ -209,6 +211,8 @@ function storePreferences(p) {
         "allowAccountingSelfApproval",
         "singleCurrencyDocumentsOnly",
         "invoiceApprovalRequired",
+        "paymentAutoApplicationEnabled",
+        "settlementApplicationGuardEnabled",
         "inventoryRevaluationEnabled",
         "realTimeGlSummary"
     ]) {
