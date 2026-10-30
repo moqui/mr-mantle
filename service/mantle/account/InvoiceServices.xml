@@ -633,7 +633,14 @@ along with this software (see the LICENSE.md file). If not, see
             status is InvoiceIncoming unless fromPartyId is has the OrgInternal role, then it is InvoiceInProcess.</description>
         <in-parameters>
             <auto-parameters entity-name="mantle.account.invoice.Invoice" include="nonpk">
-                <exclude field-name="statusId"/></auto-parameters>
+                <exclude field-name="statusId"/>
+                <exclude field-name="accountingDate"/>
+                <exclude field-name="draftedByUserId"/>
+                <exclude field-name="approvedByUserId"/>
+                <exclude field-name="approvedDate"/>
+                <exclude field-name="approvedSourceVersion"/>
+                <exclude field-name="isSelfApproved"/>
+            </auto-parameters>
             <parameter name="fromPartyId" required="true"/>
             <parameter name="toPartyId" required="true"/>
             <parameter name="invoiceTypeEnumId" default-value="InvoiceSales"/>
@@ -671,6 +678,14 @@ along with this software (see the LICENSE.md file). If not, see
             </if>
             <if condition="!currencyUomId"><set field="currencyUomId" value="USD"/></if>
 
+            <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference"
+                    in-map="{organizationPartyId:organizationPartyId}" out-map="invoiceCapturePreference"/>
+            <if condition="invoiceCapturePreference.partyAcctgPreference?.postingGuardEnabled == 'Y' ||
+                    invoiceCapturePreference.partyAcctgPreference?.singleCurrencyDocumentsOnly == 'Y' ||
+                    invoiceCapturePreference.partyAcctgPreference?.invoiceApprovalRequired == 'Y'">
+                <set field="draftedByUserId" from="ec.user.userId"/>
+                <set field="accountingDate" from="ec.l10n.format(invoiceDate, 'yyyy-MM-dd')"/>
+            </if>
             <service-call name="create#mantle.account.invoice.Invoice" in-map="context" out-map="context"/>
         </actions>
     </service>
@@ -679,13 +694,23 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="invoiceId" required="true"/>
             <auto-parameters entity-name="mantle.account.invoice.Invoice" include="nonpk">
-                <exclude field-name="statusId"/></auto-parameters>
+                <exclude field-name="statusId"/>
+                <exclude field-name="accountingDate"/>
+                <exclude field-name="draftedByUserId"/>
+                <exclude field-name="approvedByUserId"/>
+                <exclude field-name="approvedDate"/>
+                <exclude field-name="approvedSourceVersion"/>
+                <exclude field-name="isSelfApproved"/>
+            </auto-parameters>
         </in-parameters>
         <actions>
             <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice" for-update="true"/>
             <if condition="!(['InvoiceInProcess', 'InvoiceIncoming', 'InvoiceReceived'].includes(invoice.statusId))">
                 <return error="true" message="Invoice ${invoiceId} is not in a status that allows change"/></if>
 
+            <if condition="invoice.accountingDate != null &amp;&amp; invoiceDate != null">
+                <set field="accountingDate" from="ec.l10n.format(invoiceDate, 'yyyy-MM-dd')"/>
+            </if>
             <service-call name="update#mantle.account.invoice.Invoice" in-map="context" out-map="context"/>
 
             <!-- if invoiceDate changed and there any AssetIssuance records associated with this then update issuedDate on them -->
@@ -805,7 +830,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="invoiceItemSeqId"/></out-parameters>
         <actions>
-            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice"/>
+            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice" for-update="true"/>
             <if condition="!(['InvoiceInProcess', 'InvoiceIncoming', 'InvoiceReceived'].includes(invoice.statusId))">
                 <return error="true" message="Invoice ${invoiceId} is not in a status that allows change (In Process for receivables, Incoming or Received for payables)"/></if>
 
@@ -820,7 +845,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="isAdjustment"/></auto-parameters>
         </in-parameters>
         <actions>
-            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice"/>
+            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice" for-update="true"/>
             <entity-find-one entity-name="mantle.account.invoice.InvoiceItem" value-field="invoiceItem"/>
             <if condition="invoiceItem == null">
                 <return error="true" message="Could not find Invoice Item with ID ${invoiceId}:${invoiceItemSeqId}"/></if>
@@ -883,7 +908,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="invoiceItemSeqId" required="true"/>
         </in-parameters>
         <actions>
-            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice"/>
+            <entity-find-one entity-name="mantle.account.invoice.Invoice" value-field="invoice" for-update="true"/>
             <if condition="!(['InvoiceInProcess', 'InvoiceIncoming', 'InvoiceReceived'].includes(invoice.statusId))">
                 <return error="true" message="Invoice ${invoiceId} is not in a status that allows change"/></if>
 
@@ -3125,6 +3150,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions>
             <if condition="contentFile != null &amp;&amp; contentFile.size &gt; 0">
+                <script>ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceAttachments.js').assertMutableContent(context)</script>
                 <entity-find-one entity-name="mantle.account.invoice.InvoiceContent" value-field="invoiceContent"/>
                 <service-call name="mantle.account.InvoiceServices.save#InvoiceContentFile" out-map="context"
                         in-map="Object.assign({}, context, {invoiceId:invoiceContent.invoiceId, saveContentLocation:false})"/>
@@ -3141,6 +3167,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="contentLocation"/></out-parameters>
         <actions>
+            <script>ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceAttachments.js').assertMutableContent(context)</script>
             <set field="filename" from="contentFile.getName()"/>
             <if condition="ResourceReference.isTextFilename(filename)"><then>
                 <set field="contentRoot" from="ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'"/>
@@ -3158,5 +3185,471 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="saveContentLocation"><service-call name="update#mantle.account.invoice.InvoiceContent"
                     in-map="{invoiceContentId:invoiceContentId, contentLocation:contentLocation}"/></if>
         </actions>
+    </service>
+
+    <!-- Native finance workflows; legacy primitives above retain their standalone defaults. -->
+    <service verb="define" noun="InvoiceWorkflowParameters" type="interface">
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="invoiceId"/>
+            <parameter name="action"/>
+            <parameter name="statusId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="operationKey"/>
+            <parameter name="changeReason"/>
+            <parameter name="invoiceDate" type="Timestamp"/>
+            <parameter name="dueDate" type="Timestamp"/>
+            <parameter name="settlementTermId"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="description"/>
+            <parameter name="invoiceMessage"/>
+            <parameter name="invoiceItemSeqId"/>
+            <parameter name="itemTypeEnumId"/>
+            <parameter name="productId"/>
+            <parameter name="quantity" type="BigDecimal"/>
+            <parameter name="amount" type="BigDecimal"/>
+            <parameter name="itemDate" type="Timestamp"/>
+            <parameter name="creditAmount" type="BigDecimal"/>
+            <parameter name="toInvoiceId"/>
+        </in-parameters>
+    </service>
+    <service verb="define" noun="InvoiceDeliveryParameters" type="interface">
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="invoiceId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="operationKey"/>
+            <parameter name="emailAccountId"/>
+            <parameter name="toAddresses"/>
+            <parameter name="note"/>
+            <parameter name="template"/>
+            <parameter name="printHtml" allow-html="any"/>
+            <parameter name="summaryText"/>
+            <parameter name="subject"/>
+            <parameter name="emailTemplateId"/>
+            <parameter name="resend" type="Boolean"/>
+            <parameter name="deliveryId"/>
+            <parameter name="recipient"/>
+            <parameter name="errorMessage"/>
+            <parameter name="asPdf" type="Boolean"/>
+            <parameter name="invoiceIdList" type="List"/>
+            <parameter name="sourceVersions" type="Map"/>
+            <parameter name="attachmentContentIdList" type="List"/>
+            <parameter name="attachmentVersions" type="Map"/>
+            <parameter name="attachmentSelectionsByInvoice" type="Map"/>
+            <parameter name="result" type="Map"/>
+            <parameter name="action"/>
+        </in-parameters>
+    </service>
+    <service verb="define" noun="ReceivableFindParameters" type="interface">
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="invoiceId"/>
+            <parameter name="recordId"/>
+            <parameter name="queue"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="statusId"/>
+            <parameter name="invoiceTypeEnumId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+            <parameter name="dueFromDate" type="Timestamp"/>
+            <parameter name="dueThruDate" type="Timestamp"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="text"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+    </service>
+    <service verb="change" noun="InvoiceState" allow-remote="false">
+        <description>Change invoice state with native side permission, organization, approval, currency, period and posting checks.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="statusId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('changeState', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="InvoiceDraft" allow-remote="false">
+        <description>Edit permitted draft header fields with a current revision; refuse posted history.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="statusId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('storeDraft', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="InvoiceDraftItem" allow-remote="false">
+        <description>Create or edit a draft invoice line, rounding to currency and checking ownership and revision.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="invoiceItemSeqId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('storeItem', context))</script>
+        </actions>
+    </service>
+    <service verb="delete" noun="InvoiceDraftItem" allow-remote="false">
+        <description>Delete a current draft line through Mantle so source time and billing links are released.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="statusId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('deleteItem', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="InvoiceFinanceDetail" allow-remote="false">
+        <description>Read a scoped finance invoice and permitted child records; return explicit finance actions.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <out-parameters>
+            <parameter name="invoice" type="Map"/>
+            <parameter name="totals" type="Map"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="lines" type="List"/>
+            <parameter name="paymentRows" type="List"/>
+            <parameter name="sourceRows" type="List"/>
+            <parameter name="shipmentRows" type="List"/>
+            <parameter name="budgetRows" type="List"/>
+            <parameter name="budgetAvailable" type="Boolean"/>
+            <parameter name="budgetUnavailableReason"/>
+            <parameter name="ledgerRows" type="List"/>
+            <parameter name="contentRows" type="List"/>
+            <parameter name="attachmentDiscoveryIncomplete" type="Boolean"/>
+            <parameter name="deliveryRows" type="List"/>
+            <parameter name="auditRows" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('detail', context))</script>
+        </actions>
+    </service>
+    <service verb="create" noun="LinkedCreditMemo" allow-remote="false">
+        <description>Create a linked credit draft within the original invoice amount, once per operation.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="creditMemoInvoiceId"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('credit', context))</script>
+        </actions>
+    </service>
+    <service verb="reverse" noun="DraftInvoice" allow-remote="false">
+        <description>Reverse only an unapplied draft, with current revision, organization and period checks.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="statusId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('reverseDraft', context))</script>
+        </actions>
+    </service>
+    <service verb="apply" noun="InvoiceCredit" allow-remote="false">
+        <description>Apply a linked credit atomically under locks, with native scope, currency, status and balance checks.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceWorkflowParameters"/>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="toInvoiceId"/>
+            <parameter name="paymentApplicationId"/>
+            <parameter name="amountApplied" type="BigDecimal"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('applyCredit', context))</script>
+        </actions>
+    </service>
+    <service verb="find" noun="Receivables" allow-remote="false">
+        <description>Find authorized customer invoices and customer credits using database filters and pagination.</description>
+        <implements service="mantle.account.InvoiceServices.define#ReceivableFindParameters"/>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="records" type="List"/>
+            <parameter name="counts" type="Map"/>
+            <parameter name="recordCount" type="Long"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="recordsCount" type="Long"/>
+            <parameter name="recordsPageIndex" type="Integer"/>
+            <parameter name="recordsPageSize" type="Integer"/>
+            <parameter name="recordsPageMaxIndex" type="Integer"/>
+            <parameter name="recordsPageRangeLow" type="Integer"/>
+            <parameter name="recordsPageRangeHigh" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('receivables', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="ReceivableSummary" allow-remote="false">
+        <description>Summarize the complete authorized filtered receivables by customer, status and currency; report an unavailable oversized aggregate.</description>
+        <implements service="mantle.account.InvoiceServices.define#ReceivableFindParameters"/>
+        <out-parameters>
+            <parameter name="summaryRows" type="List"/>
+            <parameter name="calendarRows" type="List"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="incomplete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('summary', context))</script>
+        </actions>
+    </service>
+    <service verb="create" noun="Receivable" allow-remote="false">
+        <description>Create an organization-scoped customer invoice or customer credit draft without issuing or posting it.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="invoiceTypeEnumId"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="invoiceDate" type="Timestamp"/>
+            <parameter name="dueDate" type="Timestamp"/>
+            <parameter name="settlementTermId"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="description"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflow.js').execute('createReceivable', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="InvoiceOutput" allow-remote="false">
+        <description>Render the authoritative standard invoice or credit print, optionally storing its PDF; never execute caller-supplied locations.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+            <parameter name="printHtml"/>
+            <parameter name="summaryText"/>
+            <parameter name="fromName"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="contentHash"/>
+            <parameter name="contentLocation"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('output', context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="InvoiceDeliveryAttachments" allow-remote="false">
+        <description>List bounded local invoice files a sender may explicitly select, with opaque reviewed byte versions.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+            <parameter name="attachmentRows" type="List"/>
+            <parameter name="maxAttachmentCount" type="Integer"/>
+            <parameter name="maxAttachmentBytes" type="Long"/>
+            <parameter name="maxTotalAttachmentBytes" type="Long"/>
+            <parameter name="incomplete" type="Boolean"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceAttachments.js').options(context))</script></actions>
+    </service>
+    <service verb="send" noun="Invoice" allow-remote="false" transaction="ignore">
+        <description>Finalize as permitted, freeze the issued PDF, and deliver each recipient independently with durable retry results.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+            <parameter name="deliveryId"/>
+            <parameter name="invoiceId"/>
+            <parameter name="invoiceContentId"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="contentHash"/>
+            <parameter name="recipientResults" type="List"/>
+            <parameter name="attachmentRows" type="List"/>
+            <parameter name="successCount" type="Integer"/>
+            <parameter name="failureCount" type="Integer"/>
+            <parameter name="pendingCount" type="Integer"/>
+            <parameter name="statusId"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('send', context))</script>
+        </actions>
+    </service>
+    <service verb="prepare" noun="InvoiceDelivery" allow-remote="false">
+        <description>Prepare one authorized issued invoice version and its exact PDF before any mail is sent.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+            <parameter name="deliveryId"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('prepare', context))</script>
+        </actions>
+    </service>
+    <service verb="deliver" noun="InvoiceRecipient" allow-remote="false">
+        <description>Deliver one prepared recipient through a real authorized mail draft, preserving an existing outcome.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+            <parameter name="recipient"/>
+            <parameter name="emailMessageId"/>
+            <parameter name="status"/>
+            <parameter name="reasonCode"/>
+            <parameter name="errorMessage"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('recipient', context))</script>
+        </actions>
+    </service>
+    <service verb="record" noun="InvoiceDeliveryFailure" allow-remote="false">
+        <description>Record one independent prepared delivery failure without altering another recipient.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('failure', context))</script>
+        </actions>
+    </service>
+    <service verb="finish" noun="InvoiceDelivery" allow-remote="false">
+        <description>Summarize committed recipient outcomes and mark a successfully queued invoice sent.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+            <parameter name="deliveryId"/>
+            <parameter name="invoiceId"/>
+            <parameter name="invoiceContentId"/>
+            <parameter name="sourceVersion"/>
+            <parameter name="contentHash"/>
+            <parameter name="recipientResults" type="List"/>
+            <parameter name="attachmentRows" type="List"/>
+            <parameter name="successCount" type="Integer"/>
+            <parameter name="failureCount" type="Integer"/>
+            <parameter name="pendingCount" type="Integer"/>
+            <parameter name="statusId"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('finish', context))</script>
+        </actions>
+    </service>
+    <service verb="check" noun="InvoiceStoreEmail" allow-remote="false">
+        <description>Suppress legacy store notices for the exact source version already handled by durable invoice delivery.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+            <parameter name="sendAllowed" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('checkAutoEmail', context))</script>
+        </actions>
+    </service>
+    <service verb="process" noun="InvoiceBatch" allow-remote="false" transaction="ignore">
+        <description>Process selected reviewed invoices independently and return a named result for every invoice.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+            <parameter name="results" type="List"/>
+            <parameter name="successCount" type="Integer"/>
+            <parameter name="failureCount" type="Integer"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('batch', context))</script>
+        </actions>
+    </service>
+    <service verb="find" noun="ApprovedTimeBilling" allow-remote="false">
+        <description>Find approved billable project time for finance in its own organization, without requiring a Projects launcher.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="workEffortId"/>
+            <parameter name="workerPartyId"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="throughDate" type="Timestamp"/>
+            <parameter name="invoiceId"/>
+            <parameter name="entryGrouping"/>
+            <parameter name="operationKey"/>
+            <parameter name="direction"/>
+            <parameter name="settlementTermId"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rows" type="List"/>
+            <parameter name="records" type="List"/>
+            <parameter name="counts" type="Map"/>
+            <parameter name="recordCount" type="Long"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="recordsCount" type="Long"/>
+            <parameter name="recordsPageIndex" type="Integer"/>
+            <parameter name="recordsPageSize" type="Integer"/>
+            <parameter name="recordsPageMaxIndex" type="Integer"/>
+            <parameter name="recordsPageRangeLow" type="Integer"/>
+            <parameter name="recordsPageRangeHigh" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/ApprovedTimeBilling.js').execute('list', context))</script>
+        </actions>
+    </service>
+    <service verb="create" noun="InvoiceFromApprovedTime" allow-remote="false">
+        <description>Bill approved source time once under source locks, retaining Mantle time approval and billing controls.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="workEffortId"/>
+            <parameter name="workerPartyId"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="throughDate" type="Timestamp"/>
+            <parameter name="invoiceId"/>
+            <parameter name="entryGrouping"/>
+            <parameter name="operationKey"/>
+            <parameter name="direction"/>
+            <parameter name="settlementTermId"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="invoiceId"/>
+            <parameter name="invoiceItemCreatedCount" type="Long"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/ApprovedTimeBilling.js').execute('create', context))</script>
+        </actions>
+    </service>
+    <service verb="prepare" noun="InvoiceBatch" allow-remote="false">
+        <description>Persist an authorized reviewed invoice batch boundary and its durable aggregate result.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="result" type="Map"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('batchPrepare', context))</script></actions>
+    </service>
+    <service verb="finish" noun="InvoiceBatch" allow-remote="false">
+        <description>Persist an authorized reviewed invoice batch boundary and its durable aggregate result.</description>
+        <implements service="mantle.account.InvoiceServices.define#InvoiceDeliveryParameters"/>
+        <out-parameters>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceDelivery.js').execute('batchFinish', context))</script></actions>
     </service>
 </services>

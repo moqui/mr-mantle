@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="define" noun="CustomerScope" type="interface">
+        <description>Authenticated organization and customer scope with a revision for edits.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="customerPartyId"/>
+            <parameter name="lastUpdatedStamp" type="Timestamp"/>
+        </in-parameters>
+    </service>
+    <service verb="get" noun="CustomerFinance" allow-remote="false">
+        <description>Read only authorized customer finance rows and masked method details for the organization.</description>
+        <implements service="mantle.account.CustomerFinanceServices.define#CustomerScope"/>
+        <out-parameters>
+            <parameter name="customer" type="Map"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="contacts" type="List"/>
+            <parameter name="orders" type="List"/>
+            <parameter name="invoices" type="List"/>
+            <parameter name="payments" type="List"/>
+            <parameter name="agreements" type="List"/>
+            <parameter name="summaryRows" type="List"/>
+            <parameter name="paymentMethods" type="List"/>
+            <parameter name="identifications" type="List"/>
+            <parameter name="taxRegistrations" type="List"/>
+            <parameter name="incomplete" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/CustomerFinance.js').execute('get', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="CustomerIdentification" allow-remote="false">
+        <description>Store an authorized customer identification with a current revision and audit logging.</description>
+        <implements service="mantle.account.CustomerFinanceServices.define#CustomerScope"/>
+        <in-parameters>
+            <parameter name="partyIdTypeEnumId"/>
+            <parameter name="idValue"/>
+            <parameter name="issuedBy"/>
+            <parameter name="issuedByPartyId"/>
+            <parameter name="expireDate" type="Date"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="customerPartyId"/>
+            <parameter name="partyIdTypeEnumId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/CustomerFinance.js').execute('identification', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="CustomerTaxRegistration" allow-remote="false">
+        <description>Store a finance-gated customer tax registration with effective dates and a current revision.</description>
+        <implements service="mantle.account.CustomerFinanceServices.define#CustomerScope"/>
+        <in-parameters>
+            <parameter name="taxAuthorityId"/>
+            <parameter name="partyTaxId"/>
+            <parameter name="isExempt"/>
+            <parameter name="isNexus"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="customerPartyId"/>
+            <parameter name="taxAuthorityId"/>
+            <parameter name="fromDate" type="Timestamp"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/CustomerFinance.js').execute('tax', context))</script>
+        </actions>
+    </service>
+    <service verb="store" noun="CustomerBankAccount" allow-remote="false">
+        <description>Create or change an owned customer bank account with treasury authority and a current revision; never return unmasked values.</description>
+        <implements service="mantle.account.CustomerFinanceServices.define#CustomerScope"/>
+        <in-parameters>
+            <parameter name="paymentMethodId"/>
+            <parameter name="bankName"/>
+            <parameter name="accountNumber"/>
+            <parameter name="routingNumber"/>
+            <parameter name="typeEnumId"/>
+            <parameter name="description"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="customerPartyId"/>
+            <parameter name="paymentMethodId"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/CustomerFinance.js').execute('bank', context))</script>
+        </actions>
+    </service>
+</services>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
+    <eeca id="IssuedInvoiceContentImmutable" entity="mantle.account.invoice.InvoiceContent"
+            on-create="true" on-update="true" on-delete="true" run-before="true" run-on-error="false"
+            get-entire-entity="true" get-original-value="true">
+        <description>Issued delivery evidence keeps its public content identity even when artifact authorization is disabled.</description>
+        <actions><script>ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceAttachments.js').guardContent(context)</script></actions>
+    </eeca>
+</eecas>

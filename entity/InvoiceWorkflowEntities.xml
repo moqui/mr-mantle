@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+    <extend-entity entity-name="PartyAcctgPreference" package="mantle.ledger.config">
+        <field name="singleCurrencyDocumentsOnly" type="text-indicator" default="'N'" enable-audit-log="update"/>
+        <field name="invoiceApprovalRequired" type="text-indicator" default="'N'" enable-audit-log="update"/>
+    </extend-entity>
+    <extend-entity entity-name="PostingOperation" package="mantle.ledger.transaction">
+        <field name="resultJson" type="text-very-long"/>
+    </extend-entity>
+    <extend-entity entity-name="AcctgTrans" package="mantle.ledger.transaction">
+        <field name="accountingDate" type="date" enable-audit-log="true"/>
+        <index name="ACCTG_TRANS_ORG_BOOK_DATE">
+            <index-field name="organizationPartyId"/>
+            <index-field name="accountingDate"/>
+        </index>
+    </extend-entity>
+    <extend-entity entity-name="Invoice" package="mantle.account.invoice">
+        <field name="accountingDate" type="date" enable-audit-log="true"/>
+        <field name="draftedByUserId" type="id" enable-audit-log="true"/>
+        <field name="approvedByUserId" type="id" enable-audit-log="true"/>
+        <field name="approvedDate" type="date-time" enable-audit-log="true"/>
+        <field name="approvedSourceVersion" type="text-long" enable-audit-log="true"/>
+        <field name="isSelfApproved" type="text-indicator" enable-audit-log="true"/>
+        <field name="creditForInvoiceId" type="id" enable-audit-log="true"/>
+        <field name="workflowSourceKey" type="text-medium" enable-audit-log="true"/>
+        <field name="financeOrganizationPartyId" type="id" enable-audit-log="true"/>
+        <field name="financeDirection" type="text-short" enable-audit-log="true"/>
+        <relationship type="one" title="CreditFor" related="mantle.account.invoice.Invoice">
+            <key-map field-name="creditForInvoiceId" related="invoiceId"/>
+        </relationship>
+        <index name="INVOICE_WORKFLOW_SOURCE"><index-field name="workflowSourceKey"/></index>
+    </extend-entity>
+    <extend-entity entity-name="InvoiceContent" package="mantle.account.invoice">
+        <field name="isImmutable" type="text-indicator" default="'N'"/>
+    </extend-entity>
+    <entity entity-name="InvoiceDelivery" package="mantle.account.invoice" cache="never">
+        <description>Frozen authoritative source and exact issued PDF, with independently durable recipient outcomes.</description>
+        <field name="deliveryId" type="id" is-pk="true"/>
+        <field name="invoiceId" type="id"/>
+        <field name="organizationPartyId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="operationKey" type="id"/>
+        <field name="sourceVersion" type="text-long"/>
+        <field name="contentHash" type="text-long"/>
+        <field name="invoiceContentId" type="id"/>
+        <field name="contentLocation" type="text-long"/>
+        <field name="sourceJson" type="text-very-long"/>
+        <field name="printHtml" type="text-very-long"/>
+        <field name="subject" type="text-long"/>
+        <field name="bodyText" type="text-very-long"/>
+        <field name="emailTemplateId" type="id"/>
+        <field name="status" type="text-short"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="resultJson" type="text-very-long"/>
+        <relationship type="one" related="mantle.account.invoice.Invoice"/>
+    </entity>
+    <view-entity entity-name="InvoiceFinance" package="mantle.account.invoice" cache="never">
+        <member-entity entity-alias="INV" entity-name="mantle.account.invoice.Invoice"/>
+        <member-entity entity-alias="SRC" entity-name="mantle.account.invoice.Invoice" join-from-alias="INV" join-optional="true">
+            <key-map field-name="creditForInvoiceId" related="invoiceId"/>
+        </member-entity>
+        <member-entity entity-alias="FROMP" entity-name="mantle.party.Party" join-from-alias="INV">
+            <key-map field-name="fromPartyId" related="partyId"/>
+        </member-entity>
+        <member-entity entity-alias="TOP" entity-name="mantle.party.Party" join-from-alias="INV">
+            <key-map field-name="toPartyId" related="partyId"/>
+        </member-entity>
+        <alias-all entity-alias="INV"/>
+        <alias entity-alias="SRC" name="sourceFromPartyId" field="fromPartyId"/>
+        <alias entity-alias="SRC" name="sourceToPartyId" field="toPartyId"/>
+        <alias entity-alias="FROMP" name="fromPrivateOwnerUserId" field="privateOwnerUserId"/>
+        <alias entity-alias="TOP" name="toPrivateOwnerUserId" field="privateOwnerUserId"/>
+    </view-entity>
+    <entity entity-name="InvoiceDeliveryRecipient" package="mantle.account.invoice" cache="never">
+        <field name="deliveryId" type="id" is-pk="true"/>
+        <field name="recipient" type="text-medium" is-pk="true"/>
+        <field name="emailMessageId" type="id"/>
+        <field name="status" type="text-short"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="errorMessage" type="text-long"/>
+        <field name="attemptDate" type="date-time"/>
+        <field name="priorDeliveryId" type="id"/>
+        <relationship type="one" related="mantle.account.invoice.InvoiceDelivery"/>
+    </entity>
+    <entity entity-name="InvoiceDeliveryClaim" package="mantle.account.invoice" cache="never">
+        <description>One durable send claim per invoice version and normalized recipient, including prepared and pending deliveries.</description>
+        <field name="claimId" type="id" is-pk="true"/>
+        <field name="deliveryId" type="id"/>
+        <field name="recipient" type="text-medium"/>
+    </entity>
+    <entity entity-name="ReceivableStatementSnapshot" package="mantle.account.invoice" cache="never">
+        <field name="snapshotId" type="id" is-pk="true"/>
+        <field name="organizationPartyId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="asOfDate" type="date-time"/>
+        <field name="inputFingerprint" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expiresDate" type="date-time"/>
+        <field name="snapshotJson" type="text-very-long"/>
+        <field name="printHtml" type="text-very-long"/>
+        <field name="resultJson" type="text-very-long"/>
+    </entity>
+    <entity entity-name="ReceivableStatementDelivery" package="mantle.account.invoice" cache="never">
+        <field name="deliveryKey" type="id" is-pk="true"/>
+        <field name="snapshotId" type="id"/>
+        <field name="customerPartyId" type="id"/>
+        <field name="currencyUomId" type="id"/>
+        <field name="recipient" type="text-medium"/>
+        <field name="emailMessageId" type="id"/>
+        <field name="contentLocation" type="text-long"/>
+        <field name="status" type="text-short"/>
+        <field name="reasonCode" type="text-short"/>
+        <field name="errorMessage" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+    </entity>
+    <extend-entity entity-name="PartyIdentification" package="mantle.party">
+        <field name="idValue" type="text-medium" encrypt="true" enable-audit-log="update"/>
+        <field name="issuedBy" type="text-medium" enable-audit-log="update"/>
+        <field name="expireDate" type="date" enable-audit-log="update"/>
+    </extend-entity>
+    <extend-entity entity-name="TaxAuthorityParty" package="mantle.other.tax">
+        <field name="partyTaxId" type="text-short" enable-audit-log="true"/>
+        <field name="isExempt" type="text-indicator" enable-audit-log="true"/>
+        <field name="isNexus" type="text-indicator" enable-audit-log="true"/>
+        <field name="thruDate" type="date-time" enable-audit-log="true"/>
+    </extend-entity>
+</entities>
