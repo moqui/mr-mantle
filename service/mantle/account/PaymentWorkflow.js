@@ -401,6 +401,8 @@ const paymentFields = [
     "gatewayInstructionId",
     "gatewayAttemptId",
     "gatewayRole",
+    "internalTransferId",
+    "internalTransferLeg",
     "lastUpdatedStamp"
 ]
 const manualInstruments = [
@@ -499,6 +501,15 @@ function paymentQuery(scope, p = {}) {
         q = q
             .condition("statusId", "in", ["PmntDelivered", "PmntConfirmed"])
             .condition("availableAmount", "greater", 0)
+            .condition(
+                cf.makeCondition(
+                    [
+                        cf.makeCondition("paymentTypeEnumId", "is-null", null),
+                        cf.makeCondition("paymentTypeEnumId", "not-equals", "PtInternalTransfer")
+                    ],
+                    "or"
+                )
+            )
             .condition(
                 cf.makeCondition(
                     [
@@ -611,7 +622,12 @@ function paymentScope(p, write = false, lock = false) {
         original,
         financeDirection,
         tradeExcluded: partyId === org || Boolean(one("mantle.party.PartyRole", {partyId, roleTypeId: "OrgInternal"})),
-        cashDirection: record.fromPartyId === org ? "outgoing" : "incoming",
+        cashDirection:
+            record.paymentTypeEnumId === "PtInternalTransfer"
+                ? record.internalTransferLeg
+                : record.fromPartyId === org
+                  ? "outgoing"
+                  : "incoming",
         partyId
     })
 }
@@ -755,7 +771,7 @@ function paymentCapabilities(scope, applicationRows = [], posted = false) {
         canGatewayRefund: false,
         canRefund: false,
         canPreviewRefund: false,
-        canTransfer: false,
+        canTransfer: Boolean(scope.broad && has("PAYMENT_EDIT") && scope.guardEnabled),
         reasons: scope.guardEnabled ? [] : ["SETTLEMENT_GUARD_REQUIRED"],
         unavailableReason: "PAYMENT_SLICE_UNAVAILABLE"
     }
@@ -789,7 +805,12 @@ function paymentProjection(scope, record, appRows, names = {}) {
             )
         }
     const org = scope.organizationPartyId,
-        cashDirection = record.fromPartyId === org ? "outgoing" : "incoming",
+        cashDirection =
+            record.paymentTypeEnumId === "PtInternalTransfer"
+                ? record.internalTransferLeg
+                : record.fromPartyId === org
+                  ? "outgoing"
+                  : "incoming",
         partyId = cashDirection === "outgoing" ? record.toPartyId : record.fromPartyId,
         financeDirection =
             record.paymentTypeEnumId === "PtInternalTransfer"
@@ -842,6 +863,18 @@ function paymentProjection(scope, record, appRows, names = {}) {
         out.unappliedTotal = toDecimal(0)
         out.reservedAmount = toDecimal(0)
         out.availableAmount = toDecimal(0)
+    }
+    if (record.paymentTypeEnumId === "PtInternalTransfer") {
+        const transfer = ec.resource
+            .script("component://mr-mantle/service/mantle/account/PaymentTransfers.js")
+            .projection(scope, record)
+        out.transferSummary = transfer.transferSummary
+        Object.assign(out, {
+            appliedTotal: toDecimal(0),
+            unappliedTotal: toDecimal(0),
+            reservedAmount: toDecimal(0),
+            availableAmount: toDecimal(0)
+        })
     }
     if (record.gatewayInstructionId && record.gatewayRole === "capture") {
         const instruction = one("mantle.account.payment.PaymentGatewayInstruction", {instructionId: record.gatewayInstructionId})
@@ -1157,6 +1190,18 @@ function paymentDetail(p) {
     ).map(row => paymentProjection(scope, row, paymentApplications([row.paymentId]), names))
     const outputService = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentOutput.js")
     Object.assign(capabilities, outputService.available(scope))
+    if (record.paymentTypeEnumId === "PtInternalTransfer") {
+        Object.assign(
+            out,
+            ec.resource.script("component://mr-mantle/service/mantle/account/PaymentTransfers.js").projection(scope, record)
+        )
+        Object.assign(out.totals, {
+            appliedTotal: toDecimal(0),
+            unappliedTotal: toDecimal(0),
+            reservedAmount: toDecimal(0),
+            availableAmount: toDecimal(0)
+        })
+    }
     if (record.gatewayRole === "authorization") {
         Object.assign(out.totals, {
             amount: toDecimal(0),

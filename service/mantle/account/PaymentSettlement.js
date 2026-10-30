@@ -202,7 +202,7 @@ function validatePolicy(scope, date, plans, lock = false) {
     const fiscal = guard.fiscal(scope.organizationPartyId, date.timestamp, lock, [], date.day)
     const lockOut = guard.postingLocks(
         {organizationPartyId: scope.organizationPartyId, transactionDate: date.timestamp},
-        ["all", scope.direction === "receivable" ? "sales" : "purchases"],
+        scope.direction === "transfer" ? ["all"] : ["all", scope.direction === "receivable" ? "sales" : "purchases"],
         lock,
         date.day,
         true

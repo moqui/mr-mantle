@@ -107,14 +107,16 @@ function available(scope) {
     }
 }
 function documentHtml(type, summary, bank = null) {
-    const heading =
-            type === "check"
-                ? "Check " + summary.checkNumber
-                : type === "receipt"
-                  ? summary.cashDirection === "incoming"
-                      ? "Payment receipt"
-                      : "Payment issued"
-                  : "Payment details",
+    const transfer = summary.transferSummary,
+        heading = transfer
+            ? "Internal transfer · " + transfer.leg
+            : type === "check"
+              ? "Check " + summary.checkNumber
+              : type === "receipt"
+                ? summary.cashDirection === "incoming"
+                    ? "Payment receipt"
+                    : "Payment issued"
+                : "Payment details",
         amount = ec.l10n.formatCurrency(toDecimal(summary.amount), summary.currencyUomId),
         line = (label, value) =>
             value == null || value === "" ? "" : "<tr><th>" + esc(label) + "</th><td>" + esc(value) + "</td></tr>"
@@ -130,7 +132,11 @@ function documentHtml(type, summary, bank = null) {
         "</p><table>" +
         line("Payment", summary.paymentId) +
         line("Date", summary.accountingDateText) +
-        line(type === "check" || summary.cashDirection === "outgoing" ? "Pay to" : "Received from", summary.partyName) +
+        (transfer
+            ? line("Transfer", transfer.internalTransferId) +
+              line("Principal", ec.l10n.formatCurrency(toDecimal(transfer.principalAmount), summary.currencyUomId)) +
+              line("Fee on outgoing leg", ec.l10n.formatCurrency(toDecimal(transfer.feeAmount), summary.currencyUomId))
+            : line(type === "check" || summary.cashDirection === "outgoing" ? "Pay to" : "Received from", summary.partyName)) +
         line("Currency", summary.currencyUomId) +
         line("Method", summary.maskedMethodLabel) +
         line("Reference", summary.referenceNumber) +
@@ -153,13 +159,15 @@ function documentHtml(type, summary, bank = null) {
 }
 function issue(scope, request, operationKey) {
     const actual = paymentScope({organizationPartyId: scope.organizationPartyId, paymentId: scope.record.paymentId}, true),
-        r = actual.record
+        r = actual.record,
+        transfer = r.paymentTypeEnumId === "PtInternalTransfer"
     if (r.statusId !== "PmntDelivered") denied("PAYMENT_OUTPUT_STATE_INVALID", "Issued output requires a delivered payment")
     const names = lib.partyNames([r.fromPartyId, r.toPartyId]),
         methodId = actual.cashDirection === "incoming" ? r.toPaymentMethodId : r.paymentMethodId,
         method = one("mantle.account.method.PaymentMethod", {paymentMethodId: methodId}),
         masked = method ? methodRows([method])[0] : null,
         check =
+            !transfer &&
             !r.gatewayRole &&
             actual.cashDirection === "outgoing" &&
             ["PiCompanyCheck", "PiCertifiedCheck"].includes(r.paymentInstrumentEnumId),
@@ -183,7 +191,7 @@ function issue(scope, request, operationKey) {
             checkNumber: checkRow ? String(checkRow.checkNumber) : null
         }),
         result = []
-    for (const type of ["receipt", "detail", ...(check ? ["check"] : [])]) {
+    for (const type of transfer ? ["detail"] : ["receipt", "detail", ...(check ? ["check"] : [])]) {
         const approvedHtml = documentHtml(type, summary, bank),
             pdf = ec.resource.xslFoTransform(approvedHtml, null, null, "application/pdf"),
             paymentOutputId = ec.user.randomString(32),

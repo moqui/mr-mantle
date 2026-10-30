@@ -138,6 +138,15 @@ function guard(p) {
         operation: p.eecaOperation,
         financialChanged
     })
+    if (
+        ec.resource.script("component://mr-mantle/service/mantle/account/PaymentTransferGuard.js").payment({
+            before,
+            after,
+            operation: p.eecaOperation,
+            financialChanged
+        })
+    )
+        return
     if (before?.lifecycleManaged !== "Y" && after.lifecycleManaged !== "Y") {
         if (before && (p.eecaOperation === "delete" || financialFields.some(field => !same(field, before[field], after[field]))))
             ec.resource
@@ -159,7 +168,7 @@ function guard(p) {
     }
     if (refundDraftAdoption(before, after)) return
     const reviewed =
-        /mantle\.account\.PaymentServices\.(create#PaymentDraft|store#PaymentDraft|change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment)(?:\b|$)/.test(
+        /mantle\.account\.PaymentServices\.(create#PaymentDraft|store#PaymentDraft|change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment|create#InternalTransfer)(?:\b|$)/.test(
             stack
         )
     if (!reviewed) lib.denied("PAYMENT_REVIEW_REQUIRED", "Use the reviewed payment workflow to change financial details or state")

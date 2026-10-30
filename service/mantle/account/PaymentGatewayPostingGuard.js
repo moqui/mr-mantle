@@ -142,6 +142,9 @@ function cashWrite(tx, payment, types, alreadyPosted = false) {
 function posting(tx, types) {
     ec.resource.script("component://mr-mantle/service/mantle/account/PaymentGatewayIsolation.js").assertNoProviderWrite()
     const {payments, legacyOnly} = lockSources([tx])
+    ec.resource
+        .script("component://mr-mantle/service/mantle/account/PaymentTransferGuard.js")
+        .source(tx, {alreadyPosted: tx.isPosted === "Y", operation: "post"})
     ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").source(tx, types)
     eachSource(tx, payments, payment => cashWrite(tx, payment, types, tx.isPosted === "Y"))
     return legacyOnly
@@ -155,6 +158,13 @@ function header(p, types) {
         {payments, legacyOnly} = lockSources(sources)
     for (const tx of sources.filter(Boolean))
         ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").source(tx, types)
+    for (const tx of sources.filter(Boolean))
+        ec.resource
+            .script("component://mr-mantle/service/mantle/account/PaymentTransferGuard.js")
+            .source(tx, {
+                alreadyPosted: tx === reversed ? tx.isPosted === "Y" : p.before?.isPosted === "Y",
+                operation: p.operation
+            })
     for (const tx of sources.filter(Boolean)) eachSource(tx, payments, eligible)
     if (p.before) eachSource(p.before, payments, payment => cashWrite(p.before, payment, types, p.before.isPosted === "Y"))
     if (reversed) eachSource(reversed, payments, payment => cashWrite(reversed, payment, types, reversed.isPosted === "Y"))
@@ -178,6 +188,10 @@ function entry(p, types) {
         {payments, legacyOnly} = lockSources(transactions)
     for (const tx of transactions)
         ec.resource.script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js").source(tx, types)
+    for (const tx of transactions)
+        ec.resource
+            .script("component://mr-mantle/service/mantle/account/PaymentTransferGuard.js")
+            .source(tx, {alreadyPosted: tx.isPosted === "Y", operation: p.operation})
     for (const tx of transactions) eachSource(tx, payments, payment => cashWrite(tx, payment, types, tx.isPosted === "Y"))
     return legacyOnly
 }

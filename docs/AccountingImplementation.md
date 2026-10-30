@@ -125,3 +125,22 @@ Independent review accepts all production/shared corrections. All 13 added nativ
 44 cases pass across its 43-pass run and corrected one-case fixture rerun. BOSS passes 34/34 including all eight new
 provider cases. Further screenshot/browser/full-suite cycles are omitted under the user's code-completion priority.
 Transfers remain the last P5 assignment; execution pauses before P6. Detailed findings and commits are in the app plan.
+
+## P5b3 paired transfers and checkpoint
+
+`preview#InternalTransfer`, `get#InternalTransferPreview` and `create#InternalTransfer` now provide one reviewed atomic
+pair with exact retry identity. Source cash is principal plus explicit expense fee; destination cash is principal.
+Exactly two verified transactions clear one shared transit account. Two distinct owned methods may share a cash GL;
+one-sided Payment method slots and immutable leg identity preserve independent reconciliation. Native reads derive
+cash direction from the leg. The operation invokes no legacy org-self autoposter and creates no trade application.
+
+Common guards permanently protect paired money/GL identity with flags N. Current authority, private organization,
+fresh banking/subtype/policy/account rows, fiscal/typed locks and base currency are checked under lock. Each leg owns
+one immutable detail output; it cannot issue a check or receipt. Default transit mappings now include the missing
+258300000 template assignment. An explicitly targeted inert test fixture proves rollback after the first actual
+posting, followed by same-key success; it grants no financial admission.
+
+Independent review is complete. The final focused native gate passes 45/45 across 13 specs, all 10 added transfer cases;
+BOSS passes 40/40 including its eight added cases. Changed XML validates and screen lint has no new failures/sites.
+Further screenshots/browser/full-suite sweeps were omitted under the user's code-completion priority. P0–P5 are code
+complete; execution is paused before P6. See the app plan for commits, earlier complete-suite evidence and deferrals.

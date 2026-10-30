@@ -238,6 +238,9 @@ function guard(p) {
             denied("APPLICATION_SOURCE_CHANGED", "The financial record scope changed; retry the operation")
         if (initialOrgs.some(org => lib.policy.preference(org).settlementApplicationGuardEnabled === "Y"))
             denied("APPLICATION_SOURCE_CHANGED", "Settlement controls changed; retry the operation")
+        ec.resource
+            .script("component://mr-mantle/service/mantle/account/PaymentTransferGuard.js")
+            .application({before: original, after: candidate})
         if (
             ec.resource
                 .script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js")
@@ -251,6 +254,9 @@ function guard(p) {
     records = documents(candidate, true)
     const lockedOriginalRecords = original ? documents(original, true) : [],
         financialRecords = [...records, ...lockedOriginalRecords]
+    ec.resource
+        .script("component://mr-mantle/service/mantle/account/PaymentTransferGuard.js")
+        .application({before: original, after: candidate})
     const refundBacked = ec.resource
         .script("component://mr-mantle/service/mantle/account/PaymentRefundBackingGuard.js")
         .application({before: original, after: candidate})

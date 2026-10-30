@@ -40,7 +40,7 @@ function lockAncestors() {
 }
 function prepare() {
     if (
-        !/mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment|complete#PaymentGatewayAttempt)(?:\b|$)/.test(
+        !/mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment|complete#PaymentGatewayAttempt|create#InternalTransfer)(?:\b|$)/.test(
             ec.artifactExecution.getStackNameString()
         )
     )

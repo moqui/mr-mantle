@@ -5,7 +5,7 @@ const {lib} = workflow
 const CONTENT = "mantle.account.payment.PaymentContent",
     OUTPUT = "mantle.account.payment.PaymentIssuedOutput"
 function reviewed() {
-    return /mantle\.account\.PaymentServices\.(create#PaymentDraft|store#PaymentDraft|change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment|complete#PaymentGatewayAttempt)(?:\b|$)/.test(
+    return /mantle\.account\.PaymentServices\.(create#PaymentDraft|store#PaymentDraft|change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment|complete#PaymentGatewayAttempt|create#InternalTransfer)(?:\b|$)/.test(
         ec.artifactExecution.getStackNameString()
     )
 }

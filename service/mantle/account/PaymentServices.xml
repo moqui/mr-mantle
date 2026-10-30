@@ -443,6 +443,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
+                <exclude field-name="internalTransferId"/>
+                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/>
                 <exclude field-name="reconcileStatusId"/>
@@ -489,6 +491,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
+                <exclude field-name="internalTransferId"/>
+                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
             </auto-parameters>
         </in-parameters>
@@ -618,6 +622,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
+                <exclude field-name="internalTransferId"/>
+                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="overrideGlAccountId"/>
                 <exclude field-name="acctgTransResultEnumId"/>
@@ -700,6 +706,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
+                <exclude field-name="internalTransferId"/>
+                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="fromPartyId"/>
                 <exclude field-name="toPartyId"/>
@@ -869,6 +877,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <exclude field-name="gatewayInstructionId"/>
                 <exclude field-name="gatewayAttemptId"/>
                 <exclude field-name="gatewayRole"/>
+                <exclude field-name="internalTransferId"/>
+                <exclude field-name="internalTransferLeg"/>
                 <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/>
                 <exclude field-name="reconcileStatusId"/>
@@ -2467,6 +2477,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="payment" type="Map"/>
             <parameter name="sourceVersion"/>
             <parameter name="totals" type="Map"/>
+            <parameter name="transferSummary" type="Map"/>
+            <parameter name="transferLegRows" type="List"/>
             <parameter name="maskedMethodRows" type="List"/>
             <parameter name="applicationRows" type="List"/>
             <parameter name="refundRows" type="List"/>
@@ -3442,6 +3454,161 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentRefunds.js').refund(context))</script>
+        </actions>
+    </service>
+    <!-- Reviewed internal transfers: both explicit cash legs commit as one native operation. -->
+    <service verb="find" noun="InternalTransferMethods" allow-remote="false">
+        <description>Search owned active bank/cash methods and retain selected masked identities before count and paging.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="text"/>
+            <parameter name="selectedIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="incomplete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').methods(context))</script>
+        </actions>
+    </service>
+    <service verb="find" noun="InternalTransferFeeAccounts" allow-remote="false">
+        <description>Search dated assigned posting expense identities without exposing balances.</description>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="effectiveDate" type="Timestamp"/>
+            <parameter name="text"/>
+            <parameter name="selectedIdList" type="List"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="recordCount" type="Integer"/>
+            <parameter name="pageIndex" type="Integer"/>
+            <parameter name="pageSize" type="Integer"/>
+            <parameter name="pageMaxIndex" type="Integer"/>
+            <parameter name="pageRangeLow" type="Integer"/>
+            <parameter name="pageRangeHigh" type="Integer"/>
+            <parameter name="rows" type="List"/>
+            <parameter name="selectedRows" type="List"/>
+            <parameter name="complete" type="Boolean"/>
+            <parameter name="incomplete" type="Boolean"/>
+            <parameter name="errors" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').feeAccounts(context))</script>
+        </actions>
+    </service>
+    <service verb="define" noun="InternalTransferPreviewResult" type="interface">
+        <description>Owner-bound retained paired transfer intent, exact money movement and current authority.</description>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="internalTransferId"/>
+            <parameter name="transferId"/>
+            <parameter name="inputFingerprint"/>
+            <parameter name="previewKind"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="status"/>
+            <parameter name="operationKey"/>
+            <parameter name="amount"/>
+            <parameter name="principalAmount"/>
+            <parameter name="feeAmount"/>
+            <parameter name="totalAmount"/>
+            <parameter name="feeGlAccountId"/>
+            <parameter name="feeAccountLabel"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="fromPaymentMethodId"/>
+            <parameter name="fromMethodVersion"/>
+            <parameter name="toPaymentMethodId"/>
+            <parameter name="toMethodVersion"/>
+            <parameter name="referenceNumber"/>
+            <parameter name="reason"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+            <parameter name="canApply" type="Boolean"/>
+            <parameter name="maskedMethods" type="Map"/>
+            <parameter name="transferSummary" type="Map"/>
+            <parameter name="before" type="Map"/>
+            <parameter name="after" type="Map"/>
+            <parameter name="postingSummary" type="Map"/>
+            <parameter name="capabilities" type="Map"/>
+            <parameter name="results" type="Map"/>
+            <parameter name="legRows" type="List"/>
+            <parameter name="ledgerPreview" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="preview" noun="InternalTransfer" allow-remote="false">
+        <description>Review exact principal, fee and two cash/transit plans without creating money.</description>
+        <implements service="mantle.account.PaymentServices.define#InternalTransferPreviewResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="fromPaymentMethodId" required="true"/>
+            <parameter name="fromMethodVersion" required="true"/>
+            <parameter name="toPaymentMethodId" required="true"/>
+            <parameter name="toMethodVersion" required="true"/>
+            <parameter name="amount" type="BigDecimal" required="true"/>
+            <parameter name="currencyUomId" required="true"/>
+            <parameter name="effectiveDate" type="Timestamp" required="true"/>
+            <parameter name="feeAmount" type="BigDecimal"/>
+            <parameter name="feeGlAccountId"/>
+            <parameter name="referenceNumber" required="true"/>
+            <parameter name="reason" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').preview(context))</script>
+        </actions>
+    </service>
+    <service verb="get" noun="InternalTransferPreview" allow-remote="false">
+        <description>Reload exact retained transfer intent and recorded results with current Treasury authority.</description>
+        <implements service="mantle.account.PaymentServices.define#InternalTransferPreviewResult"/>
+        <in-parameters>
+            <parameter name="organizationPartyId"/>
+            <parameter name="previewId" required="true"/>
+        </in-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').getPreview(context))</script>
+        </actions>
+    </service>
+    <service verb="create" noun="InternalTransfer" allow-remote="false">
+        <description>Confirm a retained review atomically, creating exactly two native cash legs and postings; exact retries return recorded identities.</description>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="transferId"/>
+            <parameter name="internalTransferId"/>
+            <parameter name="fromPaymentId"/>
+            <parameter name="toPaymentId"/>
+            <parameter name="principalAmount"/>
+            <parameter name="feeAmount"/>
+            <parameter name="totalAmount"/>
+            <parameter name="currencyUomId"/>
+            <parameter name="accountingDateText"/>
+            <parameter name="operationKey"/>
+            <parameter name="reasonCode"/>
+            <parameter name="alreadyApplied" type="Boolean"/>
+            <parameter name="legRows" type="List"/>
+            <parameter name="acctgTransIds" type="List"/>
+            <parameter name="outputRows" type="List"/>
+        </out-parameters>
+        <actions>
+            <script>ec.context.putAll(ec.resource.script('component://mr-mantle/service/mantle/account/PaymentTransfers.js').create(context))</script>
         </actions>
     </service>
 </services>
