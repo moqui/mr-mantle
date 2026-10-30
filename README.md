@@ -14,7 +14,7 @@ Mantle Business Artifacts for [MR Moqui](https://github.com/moqui/mr-moqui), in 
 The two were ported in the forks `mr-mantle-udm` and `mr-mantle-usl` (Groovy to JavaScript, Spock flows to JavaScript
 specs run by `moqui test`), then merged into this repository with the commit history of both. Other components depend on
 it with `<depends-on name="mr-mantle"/>`; the renames from the Java names are in the MR Moqui
-`docs/Moqui-Java-Migration.md`.
+`docs/dev/Moqui-Java-Migration.md`.
 
 ```sh
 ./moq component-get mr-mantle

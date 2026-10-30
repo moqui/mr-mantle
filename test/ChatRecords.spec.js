@@ -175,7 +175,7 @@ feature("a mention is a ChatMention notification as the seed has it: its title, 
 // The framework's chat services publish the counts of the users whose chat counts change (publish#ChatCounts through
 // org.moqui.impl.ShellServices.publish#ShellCounts, after the commit, on a thread of the server, coalesced per user), so
 // Mantle adds no entity ECA for them. The spec hears the shellCounts notifications through the notification capture,
-// which listens on the topic as the server's socket does (without a listener nothing is sent; docs/Testing.md).
+// which listens on the topic as the server's socket does (without a listener nothing is sent; docs/Build-Test.md).
 feature("the counts go to the users whose chat counts change: a new message and a read marker publish them", {
     when() {
         const capture = ec.factory.getTool("NotificationCapture")

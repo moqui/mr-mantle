@@ -3,7 +3,7 @@
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
     <default-property name="mantle_content_root" value=""/>
     <default-property name="mantle_content_large_root" value=""/>
-    <!-- the framework's CalDAV and CardDAV servers serve Mantle's calendars, tasks and contact books (mr-moqui docs/Sync.md) -->
+    <!-- the framework's CalDAV and CardDAV servers serve Mantle's calendars, tasks and contact books (mr-moqui docs/interfaces/Sync.md) -->
     <dav-server calendar-services="mantle.work.CalendarDavServices" contact-services="mantle.party.ContactDavServices"/>
     <webapp-list><webapp name="webroot">
         <servlet name="PassApi" location="component://mr-mantle/script/PassApi.js">
