@@ -38,6 +38,8 @@ const issuedRows = invoiceId =>
 spec({
     stepwise: true,
     setupSpec() {
+        // the later features build on the frozen PDF: with no Chromium the error skips the spec with its reason
+        ec.resource.xslFoTransform("<html><body>Invoice delivery</body></html>", null, null, "application/pdf")
         login("john.doe")
         ec.artifactExecution.disableAuthz()
         f = helper().fixtures("NATIVE_SEND")
