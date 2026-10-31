@@ -5,8 +5,10 @@
 // scheduled send; received mail filed by its account's policy (file#ReceivedEmail from the EmailMessage ECA), personal
 // contacts matching only for their owner; the NewMail alert (notify#NewMail). The Mantle side of IronStone M5. No SMTP
 // server answers in a spec (the framework's mail sink is in its Rust tests only), so a send fails at once on port 1 as in
-// the framework's MailClient.spec.js, and a delivery that works later is record#SendResult, the step after one. New spec,
-// no Groovy original.
+// the framework's MailClient.spec.js, and a delivery that works later is record#SendResult, the step after one. The mail
+// capture is off for the spec, so a run with mail_capture_sends=true (the client walks) still sees the send fail. New
+// spec, no Groovy original.
+const capture = ec.factory.getTool("MailCapture")
 const effectiveTime = Date.now()
 const minute = 60000
 const at = (minutes) => ec.user.setEffectiveTime(effectiveTime + minutes * minute)
@@ -28,7 +30,9 @@ spec({
     setupSpec() {
         login("john.doe")
         ec.user.setEffectiveTime(effectiveTime)
+        capture.disable()
     },
+    cleanupSpec() { capture.reset() },
     setup() { ec.artifactExecution.disableAuthz() },
     cleanup() {
         ec.artifactExecution.enableAuthz()
@@ -501,7 +505,8 @@ feature("the search operators apply to the internal threads as they do to the ma
         send("Ben", { toPartyId: party.Ada, communicationEventTypeId: "Comment", subject: "IBX note on the request", body: "See the request" })
         as("Ada", () => call(`${COMM}.set#InternalMessageState`, { rootCommEventId: lunch.communicationEventId, flagged: true }))
         at(305)
-        const day = (millis) => ec.l10n.format(String(millis), "yyyy/MM/dd")
+        // the date as Ada types it, in her zone, which dayOf reads it in (john.doe's zone is US/Central, hers the server's)
+        const day = (millis) => as("Ada", () => ec.l10n.format(String(millis), "yyyy/MM/dd"))
         const subjects = (params) => as("Ada", () => inbox(Object.assign({ store: "internal", view: "all" }, params)).threadList.map((row) => row.subject))
         const found = {
             fromWord: subjects({ searchText: "from:ben zeppelin" }),
