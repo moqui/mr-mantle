@@ -436,11 +436,6 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="Payment">
         <in-parameters>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/>
-                <exclude field-name="financeOrganizationPartyId"/>
-                <exclude field-name="financeDirection"/>
-                <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
             <parameter name="paymentTypeEnumId" default-value="PtInvoicePayment"/>
@@ -468,11 +463,6 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="paymentId"><description>Not required, used to exclude current Payment from total of other payments</description></parameter>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/>
-                <exclude field-name="financeOrganizationPartyId"/>
-                <exclude field-name="financeDirection"/>
-                <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="settlementAccountingDate"/>
             </auto-parameters>
         </in-parameters>
         <out-parameters><auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk"/></out-parameters>
@@ -586,11 +576,6 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="invoiceId" required="true"/>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/>
-                <exclude field-name="financeOrganizationPartyId"/>
-                <exclude field-name="financeDirection"/>
-                <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="overrideGlAccountId"/><exclude field-name="acctgTransResultEnumId"/>
                 <exclude field-name="reconcileStatusId"/><exclude field-name="paymentMethodFileId"/></auto-parameters>
             <parameter name="paymentTypeEnumId"/>
@@ -656,15 +641,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="RefundPayment">
         <description>Create a refund Payment based on an original. If the status of the refund is Delivered applies new refund
             Payment to the Payment it was a refund for. Refuses an amount over what is left of the original after its other
-            refunds, pending ones included (all but cancelled, void and declined). An accountingDate is the refund's own book
-            day, set before it is delivered and posted.</description>
+            refunds, pending ones included (all but cancelled, void and declined).</description>
         <in-parameters>
             <parameter name="paymentId" required="true"><description>The ID of the original Payment</description></parameter>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="financeOrganizationPartyId"/>
-                <exclude field-name="financeDirection"/>
-                <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="fromPartyId"/><exclude field-name="toPartyId"/><exclude field-name="forInvoiceId"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/>
@@ -716,15 +696,11 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="orderPartSeqId" from="orderPartSeqId || refundForPayment.orderPartSeqId"/>
             <set field="paymentInstrumentEnumId" from="paymentInstrumentEnumId || refundForPayment.paymentInstrumentEnumId"/>
             <set field="paymentId" from="null"/>
-            <!-- create the refund Payment, give it its book day, then move it to its status so the SECAs post it -->
+            <!-- create the refund Payment, then move it to its status so the SECAs post it -->
             <set field="initialStatusId" from="statusId == 'PmntProposed' ? statusId : 'PmntPromised'"/>
             <service-call name="mantle.account.PaymentServices.create#Payment" out-map="createOut"
                     in-map="Object.assign({}, context, {statusId:initialStatusId})"/>
             <set field="paymentId" from="createOut.paymentId"/>
-            <if condition="accountingDate">
-                <service-call name="update#mantle.account.payment.Payment"
-                        in-map="{paymentId:paymentId, accountingDate:accountingDate}"/>
-            </if>
             <if condition="statusId == 'PmntConfirmed'">
                 <service-call name="update#mantle.account.payment.Payment" in-map="{paymentId:paymentId, statusId:'PmntDelivered'}"/>
             </if>
@@ -866,11 +842,6 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="paymentId" required="true"/>
             <auto-parameters entity-name="mantle.account.payment.Payment" include="nonpk">
-                <exclude field-name="accountingDate"/>
-                <exclude field-name="financeOrganizationPartyId"/>
-                <exclude field-name="financeDirection"/>
-                <exclude field-name="lifecycleManaged"/>
-                <exclude field-name="settlementAccountingDate"/>
                 <exclude field-name="acctgTransResultEnumId"/><exclude field-name="reconcileStatusId"/>
                 <exclude field-name="paymentMethodFileId"/></auto-parameters>
         </in-parameters>
@@ -945,7 +916,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <return type="warning" message="Not applying payment ${paymentId} in status ${payment.statusId} to invoice ${invoiceId}, payment must be Delivered or Confirmed to be applied"/>
             </if>
             <if condition="!(['InvoiceFinalized', 'InvoiceSent', 'InvoiceAcked', 'InvoicePmtRecvd', 'InvoiceApproved', 'InvoicePmtSent'].includes(invoice.statusId))">
-                <log level="warn" message="Not applying payment ${paymentId} to invoice ${invoiceId} in status ${invoice.statusId} stack: ${ec.artifactExecution.getStackNameString()}"/>
+                <log level="warn" message="Not applying payment ${paymentId} to invoice ${invoiceId} in status ${invoice.statusId}"/>
                 <return message="Not applying payment ${paymentId} to invoice ${invoiceId} in status ${invoice.status?.description}, invoice must be Finalized, Sent, Acknowledged, or Payment Received for Receivable OR Approved or Payment Sent for Payable"/>
             </if>
 
@@ -1192,11 +1163,11 @@ along with this software (see the LICENSE.md file). If not, see
             <check-errors/>
 
             <if condition="!(['InvoiceFinalized', 'InvoiceSent', 'InvoiceAcked', 'InvoicePmtRecvd', 'InvoiceApproved', 'InvoicePmtSent', 'InvoiceWriteOff'].includes(invoice.statusId))">
-                <log level="warn" message="Not applying invoice ${invoiceId} in status ${invoice.statusId} to invoice ${toInvoiceId} stack: ${ec.artifactExecution.getStackNameString()}"/>
+                <log level="warn" message="Not applying invoice ${invoiceId} in status ${invoice.statusId} to invoice ${toInvoiceId}"/>
                 <return message="Not applying invoice ${invoiceId} in status ${invoice.statusId} to invoice ${toInvoiceId}, from invoice must be Finalized, Sent, Acknowledged, or Payment Received for Receivable OR Approved or Payment Sent for Payable"/>
             </if>
             <if condition="!(['InvoiceFinalized', 'InvoiceSent', 'InvoiceAcked', 'InvoicePmtRecvd', 'InvoiceApproved', 'InvoicePmtSent', 'InvoiceWriteOff'].includes(toInvoice.statusId))">
-                <log level="warn" message="Not applying invoice ${invoiceId} to invoice ${toInvoiceId} in status ${toInvoice.statusId} stack: ${ec.artifactExecution.getStackNameString()}"/>
+                <log level="warn" message="Not applying invoice ${invoiceId} to invoice ${toInvoiceId} in status ${toInvoice.statusId}"/>
                 <return message="Not applying invoice ${invoiceId} to invoice ${toInvoiceId} in status ${toInvoice.statusId}, to invoice must be Finalized, Sent, Acknowledged, or Payment Received for Receivable OR Approved or Payment Sent for Payable"/>
             </if>
 
@@ -2375,6 +2346,170 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
+    <!-- ============================================= -->
+    <!-- ========== Payment Review Services ========== -->
+    <!-- ============================================= -->
+
+    <service verb="store" noun="PaymentReview" allow-remote="false">
+        <description>Keep a review for its user to confirm once (PaymentReview): what it is of, its organization and
+            payment, the fingerprint confirming must match, the request confirming plans again and the payload the user
+            reviewed, for expireMinutes. The caller has checked the user's authority. Changes no financial record.</description>
+        <in-parameters>
+            <parameter name="previewKindEnumId" required="true"/>
+            <parameter name="organizationPartyId" required="true"/>
+            <parameter name="paymentId"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="request" type="Map" required="true"/>
+            <parameter name="payload" type="Map" required="true"/>
+            <parameter name="expireMinutes" type="Integer" default="10"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="previewId"/>
+            <parameter name="expiresDate" type="Timestamp"/>
+        </out-parameters>
+        <actions>
+            <set field="expiresDate" from="Number(ec.user.nowTimestamp) + expireMinutes * 60000"/>
+            <service-call name="create#mantle.account.payment.PaymentReview" out-map="created" disable-authz="true"
+                    in-map="{previewKindEnumId:previewKindEnumId, statusId:'PrvReview',
+                        organizationPartyId:organizationPartyId, paymentId:paymentId, userId:ec.user.userId,
+                        inputFingerprint:inputFingerprint, requestJson:JSON.stringify(request),
+                        payloadJson:JSON.stringify(payload), createdDate:ec.user.nowTimestamp, expiresDate:expiresDate,
+                        operationKey:operationKey}"/>
+            <set field="previewId" from="created.previewId"/>
+        </actions>
+    </service>
+    <service verb="get" noun="PaymentReview" allow-remote="false">
+        <description>Read the user's own review of one of the given kinds: its fields, its parsed request, payload and
+            result, and whether it may still be confirmed (canConfirm: in review and not expired); with forUpdate it is
+            locked. Refuses another user's or an unknown review and another kind (PREFIX_PREVIEW_UNAVAILABLE, where PREFIX
+            is the optionValue of the first kind given) and another organization's (ORGANIZATION_DENIED). Changes
+            nothing.</description>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="previewKindEnumIds" type="List" required="true"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="forUpdate" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="review" type="Map"><description>previewId, previewKindEnumId, previewKind (the kind's
+                enumCode), organizationPartyId, paymentId, inputFingerprint, status (the status's statusCode: draft, review
+                or complete), operationKey, expiresDate and canConfirm</description></parameter>
+            <parameter name="request" type="Map"/>
+            <parameter name="payload" type="Map"/>
+            <parameter name="result" type="Map"/>
+        </out-parameters>
+        <actions>
+            <if condition="forUpdate">
+                <then>
+                    <entity-find-one entity-name="mantle.account.payment.PaymentReview" value-field="reviewRow"
+                            for-update="true" disable-authz="true"/>
+                </then>
+                <else>
+                    <entity-find-one entity-name="mantle.account.payment.PaymentReview" value-field="reviewRow"
+                            disable-authz="true"/>
+                </else>
+            </if>
+            <entity-find-one entity-name="moqui.basic.Enumeration" value-field="askedKind" cache="true" disable-authz="true">
+                <field-map field-name="enumId" from="previewKindEnumIds[0]"/>
+            </entity-find-one>
+            <set field="codePrefix" from="askedKind?.optionValue || 'PAYMENT'"/>
+            <if condition="reviewRow == null || reviewRow.userId != ec.user.userId ||
+                    !previewKindEnumIds.includes(reviewRow.previewKindEnumId)">
+                <return error="true" message="${codePrefix}_PREVIEW_UNAVAILABLE: The review is unavailable"/>
+            </if>
+            <if condition="organizationPartyId &amp;&amp; organizationPartyId != reviewRow.organizationPartyId">
+                <return error="true" message="ORGANIZATION_DENIED: The review belongs to another organization"/>
+            </if>
+            <entity-find-one entity-name="moqui.basic.Enumeration" value-field="kind" cache="true" disable-authz="true">
+                <field-map field-name="enumId" from="reviewRow.previewKindEnumId"/>
+            </entity-find-one>
+            <entity-find-one entity-name="moqui.basic.StatusItem" value-field="status" cache="true" disable-authz="true">
+                <field-map field-name="statusId" from="reviewRow.statusId"/>
+            </entity-find-one>
+            <set field="review" from="{previewId:reviewRow.previewId, previewKindEnumId:reviewRow.previewKindEnumId,
+                    previewKind:kind?.enumCode, codePrefix:codePrefix, organizationPartyId:reviewRow.organizationPartyId,
+                    paymentId:reviewRow.paymentId, inputFingerprint:reviewRow.inputFingerprint, statusId:reviewRow.statusId,
+                    status:status?.statusCode, operationKey:reviewRow.operationKey, expiresDate:reviewRow.expiresDate,
+                    canConfirm:reviewRow.statusId == 'PrvReview' &amp;&amp;
+                        Number(reviewRow.expiresDate) &gt; Number(ec.user.nowTimestamp)}"/>
+            <set field="request" from="reviewRow.requestJson ? JSON.parse(reviewRow.requestJson) : {}"/>
+            <set field="payload" from="reviewRow.payloadJson ? JSON.parse(reviewRow.payloadJson) : {}"/>
+            <set field="result" from="reviewRow.resultJson ? JSON.parse(reviewRow.resultJson) : null"/>
+        </actions>
+    </service>
+    <service verb="claim" noun="PaymentReview" allow-remote="false">
+        <description>Begin confirming the user's own review (get#PaymentReview, locked) with an operation key, by default
+            the one the review was given. A review confirmed with the same key and fingerprint is a retry: replay is
+            true and result is the first result; with another fingerprint the key conflicts. Otherwise refuses a key
+            over 40 characters (OPERATION_KEY_REQUIRED), a review confirmed with another key (PREFIX_PREVIEW_CONSUMED), a
+            fingerprint other than the reviewed one (PREFIX_PREVIEW_MISMATCH), an expired review (PREFIX_PREVIEW_EXPIRED)
+            and a key another review used (OPERATION_KEY_CONFLICT).</description>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="previewKindEnumIds" type="List" required="true"/>
+            <parameter name="organizationPartyId"/>
+            <parameter name="inputFingerprint" required="true"/>
+            <parameter name="operationKey"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="review" type="Map"/>
+            <parameter name="request" type="Map"/>
+            <parameter name="payload" type="Map"/>
+            <parameter name="result" type="Map"/>
+            <parameter name="operationKey"/>
+            <parameter name="replay" type="Boolean"/>
+        </out-parameters>
+        <actions>
+            <service-call name="mantle.account.PaymentServices.get#PaymentReview" out-map="context" disable-authz="true"
+                    in-map="{previewId:previewId, previewKindEnumIds:previewKindEnumIds,
+                        organizationPartyId:organizationPartyId, forUpdate:true}"/>
+            <set field="operationKey" from="operationKey || review.operationKey"/>
+            <if condition="!operationKey || operationKey.length &gt; 40">
+                <return error="true" message="OPERATION_KEY_REQUIRED: An operation key of at most 40 characters is required"/>
+            </if>
+            <set field="replay" from="false"/>
+            <if condition="review.statusId == 'PrvComplete'">
+                <if condition="review.operationKey == operationKey &amp;&amp; inputFingerprint == review.inputFingerprint">
+                    <set field="replay" from="true"/>
+                    <return/>
+                </if>
+                <if condition="review.operationKey == operationKey">
+                    <return error="true" message="OPERATION_KEY_CONFLICT: The operation key was used for another request"/>
+                </if>
+                <return error="true"
+                        message="${review.codePrefix}_PREVIEW_CONSUMED: This review was already confirmed"/>
+            </if>
+            <if condition="inputFingerprint != review.inputFingerprint">
+                <return error="true" message="${review.codePrefix}_PREVIEW_MISMATCH: Confirm the review as it was shown"/>
+            </if>
+            <if condition="!review.canConfirm">
+                <return error="true" message="${review.codePrefix}_PREVIEW_EXPIRED: Review it again before confirming"/>
+            </if>
+            <entity-find-count entity-name="mantle.account.payment.PaymentReview" count-field="keyCount" disable-authz="true">
+                <econdition field-name="operationKey"/>
+                <econdition field-name="previewId" operator="not-equals"/>
+            </entity-find-count>
+            <if condition="keyCount &gt; 0">
+                <return error="true" message="OPERATION_KEY_CONFLICT: The operation key was used for another request"/>
+            </if>
+        </actions>
+    </service>
+    <service verb="complete" noun="PaymentReview" allow-remote="false">
+        <description>Record that a claimed review was confirmed with the operation key and what confirming returned, so a
+            retry with the key answers it (claim#PaymentReview).</description>
+        <in-parameters>
+            <parameter name="previewId" required="true"/>
+            <parameter name="operationKey" required="true"/>
+            <parameter name="result" type="Map" required="true"/>
+        </in-parameters>
+        <actions>
+            <service-call name="update#mantle.account.payment.PaymentReview" disable-authz="true"
+                    in-map="{previewId:previewId, statusId:'PrvComplete', operationKey:operationKey,
+                        resultJson:JSON.stringify(result)}"/>
+        </actions>
+    </service>
+
     <!-- Explicit, reviewed settlement APIs. Legacy application primitives above retain their contracts. -->
     <service verb="define" noun="SettlementScope" type="interface">
         <description>Organization, counterparty, logical trade side and document selection-through scope.</description>
@@ -2566,17 +2701,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="organizationPartyId"/>
         </in-parameters>
         <actions>
-            <entity-find-one entity-name="mantle.account.payment.SettlementPreview" value-field="previewRow"
-                    disable-authz="true"/>
-            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.status == 'draft'">
-                <return error="true" message="SETTLEMENT_PREVIEW_UNAVAILABLE: Settlement preview is unavailable"/>
-            </if>
-            <if condition="organizationPartyId &amp;&amp; organizationPartyId != previewRow.organizationPartyId">
-                <return error="true" message="ORGANIZATION_DENIED: The settlement belongs to another organization"/>
-            </if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentReview" out-map="retained"
+                    in-map="{previewId:previewId, previewKindEnumIds:['PrkSettlement', 'PrkAutoApply'],
+                        organizationPartyId:organizationPartyId}"/>
             <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
-            <set field="scope" from="ec.resource.script(settlement).execute('scope', previewRow.getMap())"/>
-            <set field="retainedReview" from="JSON.parse(previewRow.payloadJson).dto"/>
+            <set field="scope" from="ec.resource.script(settlement).execute('scope', retained.request)"/>
+            <set field="retainedReview" from="retained.payload.dto"/>
             <set field="partyName" from="retainedReview.partyName"/>
             <set field="balanceBasis" from="retainedReview.balanceBasis"/>
             <set field="selectionThroughDate" from="retainedReview.selectionThroughDate"/>
@@ -2591,11 +2721,15 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="afterBalances" from="retainedReview.afterBalances"/>
             <set field="sourceVersions" from="retainedReview.sourceVersions"/>
             <set field="errors" from="retainedReview.errors"/>
-            <set field="inputFingerprint" from="previewRow.inputFingerprint"/>
-            <set field="expiresDate" from="previewRow.expiresDate"/>
-            <set field="status" from="previewRow.status"/>
-            <set field="operationKey" from="previewRow.operationKey"/>
-            <set field="results" from="previewRow.resultJson ? JSON.parse(previewRow.resultJson) : null"/>
+            <set field="organizationPartyId" from="retained.review.organizationPartyId"/>
+            <set field="partyId" from="retained.request.partyId"/>
+            <set field="direction" from="retained.request.direction"/>
+            <set field="currencyUomId" from="retained.request.currencyUomId"/>
+            <set field="inputFingerprint" from="retained.review.inputFingerprint"/>
+            <set field="expiresDate" from="retained.review.expiresDate"/>
+            <set field="status" from="retained.review.status"/>
+            <set field="operationKey" from="retained.review.operationKey"/>
+            <set field="results" from="retained.result"/>
             <set field="ledgerPreview" from="retainedReview.ledgerPreview"/>
             <if condition="!capabilities.canReadLedger">
                 <set field="ledgerPreview" from="adjustmentRows.map(row =&gt; ({itemTypeEnumId:row.itemTypeEnumId,
@@ -2608,8 +2742,7 @@ along with this software (see the LICENSE.md file). If not, see
                             adjustmentResults:Array.from(results.adjustmentResults || []).map(withoutPostings)})"/>
                 </if>
             </if>
-            <set field="canApply" from="capabilities.canApply &amp;&amp; status == 'review' &amp;&amp;
-                    Number(expiresDate) &gt; Number(ec.user.nowTimestamp)"/>
+            <set field="canApply" from="capabilities.canApply &amp;&amp; retained.review.canConfirm"/>
         </actions>
     </service>
     <service verb="store" noun="SettlementDraft" allow-remote="false">
@@ -2634,21 +2767,23 @@ along with this software (see the LICENSE.md file). If not, see
                 <return error="true" message="SETTLEMENT_DRAFT_TOO_LARGE: The settlement selection is too large"/>
             </if>
             <set field="draftValues" from="{organizationPartyId:scope.organizationPartyId, userId:ec.user.userId,
-                    direction:direction, payloadJson:draftJson, status:'draft', previewKind:'draft',
-                    createdDate:ec.user.nowTimestamp, expiresDate:Number(ec.user.nowTimestamp) + 86400000}"/>
-            <entity-find-one entity-name="mantle.account.payment.SettlementPreview" value-field="draftRow" for-update="true"
+                    previewKindEnumId:'PrkSettlementDraft', statusId:'PrvDraft',
+                    requestJson:JSON.stringify({direction:direction}),
+                    payloadJson:draftJson, createdDate:ec.user.nowTimestamp,
+                    expiresDate:Number(ec.user.nowTimestamp) + 86400000}"/>
+            <entity-find-one entity-name="mantle.account.payment.PaymentReview" value-field="draftRow" for-update="true"
                     disable-authz="true">
                 <field-map field-name="previewId" from="draftId"/>
             </entity-find-one>
-            <set field="ownDraft"
-                    from="draftRow &amp;&amp; draftRow.userId == ec.user.userId &amp;&amp; draftRow.status == 'draft'"/>
+            <set field="ownDraft" from="draftRow &amp;&amp; draftRow.userId == ec.user.userId &amp;&amp;
+                    draftRow.previewKindEnumId == 'PrkSettlementDraft'"/>
             <if condition="draftId &amp;&amp; ownDraft">
                 <then>
-                    <service-call name="update#mantle.account.payment.SettlementPreview" disable-authz="true"
+                    <service-call name="update#mantle.account.payment.PaymentReview" disable-authz="true"
                             in-map="Object.assign({previewId:draftId}, draftValues)"/>
                 </then>
                 <else>
-                    <service-call name="create#mantle.account.payment.SettlementPreview" disable-authz="true"
+                    <service-call name="create#mantle.account.payment.PaymentReview" disable-authz="true"
                             in-map="draftValues" out-map="createdDraft"/>
                     <set field="draftId" from="createdDraft.previewId"/>
                 </else>
@@ -2664,16 +2799,18 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="draftJson"/>
         </out-parameters>
         <actions>
-            <entity-find-one entity-name="mantle.account.payment.SettlementPreview" value-field="draftRow" disable-authz="true">
+            <entity-find-one entity-name="mantle.account.payment.PaymentReview" value-field="draftRow" disable-authz="true">
                 <field-map field-name="previewId" from="draftId"/>
             </entity-find-one>
-            <if condition="draftRow == null || draftRow.userId != ec.user.userId || draftRow.status != 'draft' ||
+            <if condition="draftRow == null || draftRow.userId != ec.user.userId ||
+                    draftRow.previewKindEnumId != 'PrkSettlementDraft' ||
                     Number(draftRow.expiresDate) &lt;= Number(ec.user.nowTimestamp)">
                 <return/>
             </if>
             <set field="settlement" value="component://mr-mantle/service/mantle/account/PaymentSettlement.js"/>
             <set field="scope" from="ec.resource.script(settlement).execute('scope',
-                    {organizationPartyId:draftRow.organizationPartyId, direction:draftRow.direction, requireParty:false})"/>
+                    {organizationPartyId:draftRow.organizationPartyId, direction:JSON.parse(draftRow.requestJson).direction,
+                        requireParty:false})"/>
             <set field="draftJson" from="draftRow.payloadJson"/>
         </actions>
     </service>
@@ -2809,6 +2946,27 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
             <script>ec.resource.script(workflow).execute('paymentDetail', context)</script>
+            <set field="entityLib" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/EntityLib.js')"/>
+            <entity-find entity-name="mantle.account.payment.PaymentLifecycleEvent" list="historyRows" limit="100"
+                    disable-authz="true">
+                <econdition field-name="paymentId"/>
+                <econdition field-name="organizationPartyId"/>
+                <select-field field-name="paymentLifecycleEventId,action,beforeStatusId,afterStatusId,referenceNumber"/>
+                <select-field field-name="reason,userId,createdDate"/>
+                <order-by field-name="-createdDate,paymentLifecycleEventId"/>
+            </entity-find>
+            <set field="historyRows" from="Array.from(historyRows).map(row =&gt; entityLib.display(row))"/>
+            <if condition="capabilities.canReadGateway">
+                <entity-find entity-name="mantle.account.method.PaymentGatewayResponse" list="gatewayRows" limit="100"
+                        disable-authz="true">
+                    <econdition field-name="paymentId"/>
+                    <select-field field-name="paymentGatewayResponseId,paymentOperationEnumId,transactionDate,amount"/>
+                    <select-field field-name="amountUomId,resultSuccess,resultDeclined,resultError,referenceNum"/>
+                    <select-field field-name="transactionStatus,responseCode,reasonCode"/>
+                    <order-by field-name="-transactionDate"/>
+                </entity-find>
+                <set field="gatewayRows" from="Array.from(gatewayRows).map(row =&gt; entityLib.display(row))"/>
+            </if>
         </actions>
     </service>
 
@@ -3420,7 +3578,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- Gateway actions and refunds. A reviewed gateway action runs authorize#, capture#, release# or refund#SinglePayment
         with the confirming operation key, so the gateway response records it; a manual refund is create#RefundPayment.
-        Each review is a PaymentStatePreview (previewKind gateway or refund) its user confirms. All need treasury
+        Each review is a PaymentReview (PrkGateway or PrkRefund) its user confirms. All need treasury
         authority: payment view and payment edit. -->
     <service verb="check" noun="PaymentGatewayAccess" allow-remote="false">
         <description>Refuses an organization the user may not use and a user without the treasury authority gateway
@@ -3431,7 +3589,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
             <set field="accessLib" from="ec.resource.script('component://mr-mantle/service/mantle/product/ProductAccess.js')"/>
-            <if condition="!ec.resource.script(workflow).broadRead()">
+            <if condition="!ec.resource.script(workflow).execute('readAuthority', {}).broad">
                 <return error="true" message="PERMISSION_DENIED: Treasury authority is required for gateway records"/>
             </if>
             <script>ec.resource.script(workflow).execute('methodScope', context)</script>
@@ -3628,12 +3786,10 @@ along with this software (see the LICENSE.md file). If not, see
                     paymentGatewayConfigId:gatewayOut.paymentGatewayConfigId,
                     gatewayDescription:gatewayOut.gatewayDescription, statusId:payment.statusId, afterStatusId:afterStatusId,
                     refundSummary:action == 'refund' ? gatewayOut.refundSummary : null}"/>
-            <set field="expiresDate" from="Number(ec.user.nowTimestamp) + 600000"/>
-            <service-call name="create#mantle.account.payment.PaymentStatePreview" out-map="previewOut"
-                    in-map="{organizationPartyId:gatewayOut.organizationPartyId, paymentId:paymentId, userId:ec.user.userId,
-                        previewKind:'gateway', inputFingerprint:inputFingerprint, requestJson:JSON.stringify(request),
-                        payloadJson:JSON.stringify(review), createdDate:ec.user.nowTimestamp, expiresDate:expiresDate,
-                        status:'review'}"/>
+            <service-call name="mantle.account.PaymentServices.store#PaymentReview" out-map="previewOut"
+                    in-map="{previewKindEnumId:'PrkGateway', organizationPartyId:gatewayOut.organizationPartyId,
+                        paymentId:paymentId, inputFingerprint:inputFingerprint, request:request, payload:review,
+                        expireMinutes:10}"/>
             <service-call name="mantle.account.PaymentServices.get#PaymentGatewayActionPreview" out-map="context"
                     in-map="{previewId:previewOut.previewId}"/>
         </actions>
@@ -3647,24 +3803,19 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="previewId" required="true"/>
         </in-parameters>
         <actions>
-            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
-                    disable-authz="true"/>
-            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'gateway'
-                    || (organizationPartyId &amp;&amp; organizationPartyId != previewRow.organizationPartyId)">
-                <return error="true" message="GATEWAY_PREVIEW_UNAVAILABLE: The gateway review is unavailable"/>
-            </if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentReview" out-map="retained"
+                    in-map="{previewId:previewId, previewKindEnumIds:['PrkGateway'], organizationPartyId:organizationPartyId}"/>
             <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
-                    in-map="{paymentId:previewRow.paymentId, organizationPartyId:previewRow.organizationPartyId}"/>
-            <script>ec.context.putAll(JSON.parse(previewRow.payloadJson))</script>
+                    in-map="{paymentId:retained.review.paymentId, organizationPartyId:retained.review.organizationPartyId}"/>
+            <script>ec.context.putAll(retained.payload)</script>
             <set field="amount" from="toDecimal(amount)"/>
-            <set field="previewKind" from="previewRow.previewKind"/>
-            <set field="inputFingerprint" from="previewRow.inputFingerprint"/>
-            <set field="status" from="previewRow.status"/>
-            <set field="operationKey" from="previewRow.operationKey"/>
-            <set field="expiresDate" from="previewRow.expiresDate"/>
-            <set field="canApply" from="status == 'review' &amp;&amp; Number(expiresDate) &gt; Number(ec.user.nowTimestamp)
-                    &amp;&amp; access.canChange"/>
-            <set field="results" from="previewRow.resultJson ? JSON.parse(previewRow.resultJson) : null"/>
+            <set field="previewKind" from="retained.review.previewKind"/>
+            <set field="inputFingerprint" from="retained.review.inputFingerprint"/>
+            <set field="status" from="retained.review.status"/>
+            <set field="operationKey" from="retained.review.operationKey"/>
+            <set field="expiresDate" from="retained.review.expiresDate"/>
+            <set field="canApply" from="retained.review.canConfirm &amp;&amp; access.canChange"/>
+            <set field="results" from="retained.result"/>
         </actions>
     </service>
     <service verb="execute" noun="PaymentGatewayAction" allow-remote="false">
@@ -3697,42 +3848,21 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
-            <if condition="operationKey.length &gt; 40">
-                <return error="true" message="OPERATION_KEY_REQUIRED: An operation key of at most 40 characters is required"/>
-            </if>
-            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
-                    for-update="true" disable-authz="true"/>
-            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'gateway'">
-                <return error="true" message="GATEWAY_PREVIEW_UNAVAILABLE: The gateway review is unavailable"/>
-            </if>
+            <service-call name="mantle.account.PaymentServices.claim#PaymentReview" out-map="claimed"
+                    in-map="{previewId:previewId, previewKindEnumIds:['PrkGateway'], inputFingerprint:inputFingerprint,
+                        operationKey:operationKey}"/>
             <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
-                    in-map="{paymentId:previewRow.paymentId, organizationPartyId:previewRow.organizationPartyId}"/>
+                    in-map="{paymentId:claimed.review.paymentId, organizationPartyId:claimed.review.organizationPartyId}"/>
             <if condition="!access.canChange">
                 <return error="true" message="PERMISSION_DENIED: Payment editing and payment view authority are required"/>
             </if>
-            <if condition="previewRow.status == 'complete'">
-                <if condition="previewRow.operationKey == operationKey">
-                    <script>ec.context.putAll(JSON.parse(previewRow.resultJson))</script>
-                    <set field="alreadyApplied" from="true"/>
-                    <return/>
-                </if>
-                <return error="true" message="GATEWAY_PREVIEW_CONSUMED: This gateway review was already confirmed"/>
+            <if condition="claimed.replay">
+                <script>ec.context.putAll(claimed.result)</script>
+                <set field="alreadyApplied" from="true"/>
+                <return/>
             </if>
-            <if condition="inputFingerprint != previewRow.inputFingerprint">
-                <return error="true" message="GATEWAY_PREVIEW_MISMATCH: Confirm the gateway action as reviewed"/>
-            </if>
-            <if condition="Number(previewRow.expiresDate) &lt;= Number(ec.user.nowTimestamp)">
-                <return error="true" message="GATEWAY_PREVIEW_EXPIRED: Review the gateway action again"/>
-            </if>
-            <entity-find-count entity-name="mantle.account.payment.PaymentStatePreview" count-field="keyCount"
-                    disable-authz="true">
-                <econdition field-name="operationKey"/>
-            </entity-find-count>
-            <if condition="keyCount &gt; 0">
-                <return error="true" message="OPERATION_KEY_CONFLICT: The operation key was used for another request"/>
-            </if>
-            <set field="request" from="JSON.parse(previewRow.requestJson)"/>
-            <set field="review" from="JSON.parse(previewRow.payloadJson)"/>
+            <set field="request" from="claimed.request"/>
+            <set field="review" from="claimed.payload"/>
             <set field="paymentId" from="request.paymentId"/>
             <set field="action" from="request.action"/>
             <set field="amount" from="toDecimal(request.amount)"/>
@@ -3743,7 +3873,7 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="currentFingerprint" from="ec.user.singleUseCodeHash(JSON.stringify({request:request,
                     statusId:payment.statusId, lastUpdatedStamp:Number(payment.lastUpdatedStamp),
                     refundSummary:action == 'refund' ? gatewayOut.refundSummary : null}))"/>
-            <if condition="currentFingerprint != previewRow.inputFingerprint || !gatewayOut.actionList.includes(action)">
+            <if condition="currentFingerprint != claimed.review.inputFingerprint || !gatewayOut.actionList.includes(action)">
                 <return error="true"
                         message="STALE_PREVIEW: The payment or its refunds changed; review the gateway action again"/>
             </if>
@@ -3797,9 +3927,8 @@ along with this software (see the LICENSE.md file). If not, see
                     paymentGatewayResponseId:paymentGatewayResponseId, outcome:outcome, statusId:after.statusId,
                     refundPaymentId:refundPaymentId, refundStatusId:refundStatusId, operationKey:operationKey,
                     reasonCode:'GATEWAY_' + outcome.toUpperCase(), alreadyApplied:false}"/>
-            <service-call name="update#mantle.account.payment.PaymentStatePreview"
-                    in-map="{previewId:previewId, status:'complete', operationKey:operationKey,
-                        resultJson:JSON.stringify(result)}"/>
+            <service-call name="mantle.account.PaymentServices.complete#PaymentReview"
+                    in-map="{previewId:previewId, operationKey:operationKey, result:result}"/>
             <script>ec.context.putAll(result)</script>
         </actions>
     </service>
@@ -3961,12 +4090,10 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions>
             <service-call name="mantle.account.PaymentServices.get#PaymentRefundPlan" in-map="context" out-map="plan"/>
-            <set field="expiresDate" from="Number(ec.user.nowTimestamp) + 600000"/>
-            <service-call name="create#mantle.account.payment.PaymentStatePreview" out-map="previewOut"
-                    in-map="{organizationPartyId:plan.request.organizationPartyId, paymentId:paymentId,
-                        userId:ec.user.userId, previewKind:'refund', inputFingerprint:plan.inputFingerprint,
-                        requestJson:JSON.stringify(plan.request), payloadJson:JSON.stringify(plan.review),
-                        createdDate:ec.user.nowTimestamp, expiresDate:expiresDate, status:'review'}"/>
+            <service-call name="mantle.account.PaymentServices.store#PaymentReview" out-map="previewOut"
+                    in-map="{previewKindEnumId:'PrkRefund', organizationPartyId:plan.request.organizationPartyId,
+                        paymentId:paymentId, inputFingerprint:plan.inputFingerprint, request:plan.request,
+                        payload:plan.review}"/>
             <service-call name="mantle.account.PaymentServices.get#PaymentRefundPreview" out-map="context"
                     in-map="{previewId:previewOut.previewId}"/>
         </actions>
@@ -3980,26 +4107,21 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="previewId" required="true"/>
         </in-parameters>
         <actions>
-            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
-                    disable-authz="true"/>
-            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'refund'
-                    || (organizationPartyId &amp;&amp; organizationPartyId != previewRow.organizationPartyId)">
-                <return error="true" message="REFUND_PREVIEW_UNAVAILABLE: The refund review is unavailable"/>
-            </if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentReview" out-map="retained"
+                    in-map="{previewId:previewId, previewKindEnumIds:['PrkRefund'], organizationPartyId:organizationPartyId}"/>
             <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
-                    in-map="{paymentId:previewRow.paymentId, organizationPartyId:previewRow.organizationPartyId}"/>
-            <script>ec.context.putAll(JSON.parse(previewRow.payloadJson))</script>
+                    in-map="{paymentId:retained.review.paymentId, organizationPartyId:retained.review.organizationPartyId}"/>
+            <script>ec.context.putAll(retained.payload)</script>
             <set field="amount" from="toDecimal(amount)"/>
-            <set field="previewKind" from="previewRow.previewKind"/>
-            <set field="inputFingerprint" from="previewRow.inputFingerprint"/>
-            <set field="status" from="previewRow.status"/>
-            <set field="operationKey" from="previewRow.operationKey"/>
-            <set field="expiresDate" from="previewRow.expiresDate"/>
-            <set field="canApply" from="status == 'review' &amp;&amp; Number(expiresDate) &gt; Number(ec.user.nowTimestamp)
-                    &amp;&amp; access.canChange"/>
-            <set field="results" from="previewRow.resultJson ? JSON.parse(previewRow.resultJson) : null"/>
+            <set field="previewKind" from="retained.review.previewKind"/>
+            <set field="inputFingerprint" from="retained.review.inputFingerprint"/>
+            <set field="status" from="retained.review.status"/>
+            <set field="operationKey" from="retained.review.operationKey"/>
+            <set field="expiresDate" from="retained.review.expiresDate"/>
+            <set field="canApply" from="retained.review.canConfirm &amp;&amp; access.canChange"/>
+            <set field="results" from="retained.result"/>
             <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
-            <if condition="results &amp;&amp; !ec.resource.script(workflow).ledgerRead()">
+            <if condition="results &amp;&amp; !ec.resource.script(workflow).execute('readAuthority', {}).canReadLedger">
                 <set field="results.acctgTransIds" from="null"/>
             </if>
         </actions>
@@ -4029,60 +4151,41 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="alreadyApplied" type="Boolean"/>
         </out-parameters>
         <actions>
-            <if condition="operationKey.length &gt; 40">
-                <return error="true" message="OPERATION_KEY_REQUIRED: An operation key of at most 40 characters is required"/>
-            </if>
-            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
-                    for-update="true" disable-authz="true"/>
-            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'refund'">
-                <return error="true" message="REFUND_PREVIEW_UNAVAILABLE: The refund review is unavailable"/>
-            </if>
+            <service-call name="mantle.account.PaymentServices.claim#PaymentReview" out-map="claimed"
+                    in-map="{previewId:previewId, previewKindEnumIds:['PrkRefund'], inputFingerprint:inputFingerprint,
+                        operationKey:operationKey}"/>
             <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="access"
-                    in-map="{paymentId:previewRow.paymentId, organizationPartyId:previewRow.organizationPartyId}"/>
+                    in-map="{paymentId:claimed.review.paymentId, organizationPartyId:claimed.review.organizationPartyId}"/>
             <if condition="!access.canChange">
                 <return error="true" message="PERMISSION_DENIED: Payment editing and payment view authority are required"/>
             </if>
             <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
-            <if condition="previewRow.status == 'complete'">
-                <if condition="previewRow.operationKey == operationKey">
-                    <script>ec.context.putAll(JSON.parse(previewRow.resultJson))</script>
-                    <set field="alreadyApplied" from="true"/>
-                    <if condition="!ec.resource.script(workflow).ledgerRead()"><set field="acctgTransIds" from="null"/></if>
-                    <return/>
+            <if condition="claimed.replay">
+                <script>ec.context.putAll(claimed.result)</script>
+                <set field="alreadyApplied" from="true"/>
+                <if condition="!ec.resource.script(workflow).execute('readAuthority', {}).canReadLedger">
+                    <set field="acctgTransIds" from="null"/>
                 </if>
-                <return error="true" message="REFUND_PREVIEW_CONSUMED: This refund review was already confirmed"/>
+                <return/>
             </if>
-            <if condition="inputFingerprint != previewRow.inputFingerprint">
-                <return error="true" message="REFUND_PREVIEW_MISMATCH: Confirm the refund as reviewed"/>
-            </if>
-            <if condition="Number(previewRow.expiresDate) &lt;= Number(ec.user.nowTimestamp)">
-                <return error="true" message="REFUND_PREVIEW_EXPIRED: Review the refund again"/>
-            </if>
-            <entity-find-count entity-name="mantle.account.payment.PaymentStatePreview" count-field="keyCount"
-                    disable-authz="true">
-                <econdition field-name="operationKey"/>
-            </entity-find-count>
-            <if condition="keyCount &gt; 0">
-                <return error="true" message="OPERATION_KEY_CONFLICT: The operation key was used for another request"/>
-            </if>
-            <set field="request" from="JSON.parse(previewRow.requestJson)"/>
+            <set field="request" from="claimed.request"/>
             <set field="paymentId" from="request.paymentId"/>
             <entity-find-one entity-name="mantle.account.payment.Payment" value-field="original" for-update="true"
                     disable-authz="true"/>
-            <set field="review" from="JSON.parse(previewRow.payloadJson)"/>
+            <set field="review" from="claimed.payload"/>
             <service-call name="mantle.account.PaymentServices.get#PaymentRefundPlan" out-map="plan"
                     in-map="{organizationPartyId:request.organizationPartyId, paymentId:paymentId, amount:request.amount,
                         effectiveDate:request.effectiveDate, reason:request.reason, referenceNumber:request.referenceNumber,
                         paymentInstrumentEnumId:request.paymentInstrumentEnumId,
                         organizationPaymentMethodId:review.organizationMethod?.paymentMethodId,
                         counterpartyPaymentMethodId:review.counterpartyMethod?.paymentMethodId}"/>
-            <if condition="plan.inputFingerprint != previewRow.inputFingerprint">
+            <if condition="plan.inputFingerprint != claimed.review.inputFingerprint">
                 <return error="true" message="STALE_PREVIEW: The payment or its refunds changed; review the refund again"/>
             </if>
 
             <service-call name="mantle.account.PaymentServices.create#RefundPayment" out-map="refundOut"
                     in-map="{paymentId:paymentId, amount:request.amount, statusId:'PmntDelivered',
-                        effectiveDate:request.effectiveDate, accountingDate:request.accountingDateText,
+                        effectiveDate:request.effectiveDate,
                         paymentMethodId:request.paymentMethodId, toPaymentMethodId:request.toPaymentMethodId,
                         paymentInstrumentEnumId:request.paymentInstrumentEnumId, paymentRefNum:request.referenceNumber,
                         comments:request.reason}"/>
@@ -4100,11 +4203,12 @@ along with this software (see the LICENSE.md file). If not, see
                     currencyUomId:review.currencyUomId, accountingDateText:request.accountingDateText,
                     statusId:refundPayment.statusId, acctgTransIds:Array.from(refundTransList).map((row) =&gt; row.acctgTransId),
                     operationKey:operationKey, reasonCode:'REFUND_COMPLETED', alreadyApplied:false}"/>
-            <service-call name="update#mantle.account.payment.PaymentStatePreview"
-                    in-map="{previewId:previewId, status:'complete', operationKey:operationKey,
-                        resultJson:JSON.stringify(result)}"/>
+            <service-call name="mantle.account.PaymentServices.complete#PaymentReview"
+                    in-map="{previewId:previewId, operationKey:operationKey, result:result}"/>
             <script>ec.context.putAll(result)</script>
-            <if condition="!ec.resource.script(workflow).ledgerRead()"><set field="acctgTransIds" from="null"/></if>
+            <if condition="!ec.resource.script(workflow).execute('readAuthority', {}).canReadLedger">
+                <set field="acctgTransIds" from="null"/>
+            </if>
         </actions>
     </service>
 
@@ -4649,18 +4753,15 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions>
             <service-call name="mantle.account.PaymentServices.get#InternalTransferPlan" in-map="context" out-map="context"/>
-            <set field="expiresDate" from="Number(ec.user.nowTimestamp) + 1800000"/>
             <set field="review" from="{organizationPartyId:organizationPartyId, fromPaymentMethodId:fromPaymentMethodId,
                     fromMethodVersion:fromMethodVersion, toPaymentMethodId:toPaymentMethodId, toMethodVersion:toMethodVersion,
                     principalAmount:principalAmount, feeAmount:feeAmount, totalAmount:totalAmount, currencyUomId:currencyUomId,
                     accountingDateText:accountingDateText, feeGlAccountId:feeGlAccountId, feeAccountLabel:feeAccountLabel,
                     feePartyId:feePartyId, referenceNumber:referenceNumber, reason:reason, maskedMethods:maskedMethods,
                     legRows:legRows, ledgerPreview:ledgerPreview}"/>
-            <service-call name="create#mantle.account.payment.PaymentStatePreview" out-map="previewOut"
-                    in-map="{organizationPartyId:organizationPartyId, userId:ec.user.userId, previewKind:'transfer',
-                        inputFingerprint:inputFingerprint, requestJson:JSON.stringify(request),
-                        payloadJson:JSON.stringify(review),
-                        createdDate:ec.user.nowTimestamp, expiresDate:expiresDate, status:'review'}"/>
+            <service-call name="mantle.account.PaymentServices.store#PaymentReview" out-map="previewOut"
+                    in-map="{previewKindEnumId:'PrkTransfer', organizationPartyId:organizationPartyId,
+                        inputFingerprint:inputFingerprint, request:request, payload:review, expireMinutes:30}"/>
             <service-call name="mantle.account.PaymentServices.get#InternalTransferPreview" out-map="context"
                     in-map="{previewId:previewOut.previewId}"/>
         </actions>
@@ -4674,25 +4775,21 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="previewId" required="true"/>
         </in-parameters>
         <actions>
-            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
-                    disable-authz="true"/>
-            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'transfer'
-                    || (organizationPartyId &amp;&amp; organizationPartyId != previewRow.organizationPartyId)">
-                <return error="true" message="TRANSFER_PREVIEW_UNAVAILABLE: The transfer review is unavailable"/>
-            </if>
+            <service-call name="mantle.account.PaymentServices.get#PaymentReview" out-map="retained"
+                    in-map="{previewId:previewId, previewKindEnumIds:['PrkTransfer'], organizationPartyId:organizationPartyId}"/>
             <service-call name="mantle.account.PaymentServices.check#InternalTransferAccess"
-                    in-map="{organizationPartyId:previewRow.organizationPartyId}"/>
-            <script>ec.context.putAll(JSON.parse(previewRow.payloadJson))</script>
-            <set field="previewKind" from="previewRow.previewKind"/>
-            <set field="inputFingerprint" from="previewRow.inputFingerprint"/>
-            <set field="status" from="previewRow.status"/>
-            <set field="operationKey" from="previewRow.operationKey"/>
-            <set field="expiresDate" from="previewRow.expiresDate"/>
-            <set field="canApply" from="status == 'review' &amp;&amp; Number(expiresDate) &gt; Number(ec.user.nowTimestamp)"/>
+                    in-map="{organizationPartyId:retained.review.organizationPartyId}"/>
+            <script>ec.context.putAll(retained.payload)</script>
+            <set field="previewKind" from="retained.review.previewKind"/>
+            <set field="inputFingerprint" from="retained.review.inputFingerprint"/>
+            <set field="status" from="retained.review.status"/>
+            <set field="operationKey" from="retained.review.operationKey"/>
+            <set field="expiresDate" from="retained.review.expiresDate"/>
+            <set field="canApply" from="retained.review.canConfirm"/>
             <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
-            <set field="canReadLedger" from="ec.resource.script(workflow).ledgerRead()"/>
+            <set field="canReadLedger" from="ec.resource.script(workflow).execute('readAuthority', {}).canReadLedger"/>
             <set field="capabilities" from="{canTransfer:true, canReadLedger:canReadLedger}"/>
-            <set field="results" from="previewRow.resultJson ? JSON.parse(previewRow.resultJson) : null"/>
+            <set field="results" from="retained.result"/>
             <if condition="!canReadLedger">
                 <set field="ledgerPreview" from="null"/>
                 <if condition="results"><set field="results.acctgTransIds" from="null"/></if>
@@ -4728,43 +4825,24 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="outputRows" type="List"/>
         </out-parameters>
         <actions>
-            <if condition="operationKey.length &gt; 40">
-                <return error="true" message="OPERATION_KEY_REQUIRED: An operation key of at most 40 characters is required"/>
-            </if>
-            <entity-find-one entity-name="mantle.account.payment.PaymentStatePreview" value-field="previewRow"
-                    for-update="true" disable-authz="true"/>
-            <if condition="previewRow == null || previewRow.userId != ec.user.userId || previewRow.previewKind != 'transfer'">
-                <return error="true" message="TRANSFER_PREVIEW_UNAVAILABLE: The transfer review is unavailable"/>
-            </if>
-            <set field="organizationPartyId" from="previewRow.organizationPartyId"/>
+            <service-call name="mantle.account.PaymentServices.claim#PaymentReview" out-map="claimed"
+                    in-map="{previewId:previewId, previewKindEnumIds:['PrkTransfer'], inputFingerprint:inputFingerprint,
+                        operationKey:operationKey}"/>
+            <set field="organizationPartyId" from="claimed.review.organizationPartyId"/>
             <service-call name="mantle.account.PaymentServices.check#InternalTransferAccess"
                     in-map="{organizationPartyId:organizationPartyId}"/>
             <set field="workflow" value="component://mr-mantle/service/mantle/account/PaymentWorkflow.js"/>
-            <if condition="previewRow.status == 'complete'">
-                <if condition="previewRow.operationKey == operationKey">
-                    <script>ec.context.putAll(JSON.parse(previewRow.resultJson))</script>
-                    <set field="alreadyApplied" from="true"/>
-                    <if condition="!ec.resource.script(workflow).ledgerRead()"><set field="acctgTransIds" from="null"/></if>
-                    <return/>
+            <if condition="claimed.replay">
+                <script>ec.context.putAll(claimed.result)</script>
+                <set field="alreadyApplied" from="true"/>
+                <if condition="!ec.resource.script(workflow).execute('readAuthority', {}).canReadLedger">
+                    <set field="acctgTransIds" from="null"/>
                 </if>
-                <return error="true" message="TRANSFER_PREVIEW_CONSUMED: This transfer review was already confirmed"/>
-            </if>
-            <if condition="inputFingerprint != previewRow.inputFingerprint">
-                <return error="true" message="TRANSFER_PREVIEW_MISMATCH: Confirm the transfer as reviewed"/>
-            </if>
-            <if condition="Number(previewRow.expiresDate) &lt;= Number(ec.user.nowTimestamp)">
-                <return error="true" message="TRANSFER_PREVIEW_EXPIRED: Review the transfer again"/>
-            </if>
-            <entity-find-count entity-name="mantle.account.payment.PaymentStatePreview" count-field="keyCount"
-                    disable-authz="true">
-                <econdition field-name="operationKey"/>
-            </entity-find-count>
-            <if condition="keyCount &gt; 0">
-                <return error="true" message="OPERATION_KEY_CONFLICT: The operation key was used for another request"/>
+                <return/>
             </if>
             <service-call name="mantle.account.PaymentServices.get#InternalTransferPlan" out-map="plan"
-                    in-map="JSON.parse(previewRow.requestJson)"/>
-            <if condition="plan.inputFingerprint != previewRow.inputFingerprint">
+                    in-map="claimed.request"/>
+            <if condition="plan.inputFingerprint != claimed.review.inputFingerprint">
                 <return error="true" message="STALE_PREVIEW: The methods or accounts of the transfer changed; review it again"/>
             </if>
             <set field="request" from="plan.request"/>
@@ -4797,7 +4875,8 @@ along with this software (see the LICENSE.md file). If not, see
                             paymentMethodId:request.fromPaymentMethodId, overrideTypeGlAccountId:request.feeGlAccountId,
                             paymentInstrumentEnumId:transferPayment.paymentInstrumentEnumId, amount:request.feeAmount,
                             amountUomId:request.currencyUomId, effectiveDate:request.effectiveDate,
-                            paymentRefNum:request.referenceNumber, comments:'Fee of internal transfer ' + paymentId}"/>
+                            paymentRefNum:request.referenceNumber, feeForPaymentId:paymentId,
+                            comments:'Fee of internal transfer ' + paymentId}"/>
                 <set field="feePaymentId" from="feeOut.paymentId"/>
                 <entity-find entity-name="mantle.ledger.transaction.AcctgTrans" list="feeTransList" disable-authz="true">
                     <econdition field-name="paymentId" from="feePaymentId"/>
@@ -4811,7 +4890,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="mantle.account.PaymentServices.issue#PaymentDocuments" out-map="documentsOut"
                     in-map="{paymentId:paymentId, organizationPartyId:organizationPartyId}"/>
 
-            <set field="review" from="JSON.parse(previewRow.payloadJson)"/>
+            <set field="review" from="claimed.payload"/>
             <set field="legRows" from="review.legRows.map((row) =&gt; Object.assign({}, row,
                     {paymentId:row.leg == 'fee' ? feePaymentId : paymentId}))"/>
             <set field="result" from="{paymentId:paymentId, feePaymentId:feePaymentId, principalAmount:review.principalAmount,
@@ -4819,11 +4898,12 @@ along with this software (see the LICENSE.md file). If not, see
                     accountingDateText:review.accountingDateText, operationKey:operationKey,
                     reasonCode:'INTERNAL_TRANSFER_COMPLETED', alreadyApplied:false, legRows:legRows,
                     acctgTransIds:acctgTransIds, outputRows:documentsOut.outputRows}"/>
-            <service-call name="update#mantle.account.payment.PaymentStatePreview"
-                    in-map="{previewId:previewId, status:'complete', operationKey:operationKey,
-                        resultJson:JSON.stringify(result)}"/>
+            <service-call name="mantle.account.PaymentServices.complete#PaymentReview"
+                    in-map="{previewId:previewId, operationKey:operationKey, result:result}"/>
             <script>ec.context.putAll(result)</script>
-            <if condition="!ec.resource.script(workflow).ledgerRead()"><set field="acctgTransIds" from="null"/></if>
+            <if condition="!ec.resource.script(workflow).execute('readAuthority', {}).canReadLedger">
+                <set field="acctgTransIds" from="null"/>
+            </if>
         </actions>
     </service>
 </services>

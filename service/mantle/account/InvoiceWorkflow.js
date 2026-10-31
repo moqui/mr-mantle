@@ -189,8 +189,8 @@ function reopen(scope, p, preference, action) {
     return record.fromPartyId === scope.organizationPartyId ? "InvoiceInProcess" : "InvoiceReceived"
 }
 // An issued invoice posts in the same transaction: a posting sent to the error journal refuses the change, and so does no
-// posting at all for an organization that requires posting.
-function requirePosting(scope, preference) {
+// posting at all of an invoice with a total.
+function requirePosting(scope) {
     const record = scope.record
     const transactions = rows(T, {invoiceId: record.invoiceId, organizationPartyId: scope.organizationPartyId}).filter(
         row => !row.reverseOfAcctgTransId && !row.reversedByAcctgTransId
@@ -201,7 +201,7 @@ function requirePosting(scope, preference) {
             failed.postingFailureCode || "INVOICE_POST_FAILED",
             failed.postingFailureMessage || "Invoice posting did not complete"
         )
-    if (preference.postingGuardEnabled === "Y" && !transactions.length && lib.totals(record).invoiceTotal.compare(0) > 0)
+    if (!transactions.length && lib.totals(record).invoiceTotal.compare(0) > 0)
         denied("INVOICE_POST_FAILED", "Invoice finalization did not produce a posted ledger transaction")
 }
 function changeState(p) {
@@ -229,7 +229,7 @@ function changeState(p) {
         statusId: target,
         statusId_changeReason: p.changeReason || "Invoice " + action
     })
-    if (action === "approve" || action === "finalize") requirePosting(scope, preference)
+    if (action === "approve" || action === "finalize") requirePosting(scope)
     const saved = one(I, {invoiceId: record.invoiceId})
     const result = {
         invoiceId: record.invoiceId,

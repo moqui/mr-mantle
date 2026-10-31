@@ -7,15 +7,8 @@ function native(name, p) {
 }
 function fixtures(prefix) {
     const f = base.fixtures(prefix)
-    // The gateway and refund reviews built on these fixtures still read settlementApplicationGuardEnabled; settlement and
-    // the application rules do not, and their specs turn it off (withoutSettlementFlag).
-    call("update#mantle.ledger.config.PartyAcctgPreference", {organizationPartyId: f.org, settlementApplicationGuardEnabled: "Y"})
     f.day = ec.l10n.format(ec.user.nowTimestamp, "yyyy-MM-dd")
     f.timestamp = ec.l10n.parseTimestamp(f.day + " 12:00:00", "yyyy-MM-dd HH:mm:ss")
-    return f
-}
-function withoutSettlementFlag(f) {
-    call("update#mantle.ledger.config.PartyAcctgPreference", {organizationPartyId: f.org, settlementApplicationGuardEnabled: "N"})
     return f
 }
 function scope(f, direction = "receivable") {
@@ -207,7 +200,6 @@ function legacyDirectPayment(f, invoiceId, amount = "10") {
     call,
     native,
     fixtures,
-    withoutSettlementFlag,
     scope,
     invoice,
     payment,

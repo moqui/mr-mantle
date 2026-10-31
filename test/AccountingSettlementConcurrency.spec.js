@@ -6,7 +6,7 @@ spec({
     setupSpec() {
         login("john.doe")
         ec.artifactExecution.disableAuthz()
-        f = helper().withoutSettlementFlag(helper().fixtures("SETTLE_CONC"))
+        f = helper().fixtures("SETTLE_CONC")
     },
     setup() {
         login("john.doe")
@@ -37,7 +37,7 @@ feature("simultaneous exact confirmation retries create one application and oper
         return {
             results,
             count: h.count("mantle.account.payment.PaymentApplication", {paymentId: payment}),
-            operations: h.count("mantle.ledger.transaction.PostingOperation", {operationKey: args.operationKey})
+            operations: h.count("mantle.account.payment.PaymentReview", {operationKey: args.operationKey})
         }
     },
     then({results, count, operations}) {

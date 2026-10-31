@@ -87,7 +87,7 @@ feature("treasury refunds part of a receipt on its own book day; a retry with th
         refund.paymentMethodId == f.methodId
         refund.paymentRefNum == "RFD-1"
         refund.comments == "Return unused cash"
-        helper().lib.policy.calendarDateText(refund.accountingDate) == f.day
+        ec.l10n.format(refund.effectiveDate, "yyyy-MM-dd") == f.day
         applications.length == 1 && toDecimal(applications[0].amountApplied).eq(20)
         reopened.status == "complete"
         reopened.results.refundPaymentId == first.refundPaymentId

@@ -19,5 +19,12 @@ along with this software (see the LICENSE.md file). If not, see
             invoice, such as the fee of an internal transfer.</description></field>
         <relationship type="one" title="OverrideType" related="mantle.ledger.account.GlAccount" short-alias="overrideTypeGlAccount">
             <key-map field-name="overrideTypeGlAccountId"/></relationship>
+        <field name="feeForPaymentId" type="id"><description>The payment this one pays the fee of: the PtDisbursement
+            paying the bank fee of an internal transfer points at its PtInternalTransfer payment.</description></field>
+        <relationship type="one" title="FeeFor" related="mantle.account.payment.Payment" short-alias="feeForPayment">
+            <key-map field-name="feeForPaymentId" related="paymentId"/></relationship>
+        <relationship type="many" title="Fee" related="mantle.account.payment.Payment" short-alias="feePayments">
+            <key-map field-name="paymentId" related="feeForPaymentId"/></relationship>
+        <index name="PAYMENT_FEE_FOR"><index-field name="feeForPaymentId"/></index>
     </extend-entity>
 </entities>

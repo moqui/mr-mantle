@@ -557,6 +557,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="forcePost" type="Boolean" default="false">
                 <description>Post the transaction even if period closed</description>
             </parameter>
+            <parameter name="reviewed" type="Boolean" default="false"><description>The caller is Mantle's posting or
+                reverting service of the transaction's source document. With the posting guard on, a manual posting or a
+                reversal from any other caller needs GL posting authority (ACCOUNTING_GL_POST).</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="valid" type="Boolean"/>
@@ -564,7 +567,8 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <script><![CDATA[
-                const checked = ec.resource.script('component://mr-mantle/service/mantle/ledger/PostingGuard.js').check({acctgTransId, verifyOnly})
+                const checked = ec.resource.script('component://mr-mantle/service/mantle/ledger/PostingGuard.js').check({
+                    acctgTransId, verifyOnly, reviewed})
                 valid = checked.valid
                 findings = checked.findings
                 postingHandled = checked.handled
@@ -909,6 +913,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="changeReason"/>
             <parameter name="deleteIfNotPosted" type="Boolean" default="false"/>
             <parameter name="createOnly" type="Boolean" default="false"/>
+            <parameter name="reviewed" type="Boolean" default="false"><description>The caller is Mantle's reverting service
+                of the transaction's source document (post#AcctgTrans reviewed).</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="acctgTransId" required="true"/>
@@ -973,7 +979,8 @@ along with this software (see the LICENSE.md file). If not, see
                 </then>
                 <else-if condition="!createOnly">
                     <!-- call the post service -->
-                    <service-call name="mantle.ledger.LedgerServices.post#AcctgTrans" in-map="{acctgTransId:reverseAcctgTransId}"/>
+                    <service-call name="mantle.ledger.LedgerServices.post#AcctgTrans"
+                            in-map="{acctgTransId:reverseAcctgTransId, reviewed:reviewed}"/>
                     <message>Posted transaction ${reverseAcctgTransId}</message>
                 </else-if>
             </if>

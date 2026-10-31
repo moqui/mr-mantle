@@ -791,7 +791,7 @@ context.repostResults = repostResults
             <if condition="(acctgTransList?.length > 0)"><then>
                 <iterate list="acctgTransList" entry="acctgTrans">
                     <service-call name="mantle.ledger.LedgerServices.post#ReverseAcctgTrans" out-map="revOut" out-map-add-to-existing="false"
-                            in-map="{acctgTransId:acctgTrans.acctgTransId, deleteIfNotPosted:true}"/>
+                            in-map="{acctgTransId:acctgTrans.acctgTransId, deleteIfNotPosted:true, reviewed:true}"/>
                     <if condition="revOut.acctgTransId">
                         <message>Created reverse transaction ${revOut.acctgTransId} from tx ${acctgTrans.acctgTransId} for invoice ${invoiceId}</message></if>
                 </iterate>

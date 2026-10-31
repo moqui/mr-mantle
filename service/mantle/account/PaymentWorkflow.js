@@ -80,48 +80,7 @@ function query(scope, kind, filters = {}) {
     if (invoice)
         q = q.condition(lib.policy.invoiceDirectionCondition(scope.direction === "receivable" ? "invoices" : "bills", [org]))
     else {
-        const normal = scope.direction === "receivable" ? "toPartyId" : "fromPartyId"
-        const original = scope.direction === "receivable" ? "originalToPartyId" : "originalFromPartyId"
-        q = q
-            .condition(
-                cf.makeCondition(
-                    [
-                        cf.makeCondition(
-                            [
-                                cf.makeCondition("financeOrganizationPartyId", "equals", org),
-                                cf.makeCondition("financeDirection", "equals", scope.direction)
-                            ],
-                            "and"
-                        ),
-                        cf.makeCondition(
-                            [
-                                cf.makeCondition("financeDirection", "is-null", null),
-                                cf.makeCondition("refundForPaymentId", "is-null", null),
-                                cf.makeCondition(normal, "equals", org)
-                            ],
-                            "and"
-                        ),
-                        cf.makeCondition(
-                            [
-                                cf.makeCondition("financeDirection", "is-null", null),
-                                cf.makeCondition("originalFinanceOrganizationPartyId", "equals", org),
-                                cf.makeCondition("originalFinanceDirection", "equals", scope.direction)
-                            ],
-                            "and"
-                        ),
-                        cf.makeCondition(
-                            [
-                                cf.makeCondition("financeDirection", "is-null", null),
-                                cf.makeCondition("originalFinanceDirection", "is-null", null),
-                                cf.makeCondition(original, "equals", org)
-                            ],
-                            "and"
-                        )
-                    ],
-                    "or"
-                )
-            )
-            .condition("paymentTypeEnumId", "not-equals", "PtInternalTransfer")
+        q = q.condition(sideCondition(org, scope.direction)).condition("paymentTypeEnumId", "not-equals", "PtInternalTransfer")
     }
     q = q
         .condition(
@@ -159,21 +118,23 @@ function query(scope, kind, filters = {}) {
         if (filters.asOfDate) {
             const day = ec.l10n.format(filters.asOfDate, "yyyy-MM-dd"),
                 end = ec.l10n.parseTimestamp(day + " 23:59:59.999", "yyyy-MM-dd HH:mm:ss.SSS")
-            q = q.condition(
-                cf.makeCondition(
-                    [
-                        cf.makeCondition("accountingDate", "less-equals", day),
-                        cf.makeCondition(
-                            [
-                                cf.makeCondition("accountingDate", "is-null", null),
-                                cf.makeCondition(invoice ? "invoiceDate" : "effectiveDate", "less-equals", end)
-                            ],
-                            "and"
-                        )
-                    ],
-                    "or"
-                )
-            )
+            q = invoice
+                ? q.condition(
+                      cf.makeCondition(
+                          [
+                              cf.makeCondition("accountingDate", "less-equals", day),
+                              cf.makeCondition(
+                                  [
+                                      cf.makeCondition("accountingDate", "is-null", null),
+                                      cf.makeCondition("invoiceDate", "less-equals", end)
+                                  ],
+                                  "and"
+                              )
+                          ],
+                          "or"
+                      )
+                  )
+                : q.condition("effectiveDate", "less-equals", end)
         }
         const today = ec.l10n.parseTimestamp(
             ec.l10n.format(ec.user.nowTimestamp, "yyyy-MM-dd") + " 00:00:00",
@@ -229,11 +190,12 @@ function project(scope, kind, records, asOfDate = null) {
             : evidence.reduce((sum, row) => sum.add(row.amountApplied || 0), toDecimal(0))
         const remaining = original.subtract(used),
             date = invoice ? record.invoiceDate : record.effectiveDate
-        const accountingDateText = record.accountingDate
-            ? lib.policy.calendarDateText(record.accountingDate)
-            : date
-              ? ec.l10n.format(date, "yyyy-MM-dd")
-              : ""
+        const accountingDateText =
+            invoice && record.accountingDate
+                ? lib.policy.calendarDateText(record.accountingDate)
+                : date
+                  ? ec.l10n.format(date, "yyyy-MM-dd")
+                  : ""
         const reasons = []
         if (
             !(
@@ -370,9 +332,7 @@ const paymentFields = [
     "toPaymentMethodId",
     "statusId",
     "effectiveDate",
-    "accountingDate",
     "settlementDate",
-    "settlementAccountingDate",
     "dueDate",
     "paymentRefNum",
     "comments",
@@ -383,7 +343,7 @@ const paymentFields = [
     "orderId",
     "orderPartSeqId",
     "reconcileStatusId",
-    "lifecycleManaged",
+    "feeForPaymentId",
     "lastUpdatedStamp"
 ]
 const manualInstruments = [
@@ -414,43 +374,41 @@ function paymentContext(p, write = false, lock = false) {
         denied("PERMISSION_DENIED", "Payment view authority is required")
     if (write && (!broad || !has("PAYMENT_EDIT")))
         denied("PERMISSION_DENIED", "Payment editing and payment view authority are required")
-    const guardEnabled = lib.policy.preference(organizationPartyId).settlementApplicationGuardEnabled === "Y"
-    return {organizationPartyId, broad, guardEnabled}
+    return {organizationPartyId, broad}
 }
+// The internal organization of a payment: the one of its parties with the OrgInternal role, as set#PaymentAutoInfo reads
+// it, the payer first.
+function paymentOrganization(payment) {
+    return (
+        [payment.fromPartyId, payment.toPartyId].find(
+            partyId => partyId && one("mantle.party.PartyRole", {partyId, roleTypeId: "OrgInternal"})
+        ) || null
+    )
+}
+// The trade side of a payment for its organization: receivable when the organization receives it, payable when it pays;
+// a refund keeps its original's side and an internal transfer is "transfer".
+function paymentDirection(payment, org, original = null) {
+    if (payment.paymentTypeEnumId === "PtInternalTransfer") return "transfer"
+    const source = payment.refundForPaymentId ? original || one(P, {paymentId: payment.refundForPaymentId}) : payment
+    return (source || payment).toPartyId === org ? "receivable" : "payable"
+}
+// The payments of one trade side of an organization (paymentDirection, in a query of PaymentFinance or a view on it).
 function sideCondition(org, direction) {
     const cf = ec.entity.conditionFactory,
-        normal = direction === "receivable" ? "toPartyId" : "fromPartyId",
-        original = direction === "receivable" ? "originalToPartyId" : "originalFromPartyId"
+        receivable = direction === "receivable"
     return cf.makeCondition(
         [
             cf.makeCondition(
                 [
-                    cf.makeCondition("financeOrganizationPartyId", "equals", org),
-                    cf.makeCondition("financeDirection", "equals", direction)
-                ],
-                "and"
-            ),
-            cf.makeCondition(
-                [
-                    cf.makeCondition("financeDirection", "is-null", null),
                     cf.makeCondition("refundForPaymentId", "is-null", null),
-                    cf.makeCondition(normal, "equals", org)
+                    cf.makeCondition(receivable ? "toPartyId" : "fromPartyId", "equals", org)
                 ],
                 "and"
             ),
             cf.makeCondition(
                 [
-                    cf.makeCondition("financeDirection", "is-null", null),
-                    cf.makeCondition("originalFinanceOrganizationPartyId", "equals", org),
-                    cf.makeCondition("originalFinanceDirection", "equals", direction)
-                ],
-                "and"
-            ),
-            cf.makeCondition(
-                [
-                    cf.makeCondition("financeDirection", "is-null", null),
-                    cf.makeCondition("originalFinanceDirection", "is-null", null),
-                    cf.makeCondition(original, "equals", org)
+                    cf.makeCondition("refundForPaymentId", "is-not-null", null),
+                    cf.makeCondition(receivable ? "originalToPartyId" : "originalFromPartyId", "equals", org)
                 ],
                 "and"
             )
@@ -513,21 +471,7 @@ function paymentQuery(scope, p = {}) {
                 day + (field === "throughDay" ? " 23:59:59.999" : " 00:00:00.000"),
                 "yyyy-MM-dd HH:mm:ss.SSS"
             )
-            q = q.condition(
-                cf.makeCondition(
-                    [
-                        cf.makeCondition("accountingDate", operator, day),
-                        cf.makeCondition(
-                            [
-                                cf.makeCondition("accountingDate", "is-null", null),
-                                cf.makeCondition("effectiveDate", operator, stamp)
-                            ],
-                            "and"
-                        )
-                    ],
-                    "or"
-                )
-            )
+            q = q.condition("effectiveDate", operator, stamp)
         }
     if (String(p.text || "").trim())
         q = q.condition(
@@ -556,7 +500,7 @@ function paymentScope(p, write = false, lock = false) {
         const internal = [...new Set([source.fromPartyId, source.toPartyId])].filter(partyId =>
             one("mantle.party.PartyRole", {partyId, roleTypeId: "OrgInternal"})
         )
-        const organizationPartyId = source.financeOrganizationPartyId || (internal.length === 1 ? internal[0] : null)
+        const organizationPartyId = internal.length === 1 ? internal[0] : null
         if (!organizationPartyId) denied("ORGANIZATION_REQUIRED", "Choose the organization for this payment")
         parameters = Object.assign({}, p, {organizationPartyId})
     }
@@ -568,18 +512,8 @@ function paymentScope(p, write = false, lock = false) {
     if (!record || ![record.fromPartyId, record.toPartyId].includes(scope.organizationPartyId))
         denied("PAYMENT_UNAVAILABLE", "Payment is not available")
     const org = scope.organizationPartyId,
-        original = record.refundForPaymentId ? one(P, {paymentId: record.refundForPaymentId}) : null,
-        directionRecord = original || record
-    const financeDirection =
-        record.paymentTypeEnumId === "PtInternalTransfer"
-            ? "transfer"
-            : record.financeOrganizationPartyId === org && record.financeDirection
-              ? record.financeDirection
-              : directionRecord.financeOrganizationPartyId === org && directionRecord.financeDirection
-                ? directionRecord.financeDirection
-                : directionRecord.toPartyId === org
-                  ? "receivable"
-                  : "payable"
+        original = record.refundForPaymentId ? one(P, {paymentId: record.refundForPaymentId}) : null
+    const financeDirection = paymentDirection(record, org, original)
     const partyId = record.fromPartyId === org ? record.toPartyId : record.fromPartyId
     const party = one("mantle.party.Party", {partyId})
     if (!party || (party.privateOwnerUserId && party.privateOwnerUserId !== ec.user.userId && !lib.access.systemAdmin()))
@@ -611,26 +545,10 @@ function paymentApplications(ids) {
             .list()
     )
 }
-function paymentVersion(record, applicationRows = null) {
-    const fields = paymentFields.concat([
-            "financeOrganizationPartyId",
-            "financeDirection",
-            "paymentGatewayConfigId",
-            "overrideGlAccountId",
-            "overrideOrgPartyId"
-        ]),
-        header = Object.fromEntries(
-            fields.map(field => {
-                const value = record[field]
-                if (value == null) return [field, null]
-                if (["accountingDate", "settlementAccountingDate"].includes(field))
-                    return [field, lib.policy.calendarDateText(value)]
-                if (field.endsWith("Date") || field.endsWith("Stamp")) return [field, lib.ms(value)]
-                if (field === "amount") return [field, String(ec.l10n.roundCurrency(toDecimal(value), record.amountUomId))]
-                return [field, String(value)]
-            })
-        )
-    return lib.hash({header, applications: (applicationRows || paymentApplications([record.paymentId])).map(lib.map)})
+// The revision of a payment a review or an edit is checked against: its lastUpdatedStamp, which every write of the
+// payment changes (its applications through its applied and unapplied totals).
+function paymentVersion(record) {
+    return record.lastUpdatedStamp == null ? null : String(lib.ms(record.lastUpdatedStamp))
 }
 function paymentTotals(record, applicationRows) {
     const amount = toDecimal(record.amount || 0),
@@ -756,28 +674,19 @@ function paymentProjection(scope, record, appRows, names = {}) {
         financeDirection =
             record.paymentTypeEnumId === "PtInternalTransfer"
                 ? "transfer"
-                : record.financeDirection ||
-                  record.originalFinanceDirection ||
-                  scope.original?.financeDirection ||
-                  ((record.refundForPaymentId ? record.originalToPartyId || scope.original?.toPartyId : record.toPartyId) === org
-                      ? "receivable"
-                      : "payable"),
+                : (record.refundForPaymentId ? record.originalToPartyId || scope.original?.toPartyId : record.toPartyId) === org
+                  ? "receivable"
+                  : "payable",
         out = lib.policy.pick(
             lib.display(record),
             paymentFields
                 .filter(field => !["forInvoiceId", "refundForPaymentId", "orderId", "orderPartSeqId"].includes(field))
                 .concat(paymentFields.filter(field => /Date$|Stamp$/.test(field)).map(field => field + "Text"))
         )
-    out.effectiveDateValue = record.accountingDate
-        ? lib.policy.calendarDateText(record.accountingDate)
-        : record.effectiveDate
-          ? ec.l10n.format(record.effectiveDate, "yyyy-MM-dd")
-          : null
+    out.effectiveDateValue = record.effectiveDate ? ec.l10n.format(record.effectiveDate, "yyyy-MM-dd") : null
     out.accountingDateText = out.effectiveDateValue
-    out.effectiveDateText = record.accountingDate ? out.effectiveDateValue : lib.policy.dateText(record.effectiveDate)
-    out.settlementDateText = record.settlementAccountingDate
-        ? lib.policy.calendarDateText(record.settlementAccountingDate)
-        : lib.policy.dateText(record.settlementDate)
+    out.effectiveDateText = out.effectiveDateValue || ""
+    out.settlementDateText = record.settlementDate ? ec.l10n.format(record.settlementDate, "yyyy-MM-dd") : ""
     Object.assign(out, paymentTotals(record, appRows), {
         partyId,
         partyName: names[partyId] || partyId,
@@ -787,7 +696,7 @@ function paymentProjection(scope, record, appRows, names = {}) {
         financeDirection,
         referenceNumber: record.paymentRefNum,
         currencyUomId: record.amountUomId,
-        sourceVersion: paymentVersion(scope.versionRecords?.[record.paymentId] || record, appRows),
+        sourceVersion: paymentVersion(scope.versionRecords?.[record.paymentId] || record),
         statusDescription: scope.labels.statuses[record.statusId] || record.statusId,
         instrumentDescription: scope.labels.instruments[record.paymentInstrumentEnumId] || record.paymentInstrumentEnumId
     })
@@ -902,12 +811,14 @@ function methodVersion(method, identities = null) {
     })
 }
 // An internal transfer: one payment from the organization's from method (paymentMethodId) to its to method
-// (toPaymentMethodId), shown as its outgoing and incoming sides with masked method labels.
+// (toPaymentMethodId), shown as its outgoing and incoming sides with masked method labels, and the payment of its fee
+// (feeForPaymentId), if any.
 function transferProjection(record) {
     const label = paymentMethodId => {
             const method = paymentMethodId && one("mantle.account.method.PaymentMethod", {paymentMethodId})
             return method ? methodRows([method])[0].label : null
         },
+        fee = find(P, {feeForPaymentId: record.paymentId}).orderBy("paymentId").limit(1).one(),
         summary = {
             paymentId: record.paymentId,
             principalAmount: String(record.amount ?? 0),
@@ -916,7 +827,11 @@ function transferProjection(record) {
             fromMethodLabel: label(record.paymentMethodId),
             toMethodLabel: label(record.toPaymentMethodId),
             referenceNumber: record.paymentRefNum,
-            reason: record.comments
+            reason: record.comments,
+            feePaymentId: fee?.paymentId || null,
+            feeAmount: fee ? String(fee.amount ?? 0) : null,
+            feePartyId: fee?.toPartyId || null,
+            feePartyName: fee ? lib.partyNames([fee.toPartyId])[fee.toPartyId] || null : null
         },
         side = (leg, maskedMethodLabel) => ({
             paymentId: record.paymentId,
@@ -1076,7 +991,7 @@ function paymentDetailRead(p) {
         capabilities = paymentCapabilities(scope, apps, posted),
         out = {
             payment: paymentProjection(scope, record, apps, names),
-            sourceVersion: paymentVersion(record, apps),
+            sourceVersion: paymentVersion(record),
             totals: paymentTotals(record, apps),
             maskedMethodRows,
             applicationRows: visible.rows.map(row =>
@@ -1097,7 +1012,6 @@ function paymentDetailRead(p) {
             ),
             refundRows: [],
             contentRows: [],
-            historyRows: [],
             sourceRows: [],
             capabilities,
             reasons: capabilities.reasons,
@@ -1144,27 +1058,6 @@ function paymentDetailRead(p) {
                 "userId"
             ])
         )
-    out.historyRows = Array.from(
-        find("mantle.account.payment.PaymentLifecycleEvent", {
-            paymentId: p.paymentId,
-            organizationPartyId: scope.organizationPartyId
-        })
-            .orderBy("-createdDate,paymentLifecycleEventId")
-            .limit(100)
-            .list()
-    ).map(row =>
-        lib.policy.pick(lib.display(row), [
-            "paymentLifecycleEventId",
-            "action",
-            "beforeStatusId",
-            "afterStatusId",
-            "referenceNumber",
-            "reason",
-            "userId",
-            "createdDate",
-            "createdDateText"
-        ])
-    )
     out.sourceRows = [
         record.forInvoiceId && visible.invoiceIds.has(record.forInvoiceId)
             ? {sourceKind: "invoice", sourceId: record.forInvoiceId}
@@ -1202,29 +1095,6 @@ function paymentDetailRead(p) {
                     "amountUomId"
                 ])
             )
-    if (capabilities.canReadGateway)
-        out.gatewayRows = Array.from(
-            find("mantle.account.method.PaymentGatewayResponse", {paymentId: p.paymentId})
-                .orderBy("-transactionDate")
-                .limit(100)
-                .list()
-        ).map(row =>
-            lib.policy.pick(lib.display(row), [
-                "paymentGatewayResponseId",
-                "paymentOperationEnumId",
-                "transactionDate",
-                "transactionDateText",
-                "amount",
-                "amountUomId",
-                "resultSuccess",
-                "resultDeclined",
-                "resultError",
-                "referenceNum",
-                "transactionStatus",
-                "responseCode",
-                "reasonCode"
-            ])
-        )
     // Gateway actions and refunds through Mantle's gateway services (get#PaymentGatewayActions), for treasury users.
     if (capabilities.canReadGateway && record.paymentTypeEnumId !== "PtInternalTransfer") {
         const gateway = lib.call("mantle.account.PaymentServices.get#PaymentGatewayActions", {
@@ -1257,7 +1127,11 @@ function paymentDetailRead(p) {
     }
     return out
 }
-const operations = {openItems, payments, paymentDetail: paymentDetailRead, access, methodScope, maskedMethods}
+// What the user may read beside the payments: the ledger (canReadLedger) and every payment (broad).
+function readAuthority() {
+    return {canReadLedger: ledgerRead(), broad: broadRead()}
+}
+const operations = {openItems, payments, paymentDetail: paymentDetailRead, access, methodScope, maskedMethods, readAuthority}
 // Runs one payment read for its service and puts the results in the service's context.
 function execute(op, context) {
     if (!operations[op]) throw new Error("Unknown payment workflow operation " + op)
@@ -1289,6 +1163,9 @@ const paymentDetail = paymentDetailRead
     paymentScope,
     paymentApplications,
     paymentVersion,
+    paymentOrganization,
+    paymentDirection,
+    sideCondition,
     paymentTotals,
     paymentCapabilities,
     paymentProjection,

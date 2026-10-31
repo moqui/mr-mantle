@@ -4,8 +4,7 @@ const workflow = ec.resource.script("component://mr-mantle/service/mantle/accoun
 const {lib, context, key, parseKey, selected, query, project} = workflow
 const {find, one, rows, call, denied, map, hash, policy} = lib
 const guard = ec.resource.script("component://mr-mantle/service/mantle/ledger/PostingGuard.js")
-const PREVIEW = "mantle.account.payment.SettlementPreview",
-    T = "mantle.ledger.transaction.AcctgTrans",
+const T = "mantle.ledger.transaction.AcctgTrans",
     E = "mantle.ledger.transaction.AcctgTransEntry",
     I = workflow.I,
     P = workflow.P,
@@ -23,18 +22,6 @@ function dateInput(value, canonicalDay = null) {
     if (!timestamp || !day.test(bookDay) || (!canonicalDay && ec.l10n.format(timestamp, "yyyy-MM-dd") !== bookDay))
         denied("DATE_INVALID", "Choose a valid accounting date")
     return {day: bookDay, timestamp}
-}
-function money(value, currency) {
-    let amount
-    try {
-        amount = toDecimal(value)
-    } catch (_) {
-        denied("AMOUNT_INVALID", "Enter a positive amount")
-    }
-    if (!amount || amount.compare(0) <= 0) denied("AMOUNT_INVALID", "Enter a positive amount")
-    if (!amount.eq(ec.l10n.roundCurrency(amount, currency)))
-        denied("CURRENCY_PRECISION", "The amount exceeds the currency's precision")
-    return amount
 }
 function invoiceAccount(scope, invoice, payable) {
     const result = call("mantle.ledger.InvoiceAutoPostServices.get#InvoiceTypeTransType", {
@@ -231,7 +218,7 @@ function adjustmentRow(scope, date, byKey, row, index) {
     if (!adjustmentTypes.includes(row.itemTypeEnumId) || !String(row.reason || "").trim())
         denied("ADJUSTMENT_REASON_REQUIRED", "Choose a discount or write-off and enter a reason")
     const target = byKey[key("invoice", row.invoiceId)],
-        amount = money(row.amount, scope.currencyUomId)
+        amount = lib.amount(row.amount, scope.currencyUomId)
     if (!row.glAccountId) denied("ADJUSTMENT_ACCOUNT_REQUIRED", "Choose an explicit adjustment account")
     const account = policy.account(scope.organizationPartyId, row.glAccountId, date.timestamp)
     return {
@@ -286,7 +273,7 @@ function normalized(p, lock = false) {
     const allocationRows = allocations.map((row, index) => {
         const source = byKey[row.sourceKey],
             target = byKey[row.targetKey],
-            amount = money(row.amount, scope.currencyUomId)
+            amount = lib.amount(row.amount, scope.currencyUomId)
         take(source.sourceKey, amount)
         take(target.sourceKey, amount)
         return {
@@ -438,48 +425,38 @@ function adjustmentLedgerRow(row) {
 function fingerprint(n) {
     return hash({request: n.request, plans: n.plans, policy: n.policyEvidence})
 }
+const reviewService = "mantle.account.PaymentServices."
 function preview(p) {
     const n = normalized(p),
-        now = Number(ec.user.nowTimestamp),
-        inputFingerprint = fingerprint(n)
-    const made = call("create#" + PREVIEW, {
+        inputFingerprint = fingerprint(n),
+        kindEnumId = p.sourcePaymentId ? "PrkAutoApply" : "PrkSettlement"
+    const stored = call(reviewService + "store#PaymentReview", {
+        previewKindEnumId: kindEnumId,
         organizationPartyId: n.scope.organizationPartyId,
-        userId: ec.user.userId,
-        partyId: n.scope.partyId,
-        direction: n.scope.direction,
-        currencyUomId: n.scope.currencyUomId,
-        previewKind: p.previewKind || "manual",
-        sourcePaymentId: p.sourcePaymentId,
-        effectiveDate: n.request.effectiveDate,
-        accountingDate: n.request.accountingDate,
+        paymentId: p.sourcePaymentId,
         inputFingerprint,
-        requestJson: JSON.stringify(n.request),
-        payloadJson: JSON.stringify({dto: n.payload, plans: n.plans, policyEvidence: n.policyEvidence}),
-        createdDate: now,
-        expiresDate: now + 600000,
-        status: "review"
+        request: n.request,
+        payload: {dto: n.payload, plans: n.plans, policyEvidence: n.policyEvidence}
     })
     // The key that confirms this preview once; a retry with it answers the first result.
-    const operationKey = "settle-" + made.previewId
-    call("update#" + PREVIEW, {previewId: made.previewId, operationKey})
+    const operationKey = "settle-" + stored.previewId
+    call("update#mantle.account.payment.PaymentReview", {previewId: stored.previewId, operationKey})
     return Object.assign({}, n.payload, {
-        previewId: made.previewId,
+        previewId: stored.previewId,
         inputFingerprint,
         operationKey,
-        expiresDate: now + 600000,
+        expiresDate: stored.expiresDate,
         status: "review"
     })
 }
+// The user's own settlement review (get#PaymentReview) and its scope with the user's current authority.
 function retained(p, write = false) {
-    const row = one(PREVIEW, {previewId: p.previewId})
-    if (!row || row.userId !== ec.user.userId || row.status === "draft")
-        denied("SETTLEMENT_PREVIEW_UNAVAILABLE", "Settlement preview is unavailable")
-    if (p.organizationPartyId && p.organizationPartyId !== row.organizationPartyId)
-        denied("ORGANIZATION_DENIED", "The settlement belongs to another organization")
-    const scope = context(row, write),
-        payload = JSON.parse(row.payloadJson),
-        request = JSON.parse(row.requestJson)
-    return {row, scope, payload, request}
+    const found = call(reviewService + "get#PaymentReview", {
+        previewId: p.previewId,
+        previewKindEnumIds: ["PrkSettlement", "PrkAutoApply"],
+        organizationPartyId: p.organizationPartyId
+    })
+    return Object.assign(found, {scope: context(found.request, write)})
 }
 function redacted(result) {
     const clear = row => Object.assign({}, row, {acctgTransIds: []})
@@ -601,63 +578,29 @@ function createAdjustment(row, plan, request) {
         {acctgTransIds: [...invoiceIds, ...application.acctgTransIds]}
     )
 }
-// Confirm a retained preview once: recheck it against current balances, then apply every row and adjustment.
+// Confirm a retained preview once (claim#PaymentReview): recheck it against current balances, then apply every row and
+// adjustment. The organization is locked before the documents and their applications.
 function apply(p) {
     const r = retained(p, true)
-    const operation = lib.operation(
-        {operationKey: p.operationKey || r.row.operationKey},
-        "Settlement",
-        r.scope.organizationPartyId,
-        {previewId: r.row.previewId, inputFingerprint: p.inputFingerprint}
-    )
-    if (operation.old) {
-        const old = lib.previous(operation)
+    const claimed = call(reviewService + "claim#PaymentReview", {
+        previewId: p.previewId,
+        previewKindEnumIds: ["PrkSettlement", "PrkAutoApply"],
+        inputFingerprint: p.inputFingerprint,
+        operationKey: p.operationKey
+    })
+    if (claimed.replay) {
+        const old = Object.assign({}, claimed.result, {alreadyApplied: true})
         return r.scope.capabilities.canReadLedger ? old : redacted(old)
     }
-    if (!p.inputFingerprint || p.inputFingerprint !== r.row.inputFingerprint)
-        denied("STALE_PREVIEW", "Confirm the retained settlement fingerprint")
-    // The organization lock (lib.operation) comes before the preview, the documents and their applications.
-    const previewRow = find(PREVIEW, {previewId: r.row.previewId}).forUpdate(true).one()
-    if (previewRow.status !== "review") denied("SETTLEMENT_ALREADY_APPLIED", "This preview has already been confirmed")
-    if (lib.ms(previewRow.expiresDate) <= Number(ec.user.nowTimestamp))
-        denied("SETTLEMENT_PREVIEW_EXPIRED", "Review the settlement again before applying")
-    const n = normalized(r.request, true)
-    if (fingerprint(n) !== previewRow.inputFingerprint)
+    const n = normalized(claimed.request, true)
+    if (fingerprint(n) !== claimed.review.inputFingerprint)
         denied("STALE_PREVIEW", "Balances, accounts or posting policy changed; review again")
-    const settlementId = operation.operationKey,
-        allocationResults = [],
-        adjustmentResults = []
-    const record = (rowSeq, result, values) =>
-        call(
-            "create#mantle.account.payment.SettlementAllocation",
-            Object.assign(
-                {
-                    settlementId,
-                    rowSeq,
-                    previewId: previewRow.previewId,
-                    organizationPartyId: r.scope.organizationPartyId,
-                    currencyUomId: n.request.currencyUomId,
-                    paymentApplicationId: result.paymentApplicationId,
-                    acctgTransIdsJson: JSON.stringify(result.acctgTransIds)
-                },
-                values
-            )
-        )
-    n.payload.allocationRows.forEach((row, index) => {
-        const result = writeApplication(row, n.plans[index], n.request)
-        allocationResults.push(Object.assign({rowSeq: row.rowSeq}, result))
-        record(row.rowSeq, result, {sourceKey: row.sourceKey, targetKey: row.targetKey, amount: row.amount})
-    })
-    n.payload.adjustmentRows.forEach((row, index) => {
-        const result = createAdjustment(row, n.plans[n.payload.allocationRows.length + index], n.request)
-        adjustmentResults.push(Object.assign({rowSeq: row.rowSeq}, result))
-        record("adjustment-" + row.rowSeq, result, {
-            sourceKey: key("credit", result.adjustmentInvoiceId),
-            targetKey: row.targetKey,
-            amount: row.amount,
-            adjustmentInvoiceId: result.adjustmentInvoiceId
-        })
-    })
+    const allocationResults = n.payload.allocationRows.map((row, index) =>
+        Object.assign({rowSeq: row.rowSeq}, writeApplication(row, n.plans[index], n.request))
+    )
+    const adjustmentResults = n.payload.adjustmentRows.map((row, index) =>
+        Object.assign({rowSeq: row.rowSeq}, createAdjustment(row, n.plans[n.payload.allocationRows.length + index], n.request))
+    )
     const remaining = selected(r.scope, Object.keys(n.request.sourceVersions))
     for (const row of remaining) {
         const reviewed = n.payload.afterBalances.find(item => item.sourceKey === row.sourceKey)
@@ -666,9 +609,9 @@ function apply(p) {
     }
     const results = [...allocationResults, ...adjustmentResults]
     const result = {
-        settlementId,
-        previewId: previewRow.previewId,
-        operationKey: operation.operationKey,
+        settlementId: claimed.operationKey,
+        previewId: p.previewId,
+        operationKey: claimed.operationKey,
         accountingDate: n.request.accountingDate,
         accountingDateText: n.request.accountingDate,
         applicationIds: results.map(row => row.paymentApplicationId),
@@ -680,26 +623,14 @@ function apply(p) {
         reasonCode: "OK",
         alreadyApplied: false
     }
-    call("update#" + PREVIEW, {
-        previewId: previewRow.previewId,
-        status: "complete",
-        operationKey: operation.operationKey,
-        resultJson: JSON.stringify(result)
-    })
-    lib.complete(operation, PREVIEW, previewRow.previewId, result)
+    call(reviewService + "complete#PaymentReview", {previewId: p.previewId, operationKey: claimed.operationKey, result})
     return r.scope.capabilities.canReadLedger ? result : redacted(result)
 }
 function paymentScope(p, write = true) {
     const payment = one(P, {paymentId: p.paymentId})
     if (!payment) denied("PAYMENT_UNAVAILABLE", "Payment is unavailable")
-    let org = p.organizationPartyId || payment.financeOrganizationPartyId
-    if (!org)
-        org = one("mantle.party.PartyRole", {partyId: payment.fromPartyId, roleTypeId: "OrgInternal"})
-            ? payment.fromPartyId
-            : payment.toPartyId
-    const original = payment.refundForPaymentId ? one(P, {paymentId: payment.refundForPaymentId}) : payment
-    const direction =
-        payment.financeDirection || original?.financeDirection || (original?.toPartyId === org ? "receivable" : "payable")
+    const org = p.organizationPartyId || workflow.paymentOrganization(payment)
+    const direction = workflow.paymentDirection(payment, org)
     const scope = context(
         {
             organizationPartyId: org,
@@ -749,7 +680,6 @@ function previewAuto(p) {
             effectiveDate: p.effectiveDate,
             sourceVersions: versions,
             allocations,
-            previewKind: "auto",
             sourcePaymentId: p.paymentId
         })
     )
@@ -761,9 +691,9 @@ function autoApply(p) {
     if (!p.inputFingerprint) denied("SETTLEMENT_PREVIEW_REQUIRED", "Review automatic application before confirming")
     const reviewed = retained(p, true)
     if (
-        reviewed.row.previewKind !== "auto" ||
-        reviewed.row.sourcePaymentId !== p.paymentId ||
-        reviewed.row.organizationPartyId !== r.scope.organizationPartyId
+        reviewed.review.previewKindEnumId !== "PrkAutoApply" ||
+        reviewed.review.paymentId !== p.paymentId ||
+        reviewed.review.organizationPartyId !== r.scope.organizationPartyId
     )
         denied("SETTLEMENT_PREVIEW_MISMATCH", "The reviewed automatic application belongs to another payment")
     const result = apply(p)

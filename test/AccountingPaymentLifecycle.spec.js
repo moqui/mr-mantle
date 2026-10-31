@@ -338,7 +338,7 @@ feature("simultaneous exact delivery confirmations retain one cash transaction a
         return {
             results,
             transactions: h.lib.rows("mantle.ledger.transaction.AcctgTrans", {paymentId}),
-            operations: h.count("mantle.ledger.transaction.PostingOperation", {operationKey: args.request.operationKey})
+            operations: h.count("mantle.account.payment.PaymentReview", {operationKey: args.request.operationKey})
         }
     },
     then({results, transactions, operations}) {

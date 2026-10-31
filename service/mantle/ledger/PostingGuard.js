@@ -104,15 +104,26 @@ function scopes(tx, lines) {
         scopes.add("tax")
     return [...scopes]
 }
+// A physical source's posting (an asset receipt or issuance, a physical inventory, a financial account transaction) that
+// fails the guard goes to the error journal, unposted, instead of failing its source's write.
 function automatic(tx) {
-    // Only physical source posters choose error-journal behavior; a direct caller cannot supply the mode.
-    const stack = ec.artifactExecution.getStackNameString()
     return (
-        !!(tx.assetReceiptId || tx.assetIssuanceId || tx.physicalInventoryId || tx.finAccountTransId) &&
-        /mantle\.ledger\.(AssetAutoPostServices|OtherAutoPostServices)\.(?:post|repost)#/.test(stack) &&
-        !stack.includes("mantle.ledger.JournalServices.")
+        !!(tx.assetReceiptId || tx.assetIssuanceId || tx.physicalInventoryId || tx.finAccountTransId) && !tx.reverseOfAcctgTransId
     )
 }
+// The source document fields of a posting; a posting with none, or a reversal, is a manual one.
+const sourceFields = [
+    "invoiceId",
+    "paymentId",
+    "paymentApplicationId",
+    "assetReceiptId",
+    "assetIssuanceId",
+    "physicalInventoryId",
+    "finAccountTransId",
+    "assetId",
+    "assetDepreciationId",
+    "inventoryCostDetailId"
+]
 function postingLocks(tx, applicable, lock = false, sourceDay = null, enabled = true) {
     const locks = enabled
         ? rows("mantle.ledger.config.AccountingLock", {
@@ -416,18 +427,11 @@ function check(p) {
     const out = validate(p, !p.verifyOnly)
     if (out.findings.some(r => r.code === "ORGANIZATION")) throw new Error("Posting organization is not available")
     if (!p.verifyOnly && out.enabled && out.valid) {
-        const stack = ec.artifactExecution.getStackNameString()
-        const reviewed = /mantle\.ledger\.JournalServices\.(post|reverse)#Entry/.test(stack)
-        const source =
-            /mantle\.ledger\.(InvoiceAutoPostServices|PaymentAutoPostServices|AssetAutoPostServices|OtherAutoPostServices|AssetBookServices)\./.test(
-                stack
-            )
-        // These controllers retain and recheck the complete application/cash plans before posting corrections.
-        const paymentReviewed =
-            /mantle\.account\.PaymentServices\.(change#PaymentState|unapply#ReviewedPayment|refund#ReviewedPayment|create#InternalTransfer)(?:\b|$)/.test(
-                stack
-            )
-        if (!reviewed && !source && !paymentReviewed) throw new Error("REVIEW_REQUIRED: Use a reviewed posting operation")
+        // A manual posting or a reversal needs GL posting authority unless its caller says it is reviewed: Mantle's
+        // posting and reverting services of a source document. A source document's own posting is its service's.
+        const manual = !!out.tx.reverseOfAcctgTransId || !sourceFields.some(field => out.tx[field])
+        if (manual && !p.reviewed && !lib.lib.access.has("ACCOUNTING_GL_POST"))
+            throw new Error("REVIEW_REQUIRED: Use a reviewed posting operation")
         if (out.captureAccountingDate)
             lib.call("update#" + T, {acctgTransId: p.acctgTransId, accountingDate: out.captureAccountingDate})
     }

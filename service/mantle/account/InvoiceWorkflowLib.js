@@ -1,17 +1,11 @@
-// Native invoice workflow helpers. Permissions and organization relationships remain authoritative with artifact authz disabled.
+// Invoice scope for the account modules: the invoice and its organization for a read or a write, the side's
+// permission, stored totals and fingerprints. The entity, value, paging and operation-key helpers are EntityLib's.
 const policy = ec.resource.script("component://mr-mantle/service/mantle/ledger/AccountingPolicy.js")
-const access = ec.resource.script("component://mr-mantle/service/mantle/product/ProductAccess.js")
+const entityLib = policy.lib
+const access = entityLib.access
 const invoiceEntity = "mantle.account.invoice.Invoice"
-const operationEntity = "mantle.ledger.transaction.PostingOperation"
-const find = policy.find
-const one = policy.one
-const rows = policy.rows
-const call = policy.call
-const probe = policy.probe
-const ms = policy.ms
-const map = policy.map
-const display = policy.display
-const hash = policy.hash
+const {find, one, rows, call, probe, ms, map, display, hash, denied, partyNames, page, operationEntity, complete, previous} =
+    entityLib
 const has = access.has
 function invoiceDisplay(record) {
     const out = display(record)
@@ -21,9 +15,6 @@ function invoiceDisplay(record) {
         out.invoiceDateValue = out.accountingDateText
     } else out.invoiceDateValue = record.invoiceDate ? ec.l10n.format(record.invoiceDate, "yyyy-MM-dd") : null
     return out
-}
-function denied(code, message) {
-    throw new Error(code + ": " + message)
 }
 function requirePermission(permission) {
     if (!has(permission)) denied("PERMISSION_DENIED", permission + " authority is required")
@@ -126,47 +117,10 @@ function fingerprint(record) {
             .sort((a, b) => String(a.invoiceItemSeqId).localeCompare(String(b.invoiceItemSeqId)))
     })
 }
+// An operation key for an invoice operation, with the organization locked first.
 function operation(p, type, organizationPartyId, request, lock = true) {
-    const operationKey = String(p.operationKey || "")
-    if (!operationKey || operationKey.length > 40)
-        denied("OPERATION_KEY_REQUIRED", "An operation key of at most 40 characters is required")
-    if (lock) organization(organizationPartyId, null, true)
-    const requestHash = hash(request)
-    const old = one(operationEntity, {operationKey})
-    if (
-        old &&
-        (old.operationType !== type ||
-            old.organizationPartyId !== organizationPartyId ||
-            old.userId !== ec.user.userId ||
-            old.requestHash !== requestHash)
-    )
-        denied("OPERATION_KEY_CONFLICT", "Operation key was used for another request")
-    return {operationKey, requestHash, old, operationType: type, organizationPartyId}
-}
-function complete(op, resultEntityName, resultId, result) {
-    call("create#" + operationEntity, {
-        operationKey: op.operationKey,
-        operationType: op.operationType,
-        organizationPartyId: op.organizationPartyId,
-        userId: ec.user.userId,
-        submittedDate: ec.user.nowTimestamp,
-        completedDate: ec.user.nowTimestamp,
-        requestHash: op.requestHash,
-        status: "complete",
-        resultEntityName,
-        resultId,
-        resultJson: JSON.stringify(result)
-    })
-}
-function previous(op) {
-    if (!op.old) return null
-    let result = {}
-    try {
-        result = JSON.parse(op.old.resultJson || "{}")
-    } catch (_) {
-        result = {}
-    }
-    return Object.assign(result, {alreadyApplied: true})
+    if (lock && p.operationKey) organization(organizationPartyId, null, true)
+    return entityLib.operation(p, type, organizationPartyId, request)
 }
 // One invoice line's amount, rounded to its currency.
 function lineTotal(line, currencyUomId) {
@@ -216,48 +170,15 @@ function totalsMany(records, asOfDate = null) {
     }
     return values
 }
-// Names of the parties the user may see, by party ID, read in one query; a party another user keeps private is left out.
-function partyNames(ids) {
-    const unique = [...new Set(ids.filter(Boolean))]
-    if (!unique.length) return {}
-    const names = {}
-    for (const row of find("mantle.party.PartyDetail").condition("partyId", "in", unique).list()) {
-        if (row.privateOwnerUserId && row.privateOwnerUserId !== ec.user.userId && !access.systemAdmin()) continue
-        names[row.partyId] =
-            row.organizationName || [row.firstName, row.middleName, row.lastName].filter(Boolean).join(" ") || row.partyId
-    }
-    return names
-}
-function page(query, p, field = "records", recordCount) {
-    const pageSize = Math.min(100, Math.max(1, Number(p.pageSize) || 20))
-    const pageMaxIndex = Math.max(0, Math.ceil(recordCount / pageSize) - 1)
-    const pageIndex = Math.min(pageMaxIndex, Math.max(0, Number(p.pageIndex) || 0))
-    const result = {
-        recordCount,
-        pageSize,
-        pageIndex,
-        pageMaxIndex,
-        pageRangeLow: recordCount ? pageIndex * pageSize + 1 : 0,
-        pageRangeHigh: Math.min(recordCount, (pageIndex + 1) * pageSize)
-    }
-    result.rows = Array.from(
-        query
-            .offset(pageIndex * pageSize)
-            .limit(pageSize)
-            .list()
-    )
-    result[field] = result.rows
-    result[field + "Count"] = recordCount
-    for (const key of ["PageSize", "PageIndex", "PageMaxIndex", "PageRangeLow", "PageRangeHigh"])
-        result[field + key] = result[key[0].toLowerCase() + key.slice(1)]
-    return result
-}
-
 function escapeHtml(value) {
     const entities = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}
     return String(value ?? "").replace(/[&<>"']/g, character => entities[character])
 }
 ;({
+    entityLib,
+    amount: entityLib.amount,
+    json: entityLib.json,
+    check: entityLib.check,
     policy,
     access,
     invoiceEntity,

@@ -28,7 +28,7 @@ spec({
     setupSpec() {
         login("john.doe")
         ec.artifactExecution.disableAuthz()
-        f = helper().withoutSettlementFlag(helper().fixtures("ACCT_APP_RULES"))
+        f = helper().fixtures("ACCT_APP_RULES")
         // The rules hold without the general posting guard, which would also ask for reviewed journal operations.
         helper().call("update#mantle.ledger.config.PartyAcctgPreference", {organizationPartyId: f.org, postingGuardEnabled: "N"})
     },

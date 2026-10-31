@@ -13,20 +13,10 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
-    <extend-entity entity-name="PartyAcctgPreference" package="mantle.ledger.config">
-        <field name="settlementApplicationGuardEnabled" type="text-indicator" default="'N'" enable-audit-log="update"/>
-        <field name="paymentAutoApplicationEnabled" type="text-indicator" default="'N'" enable-audit-log="update"/>
-    </extend-entity>
-    <extend-entity entity-name="Payment" package="mantle.account.payment">
-        <field name="accountingDate" type="date" enable-audit-log="true"/>
-        <field name="financeOrganizationPartyId" type="id"/>
-        <field name="financeDirection" type="text-short"/>
-        <field name="lifecycleManaged" type="text-indicator"/>
-        <field name="settlementAccountingDate" type="date"/>
-    </extend-entity>
     <extend-entity entity-name="PaymentApplication" package="mantle.account.payment">
-        <field name="accountingDate" type="date" enable-audit-log="true"/>
-        <field name="currencyUomId" type="id"/>
+        <field name="accountingDate" type="date" enable-audit-log="true"><description>The book day of the application and
+            its posting, when reviewed (apply#InvoicePayment, apply#PaymentToPayment, apply#InvoiceToInvoice).</description>
+        </field>
     </extend-entity>
     <view-entity entity-name="PaymentFinance" package="mantle.account.payment" cache="never">
         <member-entity entity-alias="P" entity-name="mantle.account.payment.Payment"/>
@@ -42,8 +32,6 @@ along with this software (see the LICENSE.md file). If not, see
         <alias-all entity-alias="P"/>
         <alias entity-alias="O" name="originalFromPartyId" field="fromPartyId"/>
         <alias entity-alias="O" name="originalToPartyId" field="toPartyId"/>
-        <alias entity-alias="O" name="originalFinanceDirection" field="financeDirection"/>
-        <alias entity-alias="O" name="originalFinanceOrganizationPartyId" field="financeOrganizationPartyId"/>
         <alias entity-alias="F" name="fromPrivateOwnerUserId" field="privateOwnerUserId"/>
         <alias entity-alias="T" name="toPrivateOwnerUserId" field="privateOwnerUserId"/>
     </view-entity>
@@ -63,26 +51,48 @@ along with this software (see the LICENSE.md file). If not, see
         <alias entity-alias="T" name="toFirstName" field="firstName"/>
         <alias entity-alias="T" name="toLastName" field="lastName"/>
     </view-entity>
-    <entity entity-name="PaymentStatePreview" package="mantle.account.payment" cache="never">
+    <entity entity-name="PaymentReview" package="mantle.account.payment" cache="never">
+        <description>A review its user confirms once: a settlement, automatic application, payment state change,
+            unapplication, gateway action, refund or internal transfer (previewKindEnumId), or a settlement draft. The
+            request is what confirming plans again, the payload what the user reviewed, and the result what confirming
+            returned; a retry with the same operation key answers the result.</description>
         <field name="previewId" type="id" is-pk="true"/>
+        <field name="previewKindEnumId" type="id"/>
+        <field name="statusId" type="id"/>
         <field name="organizationPartyId" type="id"/>
-        <field name="paymentId" type="id"/>
+        <field name="paymentId" type="id"><description>The payment reviewed, or the source of an automatic
+            application.</description></field>
         <field name="userId" type="id"/>
-        <field name="previewKind" type="text-short"/>
         <field name="inputFingerprint" type="text-long"/>
         <field name="requestJson" type="text-very-long"/>
         <field name="payloadJson" type="text-very-long"/>
         <field name="createdDate" type="date-time"/>
         <field name="expiresDate" type="date-time"/>
-        <field name="status" type="text-short"/>
         <field name="operationKey" type="id"/>
         <field name="resultJson" type="text-very-long"/>
-        <index name="PAYMENT_STATE_OWNER">
+        <relationship type="one" title="PaymentReviewKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="previewKindEnumId"/>
+        </relationship>
+        <relationship type="one" title="PaymentReview" related="moqui.basic.StatusItem" short-alias="status">
+            <key-map field-name="statusId"/>
+        </relationship>
+        <relationship type="one" related="mantle.party.Party" short-alias="organization">
+            <key-map field-name="organizationPartyId" related="partyId"/>
+        </relationship>
+        <relationship type="one" related="mantle.account.payment.Payment" short-alias="payment"/>
+        <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="PAYMENT_REVIEW_OWNER">
             <index-field name="organizationPartyId"/>
             <index-field name="userId"/>
         </index>
+        <index name="PAYMENT_REVIEW_OPERATION">
+            <index-field name="operationKey"/>
+        </index>
     </entity>
     <entity entity-name="PaymentLifecycleEvent" package="mantle.account.payment" cache="never">
+        <description>What a payment's History shows beside its status audit log: each draft, edit, reviewed state change,
+            unapplication and validation decision, by whom, with its reference and reason. A draft's event keeps the
+            revision and method versions its validation notice approves.</description>
         <field name="paymentLifecycleEventId" type="id" is-pk="true"/>
         <field name="organizationPartyId" type="id"/>
         <field name="paymentId" type="id"/>
@@ -90,18 +100,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="action" type="text-short"/>
         <field name="beforeStatusId" type="id"/>
         <field name="afterStatusId" type="id"/>
-        <field name="accountingDate" type="date"/>
-        <field name="settlementAccountingDate" type="date"/>
         <field name="referenceNumber" type="text-short"/>
         <field name="reason" type="text-long"/>
         <field name="createdDate" type="date-time"/>
         <field name="operationKey" type="id"/>
-        <field name="evidenceJson" type="text-very-long"/>
-        <field name="acctgTransIdsJson" type="text-long"/>
-        <field name="postingEffectsJson" type="text-very-long"/>
         <field name="expectedSourceVersion" type="text-long"/>
         <field name="validationPolicyJson" type="text-very-long"/>
         <field name="sourceValidationEventId" type="id"/>
+        <relationship type="one" related="mantle.account.payment.Payment" short-alias="payment"/>
         <index name="PAYMENT_EVENT_RECORD">
             <index-field name="paymentId"/>
             <index-field name="createdDate"/>
@@ -186,41 +192,4 @@ along with this software (see the LICENSE.md file). If not, see
             </complex-alias>
         </alias>
     </view-entity>
-    <entity entity-name="SettlementPreview" package="mantle.account.payment" cache="never">
-        <field name="previewId" type="id" is-pk="true"/>
-        <field name="organizationPartyId" type="id"/>
-        <field name="userId" type="id"/>
-        <field name="partyId" type="id"/>
-        <field name="direction" type="text-short"/>
-        <field name="currencyUomId" type="id"/>
-        <field name="previewKind" type="text-short"/>
-        <field name="sourcePaymentId" type="id"/>
-        <field name="effectiveDate" type="date-time"/>
-        <field name="accountingDate" type="date"/>
-        <field name="inputFingerprint" type="text-long"/>
-        <field name="requestJson" type="text-very-long"/>
-        <field name="payloadJson" type="text-very-long"/>
-        <field name="createdDate" type="date-time"/>
-        <field name="expiresDate" type="date-time"/>
-        <field name="status" type="text-short"/>
-        <field name="operationKey" type="id"/>
-        <field name="resultJson" type="text-very-long"/>
-        <index name="SETTLEMENT_PREVIEW_OWNER">
-            <index-field name="organizationPartyId"/>
-            <index-field name="userId"/>
-        </index>
-    </entity>
-    <entity entity-name="SettlementAllocation" package="mantle.account.payment" cache="never">
-        <field name="settlementId" type="id" is-pk="true"/>
-        <field name="rowSeq" type="id" is-pk="true"/>
-        <field name="previewId" type="id"/>
-        <field name="organizationPartyId" type="id"/>
-        <field name="sourceKey" type="text-medium"/>
-        <field name="targetKey" type="text-medium"/>
-        <field name="amount" type="currency-amount"/>
-        <field name="currencyUomId" type="id"/>
-        <field name="paymentApplicationId" type="id"/>
-        <field name="adjustmentInvoiceId" type="id"/>
-        <field name="acctgTransIdsJson" type="text-long"/>
-    </entity>
 </entities>

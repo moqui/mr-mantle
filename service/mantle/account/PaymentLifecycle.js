@@ -16,7 +16,7 @@ const {
 } = workflow
 const {find, one, rows, call, denied, map, hash, policy} = lib
 const settlement = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentSettlement.js")
-const PREVIEW = "mantle.account.payment.PaymentStatePreview",
+const REVIEWS = "mantle.account.PaymentServices.",
     EVENT = "mantle.account.payment.PaymentLifecycleEvent",
     CONTENT = "mantle.account.payment.PaymentContent",
     TX = "mantle.ledger.transaction.AcctgTrans",
@@ -32,9 +32,6 @@ const actionStatus = {
 const maxEvidenceCount = 10,
     maxEvidenceBytes = 10485760,
     maxTotalEvidenceBytes = 20971520
-function setFields(record, fields) {
-    for (const [field, value] of Object.entries(fields)) record.set(field, value)
-}
 // The statuses a payment passes through from one status to another along the Default status flow: the direct
 // transition, or through Promised (a proposed draft is promised before it is delivered). Null when the flow has neither.
 function statusPath(fromStatusId, toStatusId) {
@@ -63,22 +60,6 @@ function projectResult(result) {
 }
 function stateLabel(statusId) {
     return one("moqui.basic.StatusItem", {statusId})?.description || statusId
-}
-function requireGuard(scope) {
-    if (!scope.guardEnabled)
-        denied("SETTLEMENT_GUARD_REQUIRED", "Enable settlement application controls before using the payment lifecycle")
-}
-function amountInput(value, currency) {
-    let amount
-    try {
-        amount = toDecimal(value)
-    } catch (_) {
-        denied("AMOUNT_INVALID", "Enter a positive payment amount")
-    }
-    if (!amount || amount.compare(0) <= 0) denied("AMOUNT_INVALID", "Enter a positive payment amount")
-    if (!amount.eq(ec.l10n.roundCurrency(amount, currency)))
-        denied("CURRENCY_PRECISION", "The amount exceeds the currency precision")
-    return amount
 }
 function counterparty(p, org) {
     const party = one("mantle.party.Party", {partyId: p.partyId})
@@ -185,7 +166,7 @@ function draftRequest(p, scope) {
     if (referenceNumber.length > 60) denied("PAYMENT_REFERENCE_TOO_LONG", "The payment reference is limited to 60 characters")
     if (comments.length > 4000) denied("PAYMENT_COMMENTS_TOO_LONG", "The payment comments are limited to 4000 characters")
     const date = settlement.dateInput(p.effectiveDate, p._accountingDay),
-        amount = amountInput(p.amount, p.currencyUomId),
+        amount = lib.amount(p.amount, p.currencyUomId),
         instrument = one("moqui.basic.Enumeration", {enumId: p.paymentInstrumentEnumId, enumTypeId: "PaymentInstrument"})
     if (!instrument || ["PiWriteOff", "PiDiscount"].includes(instrument.enumId))
         denied("PAYMENT_INSTRUMENT_INVALID", "Choose a payment instrument")
@@ -215,7 +196,6 @@ function draftFields(request, methods) {
         amount: request.amount,
         amountUomId: request.currencyUomId,
         effectiveDate: request.effectiveDate,
-        accountingDate: request._accountingDay,
         paymentInstrumentEnumId: request.paymentInstrumentEnumId,
         paymentMethodId: incoming
             ? methods.counterpartyMethod?.paymentMethodId || null
@@ -223,9 +203,6 @@ function draftFields(request, methods) {
         toPaymentMethodId: incoming
             ? methods.organizationMethod.paymentMethodId
             : methods.counterpartyMethod?.paymentMethodId || null,
-        financeOrganizationPartyId: request.organizationPartyId,
-        financeDirection: incoming ? "receivable" : "payable",
-        lifecycleManaged: "Y",
         paymentRefNum: request.referenceNumber || null,
         comments: request.comments || null
     }
@@ -235,14 +212,13 @@ function draftResult(record) {
         paymentId: record.paymentId,
         statusId: record.statusId,
         sourceVersion: paymentVersion(record),
-        accountingDateText: record.accountingDate
-            ? policy.calendarDateText(record.accountingDate)
-            : policy.dateText(record.effectiveDate),
+        accountingDateText: record.effectiveDate ? ec.l10n.format(record.effectiveDate, "yyyy-MM-dd") : null,
         alreadyApplied: false,
         validationRequired: record.statusId === "PmntProposed"
     }
 }
-function event(scope, action, before, op, p = {}, evidence = [], acctgTransIds = []) {
+// A History row of the payment (PaymentLifecycleEvent); a draft's keeps what its validation notice approves.
+function event(scope, action, before, op, p = {}) {
     return call("create#" + EVENT, {
         organizationPartyId: scope.organizationPartyId,
         paymentId: scope.record.paymentId,
@@ -250,15 +226,10 @@ function event(scope, action, before, op, p = {}, evidence = [], acctgTransIds =
         action,
         beforeStatusId: before,
         afterStatusId: scope.record.statusId,
-        accountingDate: scope.record.accountingDate,
-        settlementAccountingDate: scope.record.settlementAccountingDate,
         referenceNumber: p.referenceNumber || scope.record.paymentRefNum,
         reason: p.reason,
         createdDate: ec.user.nowTimestamp,
         operationKey: op.operationKey,
-        evidenceJson: JSON.stringify(evidence),
-        acctgTransIdsJson: JSON.stringify(acctgTransIds),
-        postingEffectsJson: JSON.stringify(p.postingEffects || {}),
         expectedSourceVersion: p.expectedSourceVersion || p.sourceVersion || null,
         validationPolicyJson: p.validationPolicy ? JSON.stringify(p.validationPolicy) : null,
         sourceValidationEventId: p.sourceValidationEventId || null
@@ -435,13 +406,6 @@ function selectedEvidence(scope, p, lock = false) {
         return file
     })
 }
-// The reviewed evidence manifest (file names, sizes and hashes) on the lifecycle event. The files stay payment content;
-// save#PaymentContentFile refuses to replace a file once the payment is posted.
-function freezeEvidence(scope, eventId, files) {
-    const manifest = files.map(file => file.manifest)
-    if (manifest.length) call("update#" + EVENT, {paymentLifecycleEventId: eventId, evidenceJson: JSON.stringify(manifest)})
-    return manifest
-}
 function methodRequest(scope) {
     const r = scope.record,
         incoming = scope.cashDirection === "incoming",
@@ -542,10 +506,7 @@ function stateNormalized(p, lock = false) {
         date =
             action === "cancel" && !r.effectiveDate
                 ? {day: null, timestamp: null}
-                : settlement.dateInput(
-                      r.effectiveDate,
-                      r.accountingDate ? policy.calendarDateText(r.accountingDate) : p._paymentDay || null
-                  )
+                : settlement.dateInput(r.effectiveDate, p._paymentDay || null)
     const referenceNumber = String(p.referenceNumber || "").trim(),
         reason = String(p.reason || "").trim()
     if (!["validate", "deliver", "confirm", "cancel"].includes(action))
@@ -664,19 +625,17 @@ function stateNormalized(p, lock = false) {
         }
     return {scope, request, payload, plans, policyEvidence, evidence, transactions, postedEntries}
 }
-function projectPreview(row, payload, scope) {
+// A review for its user (get#PaymentReview's review and payload): what may be seen with the user's current authority.
+function projectPreview(review, payload, scope, result = null) {
     const dto = Object.assign({}, payload, {
-        previewId: row.previewId,
-        inputFingerprint: row.inputFingerprint,
-        operationKey: row.operationKey || null,
-        expiresAt: row.expiresDate,
-        expiresDate: row.expiresDate,
-        status: row.status,
-        canApply:
-            row.status === "review" &&
-            lib.ms(row.expiresDate) > Number(ec.user.nowTimestamp) &&
-            scope.broad &&
-            lib.has("PAYMENT_EDIT")
+        previewId: review.previewId,
+        previewKind: review.previewKind,
+        inputFingerprint: review.inputFingerprint,
+        operationKey: review.operationKey || null,
+        expiresAt: review.expiresDate,
+        expiresDate: review.expiresDate,
+        status: review.status,
+        canApply: review.canConfirm && scope.broad && lib.has("PAYMENT_EDIT")
     })
     dto.capabilities = paymentCapabilities(scope)
     const outputFlags = ec.resource.script("component://mr-mantle/service/mantle/account/PaymentOutput.js").available(scope)
@@ -688,54 +647,63 @@ function projectPreview(row, payload, scope) {
         !lib.has(scope.financeDirection === "receivable" ? "RECEIVABLE_EDIT" : "PAYABLE_EDIT")
     )
         dto.canApply = false
-    if (row.resultJson) dto.results = projectResult(JSON.parse(row.resultJson))
+    if (result) dto.results = projectResult(result)
     return dto
 }
-function previewState(p) {
-    const n = stateNormalized(p),
-        now = Number(ec.user.nowTimestamp),
-        inputFingerprint =
-            p.action === "void"
-                ? correctionFingerprint(n)
-                : hash({
-                      request: n.request,
-                      plans: n.plans,
-                      policy: n.policyEvidence,
-                      transactions: n.transactions.map(map),
-                      entries: n.postedEntries,
-                      summary: n.payload.paymentSummary
-                  })
-    const made = call("create#" + PREVIEW, {
+// Keep a state or unapplication review (store#PaymentReview) and answer it as its user sees it.
+function storeReview(kindEnumId, n, inputFingerprint) {
+    const stored = call(REVIEWS + "store#PaymentReview", {
+        previewKindEnumId: kindEnumId,
         organizationPartyId: n.scope.organizationPartyId,
-        paymentId: p.paymentId,
-        userId: ec.user.userId,
-        previewKind: "state",
+        paymentId: n.scope.record.paymentId,
         inputFingerprint,
-        requestJson: JSON.stringify(n.request),
-        payloadJson: JSON.stringify(n.payload),
-        createdDate: now,
-        expiresDate: now + 600000,
-        status: "review"
+        request: n.request,
+        payload: n.payload
     })
-    return projectPreview(
-        Object.assign(made, {inputFingerprint, expiresDate: now + 600000, status: "review"}),
-        n.payload,
-        n.scope
-    )
+    return getReview({previewId: stored.previewId}, kindEnumId)
 }
-function retained(p, write = false, lock = false) {
-    const initial = one(PREVIEW, {previewId: p.previewId})
-    if (!initial || initial.userId !== ec.user.userId) denied("PAYMENT_PREVIEW_UNAVAILABLE", "The payment review is unavailable")
-    if (p.organizationPartyId && initial.organizationPartyId !== p.organizationPartyId)
-        denied("ORGANIZATION_DENIED", "The payment review belongs to another organization")
-    const scope = paymentScope(initial, write, lock),
-        row = lock ? find(PREVIEW, {previewId: p.previewId}).forUpdate(true).one() : initial
-    return {row, scope, request: JSON.parse(row.requestJson), payload: JSON.parse(row.payloadJson)}
+function stateFingerprint(n) {
+    return hash({
+        request: n.request,
+        plans: n.plans,
+        policy: n.policyEvidence,
+        transactions: n.transactions.map(map),
+        entries: n.postedEntries,
+        summary: n.payload.paymentSummary
+    })
+}
+function previewState(p) {
+    const n = stateNormalized(p)
+    return storeReview("PrkState", n, p.action === "void" ? correctionFingerprint(n) : stateFingerprint(n))
+}
+// The user's own review of a payment (get#PaymentReview) with the payment's scope under the user's current authority.
+function getReview(p, kindEnumId) {
+    const found = call(REVIEWS + "get#PaymentReview", {
+        previewId: p.previewId,
+        previewKindEnumIds: [kindEnumId],
+        organizationPartyId: p.organizationPartyId
+    })
+    const scope = paymentScope({organizationPartyId: found.review.organizationPartyId, paymentId: found.review.paymentId})
+    return projectPreview(found.review, found.payload, scope, found.result)
 }
 function getStatePreview(p) {
-    const r = retained(p)
-    if (r.row.previewKind !== "state") denied("PAYMENT_PREVIEW_MISMATCH", "Choose a payment state review")
-    return projectPreview(r.row, r.payload, r.scope)
+    return getReview(p, "PrkState")
+}
+// Claim a review to confirm it (claim#PaymentReview), then lock the payment's scope.
+function claimReview(p, kindEnumId) {
+    const claimed = call(REVIEWS + "claim#PaymentReview", {
+        previewId: p.previewId,
+        previewKindEnumIds: [kindEnumId],
+        organizationPartyId: p.organizationPartyId,
+        inputFingerprint: p.inputFingerprint,
+        operationKey: p.operationKey
+    })
+    if (!claimed.replay) paymentScope(Object.assign({}, claimed.request), true, true)
+    return claimed
+}
+function completeReview(p, claimed, result) {
+    call(REVIEWS + "complete#PaymentReview", {previewId: p.previewId, operationKey: claimed.operationKey, result})
+    return projectResult(result)
 }
 function verifyCash(scope, plans) {
     const actual = nativeTransactions(scope.record.paymentId, scope.organizationPartyId),
@@ -769,37 +737,17 @@ function verifyCash(scope, plans) {
     return actual.map(row => row.acctgTransId)
 }
 function changeState(p) {
-    const r = retained(p, true, true)
-    if (r.row.previewKind !== "state" || p.inputFingerprint !== r.row.inputFingerprint)
-        denied("PAYMENT_PREVIEW_MISMATCH", "Confirm the reviewed payment state change")
-    const op = lib.operation(p, "PaymentState", r.scope.organizationPartyId, {
-        previewId: p.previewId,
-        inputFingerprint: p.inputFingerprint
-    })
-    if (op.old) return projectResult(lib.previous(op))
-    if (r.row.status !== "review") denied("PAYMENT_PREVIEW_CONSUMED", "The review was already confirmed with another operation")
-    if (lib.ms(r.row.expiresDate) <= Number(ec.user.nowTimestamp))
-        denied("PAYMENT_PREVIEW_EXPIRED", "Review the payment again before confirming")
-    if (r.request.action === "void") {
-        const correction = unapplyNormalized(r.request, true, true)
-        if (correctionFingerprint(correction) !== r.row.inputFingerprint)
+    const claimed = claimReview(p, "PrkState"),
+        op = {operationKey: claimed.operationKey}
+    if (claimed.replay) return projectResult(Object.assign({}, claimed.result, {alreadyApplied: true}))
+    if (claimed.request.action === "void") {
+        const correction = unapplyNormalized(claimed.request, true, true)
+        if (correctionFingerprint(correction) !== claimed.review.inputFingerprint)
             denied("STALE_PREVIEW", "The reviewed financial history changed")
-        const result = executeCorrection(correction, op)
-        setFields(r.row, {status: "complete", operationKey: op.operationKey, resultJson: JSON.stringify(result)})
-        r.row.update()
-        lib.complete(op, P, correction.scope.record.paymentId, result)
-        return projectResult(result)
+        return completeReview(p, claimed, executeCorrection(correction, op))
     }
-    const n = stateNormalized(r.request, true),
-        fingerprint = hash({
-            request: n.request,
-            plans: n.plans,
-            policy: n.policyEvidence,
-            transactions: n.transactions.map(map),
-            entries: n.postedEntries,
-            summary: n.payload.paymentSummary
-        })
-    if (fingerprint !== r.row.inputFingerprint)
+    const n = stateNormalized(claimed.request, true)
+    if (stateFingerprint(n) !== claimed.review.inputFingerprint)
         denied("STALE_PREVIEW", "The payment or its posting policy changed; review it again")
     const record = n.scope.record,
         paymentId = record.paymentId,
@@ -818,11 +766,9 @@ function changeState(p) {
             denied("CHECK_NUMBER_CONFLICT", "The existing check number belongs to a different bank account")
         if (!existingCheck) call("mantle.account.PaymentServices.assign#BankAccountCheckNumber", {paymentId})
     }
-    const fields = {lifecycleManaged: "Y"}
-    if (["validate", "deliver"].includes(action) && !record.accountingDate) fields.accountingDate = n.request._paymentDay
+    const fields = {}
     if (n.request.referenceNumber) fields.paymentRefNum = n.request.referenceNumber
-    if (action === "confirm")
-        Object.assign(fields, {settlementDate: n.request.settlementDate, settlementAccountingDate: n.request._settlementDay})
+    if (action === "confirm") fields.settlementDate = n.request.settlementDate
     // Each step is a status change through update#Payment; delivery posts through the PaymentGlPost SECA.
     for (const statusId of path) updatePayment(paymentId, Object.assign({}, fields, {statusId}))
     n.scope.record = find(P, {paymentId}).forUpdate(true).one()
@@ -834,8 +780,7 @@ function changeState(p) {
             .script("component://mr-mantle/service/mantle/account/PaymentOutput.js")
             .issue(n.scope, n.request, op.operationKey)
     }
-    const eventResult = event(n.scope, action, before, op, n.request, [], acctgTransIds)
-    freezeEvidence(n.scope, eventResult.paymentLifecycleEventId, n.evidence)
+    const eventResult = event(n.scope, action, before, op, n.request)
     const result = Object.assign(draftResult(one(P, {paymentId})), {
         action,
         settlementDateText: n.request._settlementDay,
@@ -846,10 +791,7 @@ function changeState(p) {
         outputId: outputRows.find(row => row.outputType === "receipt")?.outputId,
         reasonCode: "PAYMENT_STATE_CHANGED"
     })
-    setFields(r.row, {status: "complete", operationKey: op.operationKey, resultJson: JSON.stringify(result)})
-    r.row.update()
-    lib.complete(op, P, paymentId, result)
-    return projectResult(result)
+    return completeReview(p, claimed, result)
 }
 const applicationTypes = [
     "AttOutgoingPaymentAp",
@@ -1054,9 +996,7 @@ function unapplyNormalized(p, lock = false, voidPayment = false) {
             paymentId: r.paymentId,
             amount: String(r.amount),
             currencyUomId: r.amountUomId,
-            accountingDateText:
-                p._paymentDay ||
-                (r.accountingDate ? policy.calendarDateText(r.accountingDate) : ec.l10n.format(r.effectiveDate, "yyyy-MM-dd")),
+            accountingDateText: p._paymentDay || ec.l10n.format(r.effectiveDate, "yyyy-MM-dd"),
             partyId: scope.partyId,
             partyName: names[scope.partyId],
             organizationName: names[scope.organizationPartyId],
@@ -1159,31 +1099,11 @@ function correctionFingerprint(n) {
     })
 }
 function previewUnapply(p) {
-    const n = unapplyNormalized(p),
-        now = Number(ec.user.nowTimestamp),
-        inputFingerprint = correctionFingerprint(n),
-        made = call("create#" + PREVIEW, {
-            organizationPartyId: n.scope.organizationPartyId,
-            paymentId: p.paymentId,
-            userId: ec.user.userId,
-            previewKind: "unapply",
-            inputFingerprint,
-            requestJson: JSON.stringify(n.request),
-            payloadJson: JSON.stringify(n.payload),
-            createdDate: now,
-            expiresDate: now + 600000,
-            status: "review"
-        })
-    return projectPreview(
-        Object.assign(made, {inputFingerprint, expiresDate: now + 600000, status: "review"}),
-        n.payload,
-        n.scope
-    )
+    const n = unapplyNormalized(p)
+    return storeReview("PrkUnapply", n, correctionFingerprint(n))
 }
 function getUnapplyPreview(p) {
-    const r = retained(p)
-    if (r.row.previewKind !== "unapply") denied("PAYMENT_PREVIEW_MISMATCH", "Choose an unapplication review")
-    return projectPreview(r.row, r.payload, r.scope)
+    return getReview(p, "PrkUnapply")
 }
 // Runs a reviewed correction through Mantle: unapply#PaymentApplication for each selected application, whose SECA
 // reverses its posting (or reposts direct cash unapplied), and for a void then the PmntVoid status change, whose SECAs
@@ -1197,9 +1117,8 @@ function executeCorrection(n, op) {
         call("mantle.account.PaymentServices.unapply#PaymentApplication", {
             paymentApplicationId: application.paymentApplicationId
         })
-    if (n.request.action === "void") updatePayment(paymentId, {statusId: "PmntVoid", lifecycleManaged: "Y"})
+    if (n.request.action === "void") updatePayment(paymentId, {statusId: "PmntVoid"})
     n.scope.record = find(P, {paymentId}).forUpdate(true).one()
-    if (n.scope.record.lifecycleManaged !== "Y") updatePayment(paymentId, {lifecycleManaged: "Y"})
     const reversalIds = originalIds.length
             ? Array.from(find(TX).condition("reverseOfAcctgTransId", "in", originalIds).orderBy("acctgTransId").list())
                   .filter(tx => tx.isPosted === "Y")
@@ -1217,16 +1136,7 @@ function executeCorrection(n, op) {
             reversalAcctgTransIds: reversalIds,
             replacementAcctgTransIds: replacementIds
         },
-        ev = event(
-            n.scope,
-            n.request.action,
-            before,
-            op,
-            Object.assign({}, n.request, {postingEffects}),
-            [],
-            [...reversalIds, ...replacementIds]
-        )
-    freezeEvidence(n.scope, ev.paymentLifecycleEventId, n.evidence)
+        ev = event(n.scope, n.request.action, before, op, n.request)
     return Object.assign(draftResult(one(P, {paymentId})), {
         action: n.request.action,
         applicationResults: n.applications.map(row => ({
@@ -1241,24 +1151,12 @@ function executeCorrection(n, op) {
     })
 }
 function unapplyReviewed(p) {
-    const r = retained(p, true, true)
-    if (r.row.previewKind !== "unapply" || r.row.inputFingerprint !== p.inputFingerprint)
-        denied("PAYMENT_PREVIEW_MISMATCH", "Confirm the retained unapplication review")
-    const op = lib.operation(p, "PaymentUnapply", r.scope.organizationPartyId, {
-        previewId: p.previewId,
-        inputFingerprint: p.inputFingerprint
-    })
-    if (op.old) return projectResult(lib.previous(op))
-    if (r.row.status !== "review") denied("PAYMENT_PREVIEW_CONSUMED", "This review was already confirmed")
-    if (lib.ms(r.row.expiresDate) <= Number(ec.user.nowTimestamp))
-        denied("PAYMENT_PREVIEW_EXPIRED", "Review the applications again before confirming")
-    const n = unapplyNormalized(r.request, true)
-    if (correctionFingerprint(n) !== r.row.inputFingerprint) denied("STALE_PREVIEW", "The reviewed financial history changed")
-    const result = executeCorrection(n, op)
-    setFields(r.row, {status: "complete", operationKey: op.operationKey, resultJson: JSON.stringify(result)})
-    r.row.update()
-    lib.complete(op, P, n.scope.record.paymentId, result)
-    return projectResult(result)
+    const claimed = claimReview(p, "PrkUnapply")
+    if (claimed.replay) return projectResult(Object.assign({}, claimed.result, {alreadyApplied: true}))
+    const n = unapplyNormalized(claimed.request, true)
+    if (correctionFingerprint(n) !== claimed.review.inputFingerprint)
+        denied("STALE_PREVIEW", "The reviewed financial history changed")
+    return completeReview(p, claimed, executeCorrection(n, {operationKey: claimed.operationKey}))
 }
 // The approve and refuse actions of a PaymentValidation notification (mantle.account.PaymentNotificationServices
 // send#PaymentValidationNotice). The notice must be the user's, about this payment and about its current revision and
@@ -1385,8 +1283,6 @@ function execute(op, context) {
     nativeTransactions,
     verifyCash,
     selectedEvidence,
-    freezeEvidence,
     evidenceOptions,
-    event,
-    requireGuard
+    event
 })

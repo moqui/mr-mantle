@@ -1,56 +1,13 @@
-// Native finance authorization. No artifact authorization or request-supplied scope can replace these checks.
+// Native finance authorization. No artifact authorization or request-supplied scope can replace these checks. A refusal
+// is denied(reason, message): callers compare the reason code. The entity and value helpers are EntityLib's, exported
+// here too for the ledger modules that read them through this module.
 const domain = ec.resource.script("component://mr-mantle/service/mantle/product/ProductAccess.js")
-const find = (entity, conditions = {}) => ec.entity.find(entity).condition(conditions).disableAuthz()
-const one = (entity, conditions) => find(entity, conditions).one()
-const rows = (entity, conditions) => Array.from(find(entity, conditions).list())
-const map = row => (row?.getMap ? row.getMap() : Object.assign({}, row || {}))
-const call = (name, parameters = {}) => {
-    const out = ec.service.sync().name(name).parameters(parameters).disableAuthz().call() || {}
-    if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
-    return out
-}
-// Expected independent failures use a separate transaction and error frame.
-function probe(name, parameters) {
-    ec.message.pushErrors()
-    try {
-        const result = ec.service.sync().name(name).parameters(parameters).disableAuthz().requireNewTransaction(true).call() || {}
-        if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
-        return result
-    } finally {
-        ec.message.clearErrors()
-        ec.message.popErrors()
-    }
-}
-const ms = value =>
-    value == null || value === "" ? null : /^-?\d+$/.test(String(value)) ? Number(value) : Date.parse(String(value))
-const active = (row, date = ec.user.nowTimestamp) =>
-    (ms(row.fromDate) ?? -Infinity) <= ms(date) && (ms(row.thruDate) ?? Infinity) > ms(date)
-const pick = (row, fields) => Object.fromEntries(fields.filter(key => row[key] !== undefined).map(key => [key, row[key]]))
-const hash = value => ec.user.singleUseCodeHash(JSON.stringify(value))
-// A date or stamp as display text in the user's time zone: the day alone at midnight, else with the time.
-function dateText(value) {
-    if (value == null || value === "") return ""
-    if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value)
-    const text = ec.l10n.format(new Date(ms(value)), "yyyy-MM-dd HH:mm")
-    return text.endsWith(" 00:00") ? text.slice(0, 10) : text
-}
-// A SQL DATE is a calendar value, not a timestamp in the viewing user's zone.
-function calendarDateText(value) {
-    if (value == null || value === "") return ""
-    const text = String(value)
-    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text
-    const date = new Date(ms(value))
-    if (!Number.isFinite(date.getTime())) throw new Error("A calendar date is required")
-    return [
-        date.getUTCFullYear(),
-        String(date.getUTCMonth() + 1).padStart(2, "0"),
-        String(date.getUTCDate()).padStart(2, "0")
-    ].join("-")
-}
+const lib = ec.resource.script("component://mr-mantle/service/mantle/ledger/EntityLib.js")
+const {find, one, rows, map, call, probe, ms, active, pick, hash, dateText, calendarDateText, display, denied, check} = lib
 // Persisted SQL days are authoritative. Undated ledger history keeps the core ledger's UTC timestamp day.
 function postingDay(transaction) {
     const day = calendarDateText(transaction.accountingDate || transaction.transactionDate)
-    if (!day) throw new Error("POSTING_DATE_INVALID: A ledger posting needs its original accounting day or timestamp")
+    if (!day) denied("POSTING_DATE_INVALID", "A ledger posting needs its original accounting day or timestamp")
     return day
 }
 // New postings carry a fixed business day; older postings retain their existing timestamp range semantics.
@@ -66,22 +23,6 @@ function accountingDateCondition({fromDate, thruDate, fromDay, thruDay, inclusiv
     if (fromDate) legacy.push(cf.makeCondition("transactionDate", "greater-equals", fromDate))
     if (thruDate) legacy.push(cf.makeCondition("transactionDate", inclusive ? "less-equals" : "less", thruDate))
     return cf.makeCondition([cf.makeCondition(dated, "and"), cf.makeCondition(legacy, "and")], "or")
-}
-// A row for a screen: a plain map with <field>Text for each date and stamp, since JSON drops their types. Not for
-// fingerprints, which use map.
-function display(row) {
-    const out = map(row)
-    for (const field of Object.keys(out)) {
-        if (!/(Date|Stamp)$/.test(field) || out[field] == null) continue
-        try {
-            out[field + "Text"] = field === "accountingDate" ? calendarDateText(out[field]) : dateText(out[field])
-        } catch (error) {
-            ec.logger.error("Accounting date " + field + ": " + error.message)
-            out[field + "Text"] = ""
-        }
-    }
-    if (out.accountingDate && out.transactionDate) out.transactionDateText = calendarDateText(out.accountingDate)
-    return out
 }
 function capabilities() {
     const has = domain.has
@@ -122,7 +63,7 @@ function capabilities() {
 }
 function access() {
     const c = capabilities()
-    if (!c.read) throw new Error("Accounting access is required")
+    if (!c.read) denied("ACCESS_DENIED", "Accounting access is required")
     let ids, activeId
     if (c.admin) {
         ids = Array.from(find("mantle.party.PartyRole", {roleTypeId: "OrgInternal"}).selectField("partyId").list()).map(
@@ -145,12 +86,13 @@ function access() {
 function scope(p = {}, need = "read") {
     const a = access()
     if (!Object.prototype.hasOwnProperty.call(a.capabilities, need) || !a.capabilities[need])
-        throw new Error("Accounting " + need + " authority is required")
+        denied("PERMISSION_DENIED", "Accounting " + need + " authority is required")
     const org =
         p.organizationPartyId ||
         a.activeOrganizationPartyId ||
         (a.allowedOrganizationPartyIds.length === 1 ? a.allowedOrganizationPartyIds[0] : null)
-    if (org && !a.allowedOrganizationPartyIds.includes(org)) throw new Error("Accounting organization is not available")
+    if (org && !a.allowedOrganizationPartyIds.includes(org))
+        denied("ORGANIZATION_DENIED", "Accounting organization is not available")
     return Object.assign(a, {organizationPartyId: org})
 }
 // The organizations a scope covers: the chosen one, else every one the user may work in.
@@ -159,7 +101,7 @@ function organizationIds(scope) {
 }
 function organization(p, need = "read") {
     const s = scope(p, need)
-    if (!s.organizationPartyId) throw new Error("Choose an internal organization")
+    if (!s.organizationPartyId) denied("ORGANIZATION_REQUIRED", "Choose an internal organization")
     return s
 }
 function preference(org) {
@@ -171,7 +113,7 @@ function preference(org) {
 }
 function reason(p) {
     const value = String(p.changeReason || "").trim()
-    if (!value || value.length > 255) throw new Error("Give a change reason of 1–255 characters")
+    if (!value || value.length > 255) denied("CHANGE_REASON_REQUIRED", "Give a change reason of 1–255 characters")
     return value
 }
 function audit(fields, why) {
@@ -179,10 +121,10 @@ function audit(fields, why) {
 }
 function revision(row, expected) {
     if (row && (expected == null || ms(row.lastUpdatedStamp) !== ms(expected)))
-        throw new Error("Record changed; reload before saving")
+        denied("STALE_REVISION", "Record changed; reload before saving")
 }
 function organizationChain(org, date = ec.user.nowTimestamp, visited = []) {
-    if (visited.includes(org)) throw new Error("Organization configuration hierarchy contains a cycle")
+    if (visited.includes(org)) denied("ORGANIZATION_CYCLE", "Organization configuration hierarchy contains a cycle")
     const parents = rows("mantle.party.PartyRelationship", {
         fromPartyId: org,
         relationshipTypeEnumId: "PrtOrgRollup"
@@ -203,12 +145,12 @@ function account(org, id, date = ec.user.nowTimestamp) {
     const row = one("mantle.ledger.account.GlAccount", {glAccountId: id})
     const assignment = accountAssignment(org, id, date)
     if (!row || row.disallowPosting === "Y" || !assignment || !active(assignment, date))
-        throw new Error("Choose an active posting account assigned to this organization")
+        denied("ACCOUNT_UNAVAILABLE", "Choose an active posting account assigned to this organization")
     return {row, assignment}
 }
 function dimensions(org, values, date = ec.user.nowTimestamp) {
     if (values.facilityId && one("mantle.facility.Facility", {facilityId: values.facilityId})?.ownerPartyId !== org)
-        throw new Error("DIMENSION_SCOPE: Facility is outside the posting organization")
+        denied("DIMENSION_SCOPE", "Facility is outside the posting organization")
     if (
         values.costCenterId &&
         (!one("mantle.party.PartyRole", {
@@ -217,17 +159,17 @@ function dimensions(org, values, date = ec.user.nowTimestamp) {
         }) ||
             !organizationChain(values.costCenterId, date).includes(org))
     )
-        throw new Error("DIMENSION_SCOPE: Cost centre is outside the posting organization")
+        denied("DIMENSION_SCOPE", "Cost centre is outside the posting organization")
 }
 function counterparty(id) {
     if (!id) return
     const party = one("mantle.party.Party", {partyId: id})
     if (!party || (party.privateOwnerUserId && party.privateOwnerUserId !== ec.user.userId))
-        throw new Error("Counterparty is not available")
+        denied("PARTY_UNAVAILABLE", "Counterparty is not available")
 }
 function currency(id) {
     const r = one("moqui.basic.Uom", {uomId: id})
-    if (!r || r.uomTypeEnumId !== "UT_CURRENCY_MEASURE") throw new Error("Choose a currency")
+    if (!r || r.uomTypeEnumId !== "UT_CURRENCY_MEASURE") denied("CURRENCY_REQUIRED", "Choose a currency")
     return r
 }
 const kinds = {
@@ -293,7 +235,7 @@ function invoiceDirectionCondition(kind, ids) {
 }
 function query(p) {
     const kind = kinds[p.kind]
-    if (!kind) throw new Error("Unknown accounting record kind")
+    if (!kind) denied("RECORD_KIND_INVALID", "Unknown accounting record kind")
     const s = scope(p)
     if (
         !s.capabilities.reportRead &&
@@ -301,7 +243,7 @@ function query(p) {
         !s.capabilities[kind[3]] &&
         !(p.kind === "payments" && (s.capabilities.arRead || s.capabilities.apRead))
     )
-        throw new Error("Accounting record is not available")
+        denied("RECORD_UNAVAILABLE", "Accounting record is not available")
     let ids = organizationIds(s)
     if (["accounts", "periods"].includes(p.kind)) ids = [...new Set(ids.flatMap(id => organizationChain(id)))]
     let q = find(kind[0])
@@ -348,14 +290,17 @@ function query(p) {
     return {q, s, kind}
 }
 function record(p, need = "read", lock = false) {
-    if (!p.recordId) throw new Error("An accounting record ID is required")
+    if (!p.recordId) denied("RECORD_REQUIRED", "An accounting record ID is required")
     const {q, s} = query(p)
-    if (need !== "read" && !s.capabilities[need]) throw new Error("Accounting " + need + " authority is required")
+    if (need !== "read" && !s.capabilities[need]) denied("PERMISSION_DENIED", "Accounting " + need + " authority is required")
     const row = (lock ? q.forUpdate(true) : q).one()
-    if (!row) throw new Error("Accounting record is not available")
+    if (!row) denied("RECORD_UNAVAILABLE", "Accounting record is not available")
     return row
 }
 ;({
+    lib,
+    denied,
+    check,
     find,
     one,
     rows,

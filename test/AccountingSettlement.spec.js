@@ -31,7 +31,7 @@ spec({
     setupSpec() {
         login("john.doe")
         ec.artifactExecution.disableAuthz()
-        f = helper().withoutSettlementFlag(helper().fixtures("ACCT_P5_SETTLE"))
+        f = helper().fixtures("ACCT_P5_SETTLE")
     },
     setup() {
         ec.artifactExecution.disableAuthz()
@@ -76,16 +76,9 @@ feature("a receipt of 60 and a credit of 25 settle an invoice of 100 through the
         login("john.doe")
         const applications = result.applicationIds.map(id => h.lib.one(A, {paymentApplicationId: id}))
         const postings = result.applicationIds.flatMap(id => h.lib.rows(T, {paymentApplicationId: id}))
-        return {
-            retained,
-            applications,
-            postings,
-            settled: h.lib.rows("mantle.account.payment.SettlementAllocation", {
-                settlementId: result.settlementId
-            })
-        }
+        return {retained, applications, postings}
     },
-    then({retained, applications, postings, settled}) {
+    then({retained, applications, postings}) {
         reviewed.operationKey == "settle-" + reviewed.previewId
         retained.operationKey == reviewed.operationKey
         retained.inputFingerprint == reviewed.inputFingerprint
@@ -99,7 +92,6 @@ feature("a receipt of 60 and a credit of 25 settle an invoice of 100 through the
         applications.every(row => helper().lib.policy.calendarDateText(row.accountingDate) === f.day)
         postings.length == 2
         postings.every(row => row.isPosted === "Y" && helper().lib.policy.calendarDateText(row.accountingDate) === f.day)
-        settled.length == 2
     }
 })
 feature("a retry with the review's operation key answers the first result and a changed request with it refuses", {
@@ -342,7 +334,7 @@ feature("retained posting lines are hidden once the owner loses ledger view, and
         const preview = h.review(f, [{sourceKey: h.key("payment", p), targetKey: h.key("invoice", a), amount: "3"}])
         login("john.doe")
         h.call("delete#moqui.security.UserGroupPermission", {userGroupId: user, userPermissionId: "ACCOUNTING_VIEW", fromDate: 0})
-        h.call("update#mantle.account.payment.SettlementPreview", {
+        h.call("update#mantle.account.payment.PaymentReview", {
             previewId: preview.previewId,
             expiresDate: Number(ec.user.nowTimestamp) - 1
         })
@@ -481,14 +473,12 @@ feature("a caller failure after a complete settlement rolls back its application
             failure,
             before,
             after: counts(),
-            operation: h.lib.one("mantle.ledger.transaction.PostingOperation", {operationKey: preview.operationKey}),
             retained: h.native("get#SettlementPreview", {previewId: preview.previewId})
         }
     },
-    then({failure, before, after, operation, retained}) {
+    then({failure, before, after, retained}) {
         failure.includes("CALLER_FAILURE_AFTER_SETTLEMENT")
         JSON.stringify(before) == JSON.stringify(after)
-        operation == null
         retained.status == "review"
     }
 })

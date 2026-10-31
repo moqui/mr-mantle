@@ -32,6 +32,50 @@ along with this software (see the LICENSE.md file). If not, see
             <set field="allowedOrganizationPartyIds" from="access.allowedOrganizationPartyIds"/>
         </actions>
     </service>
+    <service verb="get" noun="RecordContentPolicy" allow-remote="false">
+        <description>What the user may do with the files of a finance record: a journal entry's (AcctgTrans) change with
+            GL posting authority on its organization; an invoice's with the side's edit permission on an invoice the user
+            may write; a payment's as get#PaymentAccess says (canChange; contentLocked once it is posted, when files may be
+            added but not replaced or removed; canReadCheck for check images). Any other record is not a finance record:
+            financeRecord is false and nothing else is said. A record the user may not change reads canChange false with
+            its reasonCode.</description>
+        <in-parameters>
+            <parameter name="recordEntityName" required="true"/>
+            <parameter name="recordId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="financeRecord" type="Boolean"/>
+            <parameter name="canChange" type="Boolean"/>
+            <parameter name="contentLocked" type="Boolean"/>
+            <parameter name="canReadCheck" type="Boolean"/>
+            <parameter name="reasonCode"/>
+        </out-parameters>
+        <actions>
+            <set field="financeRecord" from="['mantle.ledger.transaction.AcctgTrans', 'mantle.account.invoice.Invoice',
+                    'mantle.account.payment.Payment'].includes(recordEntityName)"/>
+            <if condition="!financeRecord"><return/></if>
+            <set field="canChange" from="false"/>
+            <set field="contentLocked" from="false"/>
+            <set field="canReadCheck" from="false"/>
+            <if condition="recordEntityName == 'mantle.account.payment.Payment'">
+                <service-call name="mantle.account.PaymentServices.get#PaymentAccess" out-map="paymentAccess"
+                        in-map="{paymentId:recordId}" ignore-error="true" transaction="force-new"/>
+                <set field="canChange" from="paymentAccess?.canChange == true"/>
+                <set field="contentLocked" from="paymentAccess?.contentLocked == true"/>
+                <set field="canReadCheck" from="paymentAccess?.canReadCheck == true"/>
+                <set field="reasonCode" from="paymentAccess?.organizationPartyId ? (canChange ? null : 'PERMISSION_DENIED')
+                        : 'RECORD_UNAVAILABLE'"/>
+                <return/>
+            </if>
+            <set field="policy" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')"/>
+            <set field="checked" from="recordEntityName == 'mantle.ledger.transaction.AcctgTrans' ?
+                    policy.check(() =&gt; policy.record({kind:'journals', recordId:recordId}, 'glPost')) :
+                    policy.check(() =&gt; ec.resource.script('component://mr-mantle/service/mantle/account/InvoiceWorkflowLib.js')
+                        .writeInvoice({invoiceId:recordId}, false))"/>
+            <set field="canChange" from="checked.allowed"/>
+            <set field="reasonCode" from="checked.reasonCode"/>
+        </actions>
+    </service>
     <service verb="find" noun="Records" allow-remote="false">
         <description>A page of finance records of a kind (AccountingPolicy kinds: invoices, bills, payments, accounts,
             journals, entries, periods, batches, templates, locks, exceptions) in the user's organizations, searched by

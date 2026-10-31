@@ -26,8 +26,6 @@ const preferenceFields = [
     "allowAccountingSelfApproval",
     "singleCurrencyDocumentsOnly",
     "invoiceApprovalRequired",
-    "paymentAutoApplicationEnabled",
-    "settlementApplicationGuardEnabled",
     "inventoryRevaluationEnabled",
     "invoiceDocumentTemplate",
     "paymentDocumentTemplate",

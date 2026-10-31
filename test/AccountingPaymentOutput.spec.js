@@ -38,7 +38,10 @@ feature("delivery issues a receipt and a detail as payment content and reading o
         return {before, after: contentRows(h, paymentId), receipt, again, content, pdf: bytesOf(content.contentLocation)}
     },
     then({before, after, receipt, again, content, pdf}) {
-        before.map(row => row.contentTypeEnumId).sort().join(",") == "PctPaymentDocument,PctReceipt"
+        before
+            .map(row => row.contentTypeEnumId)
+            .sort()
+            .join(",") == "PctPaymentDocument,PctReceipt"
         after.length == before.length
         again.outputId == receipt.outputId
         again.outputType == "receipt"
@@ -194,37 +197,17 @@ feature("legacy foreign and private application links are omitted while valid sa
                 effectiveDate: f.timestamp
             }).paymentId,
             ids = []
-        for (const org of [f.org, other.org])
-            h.call("update#mantle.ledger.config.PartyAcctgPreference", {
-                organizationPartyId: org,
-                settlementApplicationGuardEnabled: "N"
-            })
         let view
         try {
             for (const invoiceId of [visibleInvoice, privateInvoice, foreignInvoice])
                 ids.push(
                     h.rawApplication({paymentId, invoiceId, amountApplied: "5", appliedDate: f.timestamp}).paymentApplicationId
                 )
-            for (const org of [f.org, other.org])
-                h.call("update#mantle.ledger.config.PartyAcctgPreference", {
-                    organizationPartyId: org,
-                    settlementApplicationGuardEnabled: "Y"
-                })
             login(f.users.paymentView)
             view = h.detail(f, paymentId)
         } finally {
             login("john.doe")
-            for (const org of [f.org, other.org])
-                h.call("update#mantle.ledger.config.PartyAcctgPreference", {
-                    organizationPartyId: org,
-                    settlementApplicationGuardEnabled: "N"
-                })
             for (const id of ids) h.settlement.clearImportedApplication(id)
-            for (const org of [f.org, other.org])
-                h.call("update#mantle.ledger.config.PartyAcctgPreference", {
-                    organizationPartyId: org,
-                    settlementApplicationGuardEnabled: "Y"
-                })
         }
         return {view, visibleInvoice, privateInvoice, foreignInvoice}
     },
