@@ -79,7 +79,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="userGroupId" type="id"/>
         <field name="partyId" type="id"/>
         <field name="permissionEnumId" type="id"/>
-        <field name="publishToken" type="text-medium"><description>The secret of a publish link (anyone with the link)</description></field>
+        <field name="publishToken" type="text-medium" encrypt="true"><description>The secret of a publish link (anyone with the link)</description></field>
         <field name="passwordHash" type="text-medium"><description>The publish link's optional password, hashed</description></field>
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>
