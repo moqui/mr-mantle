@@ -115,7 +115,7 @@ feature("active organization selection narrows an otherwise authorized child for
         )
     }
 })
-feature("foreign currency is refused only for an adopted organization", {
+feature("foreign currency is refused only for an adopted organization; every invoice gets its book day", {
     when() {
         const foreign = helper().draft(f, "25", "EUR")
         const adopted = helper().rejected("mantle.account.InvoiceServices.change#InvoiceState", {
@@ -135,21 +135,21 @@ feature("foreign currency is refused only for an adopted organization", {
             toPartyId: legacyFixture.customer,
             currencyUomId: "USD"
         })
-        const untouched = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: legacyPrimitive.invoiceId})
+        const primitive = helper().lib.one(helper().lib.invoiceEntity, {invoiceId: legacyPrimitive.invoiceId})
         const legacy = native("change#InvoiceState", {
             invoiceId: legacyInvoice.invoiceId,
             action: "finalize",
             lastUpdatedStamp: legacyInvoice.lastUpdatedStamp
         })
-        return {adopted, legacy, explicit: legacyInvoice, untouched}
+        return {adopted, legacy, explicit: legacyInvoice, primitive}
     },
-    then({adopted, legacy, explicit, untouched}) {
+    then({adopted, legacy, explicit, primitive}) {
         adopted.includes("FOREIGN_CURRENCY_DISABLED")
         legacy.statusId == "InvoiceFinalized"
         !!explicit.accountingDate
         !!explicit.draftedByUserId
-        untouched.accountingDate == null
-        untouched.draftedByUserId == null
+        helper().lib.policy.calendarDateText(primitive.accountingDate) == ec.l10n.format(primitive.invoiceDate, "yyyy-MM-dd")
+        primitive.draftedByUserId == ec.user.userId
     }
 })
 feature("an approval-only user approves another drafter while AR cannot approve", {

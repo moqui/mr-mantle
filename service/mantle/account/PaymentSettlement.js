@@ -753,7 +753,7 @@ function checkApplication(p) {
     const bookDay = p.accountingDate
         ? policy.calendarDateText(p.accountingDate)
         : guard.calendarDay({transactionDate: p.appliedDate}, {paymentId: map(payments[0]), invoiceId: map(invoices[0])}, true) ||
-          policy.calendarDateText(p.appliedDate)
+          policy.bookDay(null, p.appliedDate)
     if ([...invoices, ...payments].some(row => row.accountingDate && policy.calendarDateText(row.accountingDate) > bookDay))
         denied("APPLICATION_DATE_INVALID", "The application date cannot precede its financial records")
     const latest = latestPostingDay(invoices, payments)

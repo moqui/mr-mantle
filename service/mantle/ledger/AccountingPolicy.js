@@ -4,9 +4,10 @@
 const domain = ec.resource.script("component://mr-mantle/service/mantle/product/ProductAccess.js")
 const lib = ec.resource.script("component://mr-mantle/service/mantle/ledger/EntityLib.js")
 const {find, one, rows, map, call, probe, ms, active, pick, hash, dateText, calendarDateText, display, denied, check} = lib
-// Persisted SQL days are authoritative. Undated ledger history keeps the core ledger's UTC timestamp day.
+// A posting's book day: its accounting day, else the day of its transaction date in the user's zone, the rule of a
+// document's and an application's book day.
 function postingDay(transaction) {
-    const day = calendarDateText(transaction.accountingDate || transaction.transactionDate)
+    const day = lib.bookDay(transaction.accountingDate, transaction.transactionDate)
     if (!day) denied("POSTING_DATE_INVALID", "A ledger posting needs its original accounting day or timestamp")
     return day
 }
@@ -308,6 +309,7 @@ function record(p, need = "read", lock = false) {
     display,
     dateText,
     calendarDateText,
+    bookDay: lib.bookDay,
     postingDay,
     accountingDateCondition,
     call,

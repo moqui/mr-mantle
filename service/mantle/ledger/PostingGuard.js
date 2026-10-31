@@ -332,9 +332,9 @@ function validate(p, lock = false) {
         automatic: automatic(tx)
     }
 }
-// The book day of an application: its reviewed accounting day, else the calendar day of its applied date.
+// The book day of an application: its reviewed accounting day, else the day of its applied date in the user's zone.
 function applicationDay(application) {
-    return lib.calendarDateText(application.accountingDate || application.appliedDate)
+    return lib.bookDay(application.accountingDate, application.appliedDate)
 }
 // The positive applications that consume a posting's source documents. A cash posting consumes only its payment.
 function positiveApplications(tx) {

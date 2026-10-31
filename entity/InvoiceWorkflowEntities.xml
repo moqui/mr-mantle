@@ -29,8 +29,8 @@ along with this software (see the LICENSE.md file). If not, see
         </index>
     </extend-entity>
     <extend-entity entity-name="Invoice" package="mantle.account.invoice">
-        <field name="accountingDate" type="date" enable-audit-log="true"/>
-        <field name="draftedByUserId" type="id" enable-audit-log="true"/>
+        <field name="accountingDate" type="date" enable-audit-log="update"/>
+        <field name="draftedByUserId" type="id" enable-audit-log="update"/>
         <field name="approvedByUserId" type="id" enable-audit-log="true"/>
         <field name="approvedDate" type="date-time" enable-audit-log="true"/>
         <field name="approvedSourceVersion" type="text-long" enable-audit-log="true"/>

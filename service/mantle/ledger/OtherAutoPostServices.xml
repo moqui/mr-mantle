@@ -135,15 +135,17 @@ along with this software (see the LICENSE.md file). If not, see
                 <service-call name="mantle.ledger.LedgerServices.post#AcctgTrans" in-map="{acctgTransId:acctgTrans.acctgTransId}"/>
             </else></if>
 
-            <!-- set acctg trans result to Success -->
-            <script><![CDATA[
-                const finance = ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
-                const adopted = finance.preference(financialAccount.organizationPartyId).postingGuardEnabled === 'Y'
-                const posted = finance.one('mantle.ledger.transaction.AcctgTrans',{acctgTransId:acctgTrans.acctgTransId})
-                financialAccountTrans.acctgTransResultEnumId = adopted && posted?.isPosted !== 'Y' ? 'AtrPostingFailed' : 'AtrSuccess'
-                if (adopted && posted && posted.isPosted !== 'Y' && !posted.postingFailureCode)
-                    finance.call('update#mantle.ledger.transaction.AcctgTrans',{acctgTransId:posted.acctgTransId,postingFailureCode:'MAPPING_MISSING',postingFailureMessage:'Missing financial account posting mapping'})
-            ]]></script>
+            <!-- the result: success when the transaction posted, else failed with its reason on the transaction -->
+            <entity-find-one entity-name="mantle.ledger.transaction.AcctgTrans" value-field="postedTrans" disable-authz="true">
+                <field-map field-name="acctgTransId" from="acctgTrans.acctgTransId"/>
+            </entity-find-one>
+            <set field="financialAccountTrans.acctgTransResultEnumId"
+                    from="postedTrans?.isPosted == 'Y' ? 'AtrSuccess' : 'AtrPostingFailed'"/>
+            <if condition="postedTrans != null &amp;&amp; postedTrans.isPosted != 'Y' &amp;&amp; !postedTrans.postingFailureCode">
+                <service-call name="update#mantle.ledger.transaction.AcctgTrans" in-map="{acctgTransId:postedTrans.acctgTransId,
+                        postingFailureCode:'MAPPING_MISSING',
+                        postingFailureMessage:'Missing financial account posting mapping'}"/>
+            </if>
             <entity-update value-field="financialAccountTrans"/>
         </actions>
     </service>

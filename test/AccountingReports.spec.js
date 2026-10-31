@@ -10,11 +10,16 @@ const call = (name, p) =>
             : "mantle.ledger." + name,
         p,
     )
-let today, thru
+// A month-end evening in Chicago that is already the next month in UTC: the books use the user's day.
+const evening = Date.UTC(2026, 10, 1, 1, 30) // October 31, 20:30 in Chicago; November 1, 01:30 in UTC
+let today, thru, savedTimeZone
 spec({
     setupSpec() {
         login("john.doe")
         ec.artifactExecution.disableAuthz()
+        savedTimeZone = ec.user.userAccount?.timeZone || null
+        ec.user.setTimeZone("America/Chicago")
+        ec.user.setEffectiveTime(evening)
         call("create#mantle.party.Party", {
             partyId: org,
             partyTypeEnumId: "PtyOrganization",
@@ -55,6 +60,11 @@ spec({
                 })
             call("LedgerServices.post#AcctgTrans", { acctgTransId: id })
         }
+    },
+    cleanupSpec() {
+        login("john.doe")
+        ec.user.setEffectiveTime(null)
+        ec.user.setTimeZone(savedTimeZone)
     },
 })
 feature("live trial balance and ledger never combine document currencies", {
@@ -105,6 +115,7 @@ feature(
 )
 feature("a closed fiscal month reads its stored base-currency summary", {
     when() {
+        const day = ec.l10n.format(ec.user.nowTimestamp, "yyyy-MM-dd")
         const period = policy()
             .rows("mantle.party.time.TimePeriod", {
                 partyId: org,
@@ -112,8 +123,8 @@ feature("a closed fiscal month reads its stored base-currency summary", {
             })
             .find(
                 (r) =>
-                    policy().ms(r.fromDate) <= Number(ec.user.nowTimestamp) &&
-                    policy().ms(r.thruDate) >= Number(ec.user.nowTimestamp),
+                    policy().calendarDateText(r.fromDate) <= day &&
+                    policy().calendarDateText(r.thruDate) >= day,
             )
         const key = {
                 organizationPartyId: org,
@@ -148,9 +159,15 @@ feature("a closed fiscal month reads its stored base-currency summary", {
             timePeriodId: period.timePeriodId,
             isClosed: "N",
         })
-        return result
+        return {
+            day,
+            month: policy().calendarDateText(period.fromDate),
+            reportRows: result.reportRows,
+        }
     },
-    then({ reportRows }) {
+    then({ day, month, reportRows }) {
+        day == "2026-10-31"
+        month == "2026-10-01"
         reportRows.length == 1
         reportRows[0].closedSummary == true
         reportRows[0].ending.eq(999)

@@ -78,6 +78,52 @@ feature("apply#InvoicePayment keeps the reviewed day and paid date, and refuses 
         helper().lib.ms(invoice.paidDate) == Number(f.timestamp)
     }
 })
+// 20:30 in Chicago on October 30, already October 31 in UTC: the invoice, the payment's posting and the application all
+// take the user's day.
+const chicagoEvening = Date.UTC(2026, 9, 31, 1, 30)
+feature("an evening application in the Americas is not before its same-day invoice and payment", {
+    when() {
+        const h = helper(),
+            savedTimeZone = ec.user.userAccount?.timeZone || null
+        ec.user.setTimeZone("America/Chicago")
+        ec.user.setEffectiveTime(chicagoEvening)
+        try {
+            const invoiceId = h.call("mantle.account.InvoiceServices.create#Invoice", {
+                fromPartyId: f.org,
+                toPartyId: f.customer,
+                currencyUomId: "USD"
+            }).invoiceId
+            h.call("mantle.account.InvoiceServices.create#InvoiceItem", {
+                invoiceId,
+                quantity: "1",
+                amount: "7",
+                itemTypeEnumId: "ItemTimeEntry",
+                overrideGlAccountId: "412000000",
+                description: "Evening consulting"
+            })
+            h.call("update#mantle.account.invoice.Invoice", {invoiceId, statusId: "InvoiceFinalized"})
+            const paymentId = h.payment(f, "7", "receivable", {effectiveDate: ec.user.nowTimestamp})
+            const applied = h.call(services + "apply#InvoicePayment", {paymentId, invoiceId})
+            return {
+                invoice: h.lib.one(h.lib.invoiceEntity, {invoiceId}),
+                cash: sourcePosting(h, "paymentId", paymentId),
+                application: h.lib.one(A, {paymentApplicationId: applied.paymentApplicationId}),
+                posting: h.lib.one(T, {paymentApplicationId: applied.paymentApplicationId})
+            }
+        } finally {
+            ec.user.setEffectiveTime(null)
+            ec.user.setTimeZone(savedTimeZone)
+        }
+    },
+    then({invoice, cash, application, posting}) {
+        helper().lib.policy.calendarDateText(invoice.accountingDate) == "2026-10-30"
+        helper().lib.policy.postingDay(cash) == "2026-10-30"
+        toDecimal(application.amountApplied).eq(7)
+        helper().lib.policy.bookDay(application.accountingDate, application.appliedDate) == "2026-10-30"
+        posting.isPosted == "Y"
+        invoice.statusId == "InvoicePmtRecvd"
+    }
+})
 feature("an application between payments is not dated before either payment's posting", {
     when() {
         const h = helper(),

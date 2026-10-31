@@ -682,14 +682,9 @@ along with this software (see the LICENSE.md file). If not, see
             </if>
             <if condition="!currencyUomId"><set field="currencyUomId" value="USD"/></if>
 
-            <service-call name="mantle.ledger.LedgerServices.find#PartyAcctgPreference"
-                    in-map="{organizationPartyId:organizationPartyId}" out-map="invoiceCapturePreference"/>
-            <if condition="invoiceCapturePreference.partyAcctgPreference?.postingGuardEnabled == 'Y' ||
-                    invoiceCapturePreference.partyAcctgPreference?.singleCurrencyDocumentsOnly == 'Y' ||
-                    invoiceCapturePreference.partyAcctgPreference?.invoiceApprovalRequired == 'Y'">
-                <set field="draftedByUserId" from="ec.user.userId"/>
-                <set field="accountingDate" from="ec.l10n.format(invoiceDate, 'yyyy-MM-dd')"/>
-            </if>
+            <!-- the book day of the invoice, in the user's zone, and who drafted it -->
+            <set field="draftedByUserId" from="ec.user.userId"/>
+            <set field="accountingDate" from="ec.l10n.format(invoiceDate, 'yyyy-MM-dd')"/>
             <service-call name="create#mantle.account.invoice.Invoice" in-map="context" out-map="context"/>
         </actions>
     </service>

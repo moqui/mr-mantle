@@ -1059,8 +1059,10 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions>
             <!-- NOTE: this one is not recursive, should really have TimePeriod associated with root parent org so just one will match -->
-            <!-- a Timestamp reaches the script as epoch millis; the date is its UTC day, as yyyy-MM-dd text -->
-            <set field="filterSqlDate" from="accountingDate != null ? ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js').calendarDateText(accountingDate) : filterDate != null ? new Date(Number(filterDate)).toISOString().slice(0, 10) : null"/>
+            <!-- the book day: the accounting day, else the day of the timestamp in the user's zone, as get#TimePeriodInfo
+                bounds a period -->
+            <set field="filterSqlDate" from="ec.resource.script('component://mr-mantle/service/mantle/ledger/AccountingPolicy.js')
+                    .bookDay(accountingDate, filterDate) || null"/>
             <entity-find entity-name="mantle.party.time.TimePeriodAndType" list="timePeriodList">
                 <!-- doesn't work as needed with date fields (only date-time): <date-filter valid-date="filterSqlDate" ignore-if-empty="true"/> -->
                 <econdition field-name="fromDate" operator="less-equals" from="filterSqlDate" ignore-if-empty="true"/>
@@ -1131,7 +1133,7 @@ along with this software (see the LICENSE.md file). If not, see
         </description>
         <in-parameters>
             <parameter name="organizationPartyId" required="true"/>
-            <parameter name="basisDate" type="java.sql.Date" default="new Date(Number(ec.user.nowTimestamp)).toISOString().slice(0, 10)"/>
+            <parameter name="basisDate" type="java.sql.Date" default="ec.l10n.format(ec.user.nowTimestamp, 'yyyy-MM-dd')"/>
         </in-parameters>
         <actions>
             <script>configuredFiscalHandled = ec.resource.script('component://mr-mantle/service/mantle/ledger/FiscalPeriods.js').ensure({organizationPartyId,basisDate})</script>
@@ -1634,8 +1636,8 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions>
             <set field="nowTimestamp" from="ec.user.nowTimestamp"/>
-            <!-- a Timestamp reaches the script as epoch millis; the date is its UTC day, as yyyy-MM-dd text -->
-            <set field="nowDate" from="new Date(Number(nowTimestamp)).toISOString().slice(0, 10)"/>
+            <!-- today in the user's zone -->
+            <set field="nowDate" from="ec.l10n.format(nowTimestamp, 'yyyy-MM-dd')"/>
             <set field="startTime" from="Date.now()"/>
             <set field="gaoUpdated" from="0"/>
             <set field="gaotpUpdated" from="0"/>

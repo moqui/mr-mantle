@@ -99,6 +99,13 @@ function calendarDateText(value) {
         String(date.getUTCDate()).padStart(2, "0")
     ].join("-")
 }
+// The book day of a record: its calendar day when it has one, else the day of its timestamp in the user's zone, the rule
+// create#Invoice and the apply services date a document and an application by.
+function bookDay(day, stamp) {
+    if (day != null && day !== "") return calendarDateText(day)
+    if (stamp == null || stamp === "") return ""
+    return ec.l10n.format(new Date(ms(stamp)), "yyyy-MM-dd")
+}
 // A row for a screen: a plain map with <field>Text for each date and stamp, since JSON drops their types. Not for
 // fingerprints, which use map.
 function display(row) {
@@ -209,6 +216,7 @@ function previous(op) {
     amount,
     dateText,
     calendarDateText,
+    bookDay,
     display,
     partyNames,
     page,
