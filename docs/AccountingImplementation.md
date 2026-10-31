@@ -39,105 +39,150 @@ stored totals are absent. The parent record's permission and organization checks
 Document projections include public or actor-owned counterparty names after the parent record is authorized;
 other users' private names are omitted even when artifact authorization is disabled.
 
-## Receivables, settlement and payment lifecycle
+## Receivables (P4)
 
-P4 implements native invoice state guards, durable sending/batches and statements. P5a implements authoritative
-open items, retained atomic settlement and automatic application, with exact retry, actual source backing, SQL posting
-days and adopted application/source guards. Their acceptance records and commits are in
-[Accounting implementation](../../mr-boss/docs/AccountingImplementation.md).
+P4 and P5 use Mantle's existing services and extend them with parameters; the review R2 in mr-boss's
+`plan/impl-accounting.md` removed what P4–P5 first built beside them.
 
-P5b1 adds native payment list/detail/method reads, reviewed drafts, validate/deliver/confirm/cancel/void and selected
-unapplication. Authoritative revisions include actual source/method/posting evidence. Direct cash restoration reverses
-the complete direct set and posts its exact unapplied replacement at the unchanged original SQL day. Ordinary release
-and void use the actual applications and separate postings; closed history refuses atomically. Exact state/unapply
-controllers join PostingGuard validation while the same actor's unreviewed Ledger reversal remains refused.
+- **State.** `InvoiceServices.change#InvoiceState` is the guarded status change over Mantle's status flow: finalize
+  or approve, resume, cancel, receive and sent. It checks the side's edit permission (`INVOICE_APPROVE` to approve),
+  the revision (`lastUpdatedStamp`), the period and accounting locks, the single-currency and approval preferences
+  and that the posting is done. Drafts are edited through `create#Receivable`, `store#InvoiceDraft`,
+  `store#InvoiceDraftItem` and `delete#InvoiceDraftItem`; `reverse#DraftInvoice` calls `reverse#Invoice`.
+- **Reads.** `find#Receivables`, `get#ReceivableSummary` and `get#InvoiceFinanceDetail` read the stored
+  `invoiceTotal` and `unpaidTotal`, and leave out parties another user keeps private.
+- **Print and send.** `get#InvoiceOutput` renders `template/account/Invoice.print.html.fancy` over
+  `get#InvoicePrintInfo`, or the template a store or party setting names; Mantle never takes HTML from its caller.
+  `send#Invoice` finalizes a draft, freezes the print as an immutable PDF `InvoiceContent` with copies of the
+  supporting files the sender chose by version (`get#InvoiceDeliveryAttachments`), and sends through
+  `send#EmailTemplate` (`MANTLE_INVOICE_EMAIL`, body `InvoiceEmail.html.fancy`); the messages are recorded in
+  `InvoiceEmailMessage`. A caller with its own print names it with `printLocation` (Projects, for its time detail).
+  The `IssuedInvoiceContentImmutable` EECA keeps issued files as sent, and the `InvoiceFinalizedSendEmail` SECA skips
+  an invoice `send#Invoice` issued. `process#InvoiceBatch` sends, finalizes or prints each selected invoice in its own
+  transaction; `get#InvoiceBatchResult` reads the result.
+- **Credits.** `create#InvoiceCreditMemo` with `linkToOriginal` makes a credit linked to its original
+  (`Invoice.creditForInvoiceId`), within the original's total, optionally split over its lines (`allocateToLines`);
+  `apply#InvoiceCredit` applies it through `apply#InvoiceToInvoice`.
+- **Approved time.** `find#ApprovedTimeBilling` and `create#InvoiceFromApprovedTime` bill a project's approved time
+  and worker expenses at their billing rates (`ApprovedTimeBilling.js`).
+- **Statements.** `CollectionServices.get#Statements` gives one statement per customer and currency over
+  `get#ReceivableStatementInfo`: today's open items with their aging as of a date, printed by
+  `template/account/ReceivableStatement.print.html.fancy`. There is no opening balance and no stored snapshot.
+  `send#Statements` sends each as a PDF through `MANTLE_STATEMENT_EMAIL`, each address in its own transaction.
+- **Customer.** `CustomerFinanceServices.get#CustomerFinance` reads contacts, the billing addresses (`sendTo`),
+  orders, receivables, payments, agreements and aging through the existing services; masked payment methods only for
+  treasury. `store#CustomerIdentification`, `store#CustomerBankAccount` and `store#CustomerTaxRegistration` write the
+  finance details.
+- **Book day.** `create#Invoice` records the invoice's book day (`Invoice.accountingDate`) and drafter, both audited.
 
-Issued payment outputs and frozen evidence retain immutable resource identities, versions, blobs and bytes. Native
-archive/private-drive guards also cover raw/generic writes, shares, public tokens, searches and aliased locations.
-First-reference issuance and raw mutations serialize on stable archive ancestors, including shared deduplicated blobs;
-new unpublished upload identities remain compatible with independent storage transactions. Real races verify exact
-hashes and ordinary source replacement; an isolated control without the shared blob lock reproduces corruption.
+## Payments and settlement (P5)
 
-PaymentValidation stores event-bound publication and per-recipient delivery identity, independent permission/private/
-organization checks, guarded decisions and durable retirement. Commit workers retain the immutable actor instead of
-depending on interactive login state. Native services and tests have no BOSS dependency. Provider operations and
-refunds/transfers remain the subsequent P5b2/P5b3 contracts; their actions are unavailable in this slice.
+**Reviews.** A change the user reviews and then confirms is a `PaymentReview` row: its kind (`previewKindEnumId`,
+the `PaymentReviewKind` enumeration: settlement, automatic application, settlement draft, state change,
+unapplication, gateway action, refund, internal transfer), its status (`PrvDraft`, `PrvReview`, `PrvComplete`), its
+user, organization and payment, the fingerprint confirming must match, the request, what the user reviewed and the
+result. `store#PaymentReview` keeps it, `get#PaymentReview` reads the user's own, `claim#PaymentReview` begins
+confirming with an operation key and `complete#PaymentReview` records the result. A confirmation with the same key and
+fingerprint returns the first result; another fingerprint under the key is refused. A payment's version is its
+`lastUpdatedStamp`. Each `preview#` service changes no financial record.
 
-Final native server gate: 1,074 passed, the same four reproduced baseline failures, 17 skipped, 1,095 features across
-117 specs. All 75 added native cases pass. BOSS's full suite passes 1,145 with no failures and five skips; all seven
-payment browser walks and independent output review pass. XML validation and unchanged screen-lint findings are recorded
-with the app's verification. Current user scope completes P5 and pauses before P6 with a recorded checkpoint.
+**Settlement.** `find#OpenItems` finds a counterparty's open invoices, credits and payments in one currency, a page
+for each kind, from the SQL views `SettlementInvoiceBalance` and `SettlementPaymentBalance`.
+`find#SettlementAdjustmentAccounts` offers the accounts assigned to the organization chain on the date.
+`preview#Settlement`, `get#SettlementPreview` and `apply#Settlement` review and confirm allocations, and discounts or
+write-offs (`ItemPromptDiscount`, `ItemWriteOff`) on an explicit account. Confirming applies each allocation through
+`apply#InvoicePayment`, `apply#PaymentToPayment` or `apply#InvoiceToInvoice` on the reviewed `appliedDate` and
+`accountingDate`, and each adjustment as a credit memo from `create#InvoiceCreditMemo` applied to its invoice.
+`store#SettlementDraft` and `get#SettlementDraft` keep the user's selection behind an id for a day.
+`preview#PaymentAutoApplication` and `autoApply#Payment` apply a payment to the oldest due invoices.
 
-## Reviewed provider operations P5b2a
+The `apply#*` services lock the organization and both documents, and refuse for every caller an application dated
+before a document's posting, an internal transfer, a gateway authorization or held gateway cash, and an amount finer
+than the currency. `unapply#PaymentApplication` refuses the application that funds a completed refund, and leaves
+`Invoice.paidDate` as it was. `PostingGuard`, inside `post#AcctgTrans` and the apply and unapply services, checks the
+periods, locks, source postings and accounts.
 
-Native gateway instructions retain reviewed organization, currency, SQL day, source/method/binding revisions and
-operation identity. Durable reservation, provider invocation, typed evidence and local completion are separate
-transactions. Authorization parents never post or settle cash; each partial capture creates its own exact cash
-Payment, posting and issued outputs. Pending, uncertain and accepted-unposted outcomes retain capacity. Exact lookup
-cannot initiate another provider operation; reviewed recovery completes only the original accepted local money.
+**Payments.** `find#Payments` lists the organization's payments by queue (incoming, outgoing, to validate,
+unapplied, refunds, transfers, all) with their application balances; the unapplied queue leaves out transfers.
+`get#PaymentFinanceDetail` reads one payment: masked methods, applications, refunds, documents, files and history,
+and ledger and gateway rows with their read authority. `get#PaymentAccess` answers what a user may do with its files.
+`create#PaymentDraft` and `store#PaymentDraft` write a proposed receipt or disbursement through `create#`/`update#Payment`;
+their tx-commit SECAs send a PaymentValidation notice (`send#PaymentValidationNotice`), which
+`approve#PaymentValidationNotice` and `refuse#PaymentValidationNotice` answer. `preview#PaymentState`,
+`get#PaymentStatePreview` and `change#PaymentState` validate, deliver, confirm, cancel or void through `update#Payment`
+along `StatusFlowTransition`, so the Payment SECAs post, void, unapply and clear. `preview#PaymentUnapply`,
+`get#PaymentUnapplyPreview` and `unapply#ReviewedPayment` unapply chosen applications through
+`unapply#PaymentApplication`. `revert#PaymentPost` and `revert#PaymentApplicationPost` take a `reversalDate`.
+`PaymentLifecycleEvent` keeps each change's reference and reason for History.
 
-Private dispatch preparation validates fresh locked method and subtype values and passes those exact credentials
-by value after releasing financial locks. Safe adapters explicitly guarantee that contract. Current credential
-rotation does not alter exact lookup identity. Provider ancestors never acquire financial-finalizer admission.
+**Documents.** `issue#PaymentDocuments` issues a delivered payment's receipt (`PctReceipt`), detail
+(`PctPaymentDocument`) and, with a check number, check (`PctCheckImage`), each a PDF of
+`template/account/PaymentDocument.html.fancy` under `mantle.content.large.root`; a transfer gets its detail only.
+`get#PaymentDocumentInfo` gives the template's values and `get#PaymentOutput` reads an issued document; a check needs
+treasury authority. `save#PaymentContentFile` refuses to replace a file once the payment is posted.
 
-Legacy provider wrappers, configured leaves, refund links, order/invoice loops and polling exclude native records.
-Permanent independently committed admission fences serialize old I/O against first adoption, including caller rollback.
-Common guards protect both original and candidate application/source identities, accepted cash provenance and original
-postings even when adoption is later disabled. Ordinary GL descriptions and reconciliation remain editable.
+**Gateway.** `authorize#`, `capture#`, `release#` and `refund#SinglePayment` take an optional `operationKey`, lock the
+payment, and answer a retry with the first `PaymentGatewayResponse` without calling the gateway; the response records
+the key and the refund payment (`operationKey`, `refundPaymentId`). `get#PaymentGatewayActions` finds the payment's
+gateway as those services do and the actions the user may review. `preview#PaymentGatewayAction`,
+`get#PaymentGatewayActionPreview` and `execute#PaymentGatewayAction` review and run them; a refund is a promised
+`create#RefundPayment` and `refund#SinglePayment` for it. An accepted capture delivers and posts; an accepted refund is
+delivered and applied to its original (`apply#RefundPayment`); a declined one is `PmntDeclined`; a pending one stays
+promised until `lookup#PaymentGatewayDetails` (over `get#SinglePaymentGatewayDetails`) finds the gateway's answer.
+`find#PaymentGatewayTransactions` and `find#PaymentGatewayProviders` search the responses. Real gateways (Braintree,
+PayTrace, Authorize.Net) implement the same interfaces. There is no partial capture.
 
-The full standalone gate has 1,160 features across 130 specs: 1,139 pass, the same four reproduced baseline failures
-and 17 skips. All 65 added cases pass, including actual permission loss, competing capacity writes, caller rollback,
-credential contention, retained large evidence, unsafe legacy entry and initially unmanaged source/adoption races.
-The final safe identity/recovery DTO corrections pass their focused checks. Final BOSS acceptance passes 1,162/0/5
-and all 78 browser cases with independent visual review. Implementation commits are Mantle `5c24c2fa` and BOSS
-`4b92e2c`; the app's implementation record retains the detailed verification. Manual/provider refunds
-and transfers remain P5b2b/P5b3; execution pauses after their P5 checkpoint and before P6.
+**Refunds.** `create#RefundPayment` takes an `accountingDate` and refuses more than the original less its other
+refunds, pending ones included. `get#PaymentRefundSummary` gives what is left to refund, and `get#PaymentRefundPlan`,
+`preview#PaymentRefund`, `get#PaymentRefundPreview` and `refund#ReviewedPayment` review and confirm a manual refund
+through it, so the Payment SECAs post it and it is applied to the original.
 
-## P5b2b1 manual refunds
-
-Owner-bound reviews and `refund#ReviewedPayment` create opposite cash and its exact original-funding application,
-verify both actual postings, and retain immutable backing, events, evidence and child-owned issued documents in one
-transaction. Partial and multiple customer/supplier refunds use the original logical finance side. Fully allocated
-cash requires a separately reviewed unapplication first. Clean legacy manual cash can adopt under the permanent
-provider fence; verified old refunds without native backing records remain readable and require a separate historical
-review before new native refunds. Malformed financial history is incomplete rather than an invented zero balance.
-
-Common entity/posting boundaries protect the original, refund child and exact funding even with adoption flags N.
-Unrelated invoice allocations may still be unapplied. Manual cash remains manual when a bank later acquires provider
-route metadata; original actual financial provenance governs. A held provider draft is unavailable to lifecycle,
-application and cash-posting writers, including before it receives a gateway role.
-
-Per the user's code-completion priority, this delivery uses independent code review and focused server checks instead
-of further browser/screenshot cycles. The first frozen money/invariant/concurrency/shared-regression gate passes all
-45 cases; the app gate passes 24, including real Treasury/admin money, exact retries and actual child-owned documents.
-The final 25-case gate also passes, including all 21 new native cases; 53 distinct focused native cases pass across the two gates. Acceptance commits are recorded in the app's implementation plan.
-
-## P5b2b2 provider refunds
-
-Reference-based refunds bind actual completed capture money and reuse the strict refund cash/application core.
-Original capture reference/merchant/currency remain authoritative through credential rotation/expiry and exact lookup.
-Two durable capacity holds and an optional reviewed draft claim survive pending, uncertain and accepted-unposted
-states. Accepted local completion consumes them in the same transaction as exact opposite cash, funding, immutable
-backing, events and issued documents. Caller rollback restores held capacity and the clean draft. A changed financial
-plan requires newly reviewed recovery; the provider operation is never repeated for financial repair.
-
-Independent review accepts all production/shared corrections. All 13 added native cases pass; the final focused gate's
-44 cases pass across its 43-pass run and corrected one-case fixture rerun. BOSS passes 34/34 including all eight new
-provider cases. Further screenshot/browser/full-suite cycles are omitted under the user's code-completion priority.
-Transfers remain the last P5 assignment; execution pauses before P6. Detailed findings and commits are in the app plan.
-
-## P5b3 paired transfers and checkpoint
-
-An internal transfer is one Mantle payment: `create#InternalTransfer` confirms a retained `preview#InternalTransfer`
-and creates a delivered `PtInternalTransfer` payment from the organization to itself, `paymentMethodId` the from method
-and `toPaymentMethodId` the to method, through `create#Payment`. Its `PaymentGlPost` SECA runs `post#Payment`, which posts
+**Transfers.** `get#InternalTransferPlan` checks a transfer and plans its payments and postings;
+`preview#InternalTransfer`, `get#InternalTransferPreview` and `create#InternalTransfer` review and confirm it, with
+`find#InternalTransferMethods` and `find#InternalTransferFeeAccounts` for the choices. A transfer is one delivered
+`PtInternalTransfer` payment from the organization to itself, `paymentMethodId` the from method and
+`toPaymentMethodId` the to method, through `create#Payment`. Its `PaymentGlPost` SECA runs `post#Payment`, which posts
 the outgoing and incoming transactions through the `PtInternalTransfer` transit `PaymentTypeGlAccount` (258300000 by
-default); `get#PaymentMethodGlAccount` takes `isPayable` so each side finds its own method's cash account. One service
-transaction holds both sides, so they post together or not at all. A fee is its own `PtDisbursement` payment to the fee
-party, posted to the chosen expense account through `Payment.overrideTypeGlAccountId`. `get#InternalTransferPlan` holds
-the checks for the preview and the confirmation.
+default); `get#PaymentMethodGlAccount` takes `isPayable` so each side finds its own method's cash account. A fee is
+its own `PtDisbursement` payment to an outside party, by default the from bank's party, posted to the chosen expense
+account (`Payment.overrideTypeGlAccountId`), and points at its transfer (`Payment.feeForPaymentId`). One service
+transaction holds them all, so they post together or not at all.
 
-Independent review is complete. The final focused native gate passes 45/45 across 13 specs, all 10 added transfer cases;
-BOSS passes 40/40 including its eight added cases. Changed XML validates and screen lint has no new failures/sites.
-Further screenshots/browser/full-suite sweeps were omitted under the user's code-completion priority. P0–P5 are code
-complete; execution is paused before P6. See the app plan for commits, earlier complete-suite evidence and deferrals.
+## Libraries
+
+- `ledger/EntityLib.js`: the helpers the finance modules share: entity reads without artifact authorization (each
+  module checks its permissions first), calls and probes, dates and book days (`bookDay`: the calendar day, else the
+  timestamp's day in the user's zone), display values, amounts, refusals with reason codes (`denied`, `reasonCode`),
+  party names that leave out private parties, paging and operation keys. Nothing in it authorizes.
+- `ledger/AccountingPolicy.js`: permissions, organization scope and record checks; a refusal has a reason code.
+- `ledger/PostingGuard.js`: the posting choke point. It decides an automatic posting from the transaction's source
+  fields, and asks `ACCOUNTING_GL_POST` of a manual or reversal posting unless its caller passes `reviewed`.
+- `account/InvoiceWorkflowLib.js`: an invoice's scope for a read or a write. `InvoiceWorkflow.js`,
+  `InvoiceAttachments.js`, `PaymentWorkflow.js`, `PaymentLifecycle.js`, `PaymentSettlement.js` and `PaymentOutput.js`
+  hold the logic too involved for XML Actions; the other services are inline XML Actions.
+
+## The posting guard flag
+
+`PartyAcctgPreference.postingGuardEnabled`, off by default, gates the posting guard and the invoice and payment
+`MAPPING_MISSING` refusal. Mantle's OrderToCash, ProcureToPay, ReturnToResponse, InvoicePaymentMisc and Payroll
+flow specs need them off: they post with the demo account assignments, and some of their postings go to the error
+journal. The other P4–P5 controls hold whatever it says. BOSS's demo organization turns it on.
+
+## Tests
+
+The Accounting specs make their own data, users and spec-local permission groups, and no spec depends on BOSS. The
+gateway specs use the test gateway in `service/mantle/account/PaymentTestServices.xml`: `alwaysPending#` for
+authorization, capture and refund, `alwaysDecline#PaymentRelease`, `alwaysDecline#PaymentRefund` and
+`alwaysApprove#PaymentDetails` for a lookup that approves, named in the spec's own `PaymentGatewayConfig`.
+
+```sh
+./moq test mr-mantle
+./moq test mr-mantle --spec AccountingReceivables,AccountingDelivery,AccountingCustomerFinance
+./moq test mr-mantle --spec AccountingSettlement,AccountingSettlementConcurrency,AccountingApplicationRules
+./moq test mr-mantle --spec AccountingPaymentLifecycle,AccountingPaymentCorrections,AccountingPaymentOutput,AccountingPaymentNotifications
+./moq test mr-mantle --spec AccountingPaymentGateway,AccountingPaymentRefunds,AccountingInternalTransfers
+```
+
+The PDF specs need a Chromium for PDF (`pdf_chromium_path`; see [Run-Deploy](../../../../docs/Run-Deploy.md) and
+[Client-Testing](../../../../docs/dev/Client-Testing.md)); without one every PDF spec fails. The results are in
+mr-boss's `plan/impl-accounting.md`.
