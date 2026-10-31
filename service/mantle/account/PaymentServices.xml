@@ -2736,10 +2736,12 @@ along with this software (see the LICENSE.md file). If not, see
                         glAccountId:row.glAccountId, accountCode:row.accountCode, accountName:row.accountName,
                         amount:row.amount}))"/>
                 <if condition="results">
-                    <set field="withoutPostings" from="(row) =&gt; Object.assign({}, row, {acctgTransIds:[]})"/>
+                    <!-- the context holds data, not functions: each map has its own arrow -->
                     <set field="results" from="Object.assign({}, results, {acctgTransIds:[],
-                            allocationResults:Array.from(results.allocationResults || []).map(withoutPostings),
-                            adjustmentResults:Array.from(results.adjustmentResults || []).map(withoutPostings)})"/>
+                            allocationResults:Array.from(results.allocationResults || [])
+                                .map(row =&gt; Object.assign({}, row, {acctgTransIds:[]})),
+                            adjustmentResults:Array.from(results.adjustmentResults || [])
+                                .map(row =&gt; Object.assign({}, row, {acctgTransIds:[]}))})"/>
                 </if>
             </if>
             <set field="canApply" from="capabilities.canApply &amp;&amp; retained.review.canConfirm"/>
