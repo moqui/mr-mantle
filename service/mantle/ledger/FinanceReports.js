@@ -22,7 +22,7 @@ function base(p, before = false) {
     if (p.costCenterId) q = q.condition("costCenterId", p.costCenterId)
     const dates = before
         ? lib.accountingDateCondition({
-              thruDate: p.fromDate || new Date(0).toISOString(),
+              thruDate: p.fromDate || new Date(0),
               thruDay: p.fromAccountingDate || "1970-01-01"
           })
         : lib.accountingDateCondition({
@@ -46,10 +46,13 @@ function options(p) {
             recordId: p.timePeriodId,
             organizationPartyId: p.organizationPartyId
         })
-        out.fromDate = new Date(lib.ms(period.fromDate)).toISOString()
-        out.thruDate = new Date(lib.ms(period.thruDate) + 86400000).toISOString()
-        out.fromAccountingDate = lib.calendarDateText(period.fromDate)
-        out.thruAccountingDate = new Date(Date.parse(lib.calendarDateText(period.thruDate)) + 86400000).toISOString().slice(0, 10)
+        // the period's days start at midnight in the user's zone, as undated postings are booked by that zone's day
+        const fromDay = lib.calendarDateText(period.fromDate)
+        const afterDay = lib.calendarDateText(Date.parse(lib.calendarDateText(period.thruDate)) + 86400000)
+        out.fromDate = ec.l10n.parseTimestamp(fromDay, "yyyy-MM-dd")
+        out.thruDate = ec.l10n.parseTimestamp(afterDay, "yyyy-MM-dd")
+        out.fromAccountingDate = fromDay
+        out.thruAccountingDate = afterDay
         out.period = period
     }
     if (
