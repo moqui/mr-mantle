@@ -64,7 +64,7 @@ that are otherwise encumbered.
 Signed by git commit adding my legal name and git username:
 
 - Written in 2010-2026 by David E. Jones - jonesde
-- Written in 2021-2026 by Michael Jones - acetousk
+- Written in 2021-2026 by acetousk
 - Written in 2014-2015 by Solomon Bessire - sbessire
 - Written in 2012-2016 by Sam Hamilton - samhamilton
 - Written in 2014-2015 by Yao Chunlin - chunlinyao
@@ -109,7 +109,7 @@ litigation is filed.
 Signed by git commit adding my legal name and git username:
 
 - Written in 2010-2026 by David E. Jones - jonesde
-- Written in 2021-2026 by Michael Jones - acetousk
+- Written in 2021-2026 by acetousk
 - Written in 2014-2015 by Solomon Bessire - sbessire
 - Written in 2014-2015 by Yao Chunlin - chunlinyao
 - Written in 2015-2023 by Jens Hardings - jenshp
