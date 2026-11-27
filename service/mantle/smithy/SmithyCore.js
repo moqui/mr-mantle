@@ -900,7 +900,8 @@ function compatibilitySection(rest) {
     const tail = more.length ? "/" + more.join("/") : ""
     const number = more.length === 1 && /^[1-9][0-9]{0,8}$/.test(more[0])
     if (word === "issues" && (!more.length || number)) return "issues" + tail
-    if (word === "pull" && number) return "merge-requests" + tail
+    // pulls/<n> is Forgejo's and Gitea's page of a pull request (the Smithy API's clients link to it, mr-pass design §4.5)
+    if ((word === "pull" || word === "pulls") && number) return "merge-requests" + tail
     if (word === "pulls" && !more.length) return "merge-requests"
     if (["tree", "blob", "commits"].includes(word) && more.length) return word + tail
     if (word === "commit" && more.length === 1 && HEX.test(more[0])) return "commit" + tail
